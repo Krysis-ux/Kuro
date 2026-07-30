@@ -58,7 +58,7 @@ pub fn detect() -> HardwareInfo {
         gpu_backend: if gpu_available { "metal" } else { "cpu" },
         recommended: RecommendedEngineDefaults {
             context_size: 4096,
-            // llama.cpp clamps this to the model's real layer count, so asking
+            // The engine clamps this to the model's real layer count, so asking
             // for more than exists is the documented way to say "offload all".
             gpu_layers: if gpu_available { 999 } else { 0 },
             // Leave headroom rather than saturating every core, which keeps the

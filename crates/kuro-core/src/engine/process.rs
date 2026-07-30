@@ -1,4 +1,4 @@
-//! Launching and stopping a single `llama-server` process.
+//! Launching and stopping a single engine process.
 //!
 //! Each loaded model gets its own process. Running the engine out-of-process
 //! means a model that crashes the engine — a malformed GGUF, an unsupported
@@ -36,7 +36,7 @@ pub struct EngineLaunchSpec {
 }
 
 impl EngineLaunchSpec {
-    /// Command-line arguments for `llama-server`.
+    /// Command-line arguments for the engine process.
     pub fn arguments(&self) -> Vec<String> {
         vec![
             "--model".to_string(),
@@ -104,7 +104,7 @@ pub fn spawn_engine(spec: &EngineLaunchSpec) -> Result<Child> {
 
 /// Poll the engine's health endpoint until it is ready to serve.
 ///
-/// `llama-server` answers 503 while it is still loading weights and 200 once it
+/// The engine answers 503 while it is still loading weights and 200 once it
 /// can accept requests.
 pub async fn wait_until_healthy(
     client: &reqwest::Client,
@@ -178,7 +178,7 @@ mod tests {
 
     fn spec() -> EngineLaunchSpec {
         EngineLaunchSpec {
-            binary: PathBuf::from("/tmp/llama-server"),
+            binary: PathBuf::from("/tmp/kuro-engine"),
             model_path: PathBuf::from("/tmp/model.gguf"),
             model_alias: "qwen3-4b:q4_k_m".to_string(),
             port: 39200,
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn refuses_to_launch_without_a_binary_or_model() {
         let mut broken = spec();
-        broken.binary = PathBuf::from("/nonexistent/llama-server");
+        broken.binary = PathBuf::from("/nonexistent/kuro-engine");
         let error = spawn_engine(&broken).unwrap_err().to_string();
         assert!(error.contains("engine binary is missing"), "got: {error}");
     }

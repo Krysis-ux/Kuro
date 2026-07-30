@@ -248,7 +248,7 @@ fn is_split_part(filename: &str) -> bool {
     let Some(stem) = lower.strip_suffix(".gguf") else {
         return false;
     };
-    // Look for the `-<digits>-of-<digits>` tail that llama.cpp uses.
+    // Look for the `-<digits>-of-<digits>` tail that split GGUF weights use.
     let mut parts = stem.rsplit('-');
     let Some(total) = parts.next() else {
         return false;

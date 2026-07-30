@@ -1,6 +1,6 @@
-//! Cached `llama-server` builds.
+//! Cached engine builds.
 //!
-//! One row per llama.cpp release tag that has been downloaded and extracted, so
+//! One row per engine release tag that has been downloaded and extracted, so
 //! Kuro can reuse an engine across restarts instead of re-fetching it.
 
 use rusqlite::{params, OptionalExtension, Row};
@@ -11,11 +11,11 @@ use crate::Result;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EngineRuntimeRecord {
-    /// llama.cpp release tag, e.g. `b7891`.
+    /// Engine release tag, e.g. `b7891`.
     pub id: String,
     pub version: String,
     pub asset_name: String,
-    /// Absolute path to the extracted `llama-server` executable.
+    /// Absolute path to the installed `kuro-engine` executable.
     pub path: String,
     pub sha256: String,
     /// `metal` or `cpu`.
@@ -105,19 +105,19 @@ mod tests {
         let mut runtime = EngineRuntimeRecord {
             id: "b7891".to_string(),
             version: "b7891".to_string(),
-            asset_name: "llama-b7891-bin-macos-arm64.zip".to_string(),
-            path: "/tmp/engine/b7891/llama-server".to_string(),
+            asset_name: "engine-b7891-bin-macos-arm64.zip".to_string(),
+            path: "/tmp/engine/b7891/kuro-engine".to_string(),
             sha256: "aaa".to_string(),
             backend: "metal".to_string(),
             downloaded_at: now(),
         };
         db.upsert_engine_runtime(&runtime).expect("insert");
 
-        runtime.path = "/tmp/engine/b7891/bin/llama-server".to_string();
+        runtime.path = "/tmp/engine/b7891/bin/kuro-engine".to_string();
         db.upsert_engine_runtime(&runtime).expect("update");
 
         let all = db.list_engine_runtimes().expect("list");
         assert_eq!(all.len(), 1);
-        assert_eq!(all[0].path, "/tmp/engine/b7891/bin/llama-server");
+        assert_eq!(all[0].path, "/tmp/engine/b7891/bin/kuro-engine");
     }
 }
