@@ -1,5 +1,6 @@
 //! Helpers shared by the native and OpenAI-compatible chat routes.
 
+use kuro_core::cloud::{self, ChatTarget};
 use kuro_core::db::{Message, ModelStatus};
 use kuro_core::settings::KEY_DEFAULT_MODEL;
 use kuro_core::{KuroError, Result};
@@ -7,7 +8,42 @@ use serde_json::{json, Value};
 
 use crate::state::SharedState;
 
-/// Work out which model to run.
+/// Work out where a request should go.
+///
+/// A provider model is recognised by its `cloud:` prefix and resolved against the
+/// provider registry; anything else is a local model and goes through
+/// [`resolve_model_id`]. Doing this in one place means every caller — the native
+/// chat route and the OpenAI-compatible one — treats local and remote alike.
+pub async fn resolve_target(state: &SharedState, requested: Option<&str>) -> Result<ChatTarget> {
+    let explicit = requested
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "auto" && *name != "default");
+
+    if let Some(name) = explicit.filter(|name| cloud::is_remote_model(name)) {
+        return state.providers.resolve_target(name);
+    }
+
+    // A stored default may itself be a provider model, so it is checked before
+    // falling through to the local-only path.
+    if explicit.is_none() {
+        if let Some(default) = state
+            .db
+            .get_setting(KEY_DEFAULT_MODEL)?
+            .and_then(|value| value.as_str().map(str::to_string))
+            .filter(|name| cloud::is_remote_model(name))
+        {
+            if let Ok(target) = state.providers.resolve_target(&default) {
+                return Ok(target);
+            }
+        }
+    }
+
+    Ok(ChatTarget::Local {
+        model_id: resolve_model_id(state, requested).await?,
+    })
+}
+
+/// Work out which local model to run.
 ///
 /// Falls back to the configured default and then, when the machine has exactly
 /// one usable model, to that one — so a first-time user who has pulled a single
@@ -54,7 +90,8 @@ pub async fn resolve_model_id(state: &SharedState, requested: Option<&str>) -> R
 
     match ready.len() {
         0 => Err(KuroError::bad_request(
-            "no models are installed yet. Pull one first, for example `kuro pull qwen3-4b`.",
+            "no models are installed yet. Download one — `kuro pull qwen3-4b`, or the Models \
+             page — or connect a provider under Providers to use a remote one.",
         )),
         1 => Ok(ready.into_iter().next().expect("length checked")),
         _ => Err(KuroError::bad_request(format!(

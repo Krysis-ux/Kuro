@@ -1,8 +1,9 @@
--- Kuro LLM schema, version 1.
+-- Kuro LLM schema, version 2.
 --
--- The full V1 shape is created up front, including tables that only later
--- phases write to (MCP servers, cloud connectors, prompt templates), so that
--- adding those features needs no migration.
+-- Every statement is `IF NOT EXISTS`, so the whole file is safe to re-run
+-- against a database created by an earlier version. Columns added after a table
+-- shipped cannot be expressed that way; those go through `add_column_if_missing`
+-- in `db/mod.rs` instead.
 --
 -- Note: `models` holds only models the user has actually pulled. The curated
 -- "recommended models" list is static data in `catalog::curated` and is merged
@@ -72,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation
 CREATE TABLE IF NOT EXISTS mcp_servers (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
-    transport   TEXT NOT NULL,                        -- stdio | http_sse
+    transport   TEXT NOT NULL,                        -- stdio | http
     command     TEXT,
     args        TEXT,                                 -- JSON array
     env         TEXT,                                 -- JSON object
@@ -81,7 +82,16 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     enabled     INTEGER NOT NULL DEFAULT 1,
     status      TEXT NOT NULL DEFAULT 'disconnected', -- connected | disconnected | error
     last_error  TEXT,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    -- Set when the server came from the recommended list, so the store can show
+    -- what is already installed without matching on names.
+    slug        TEXT,
+    -- Tools reported by the last successful handshake. Cached so the list page
+    -- does not have to connect to every server to render a count.
+    tool_count  INTEGER,
+    -- Reference into the credential store for a bearer token. The token itself
+    -- is never written to this database.
+    auth_ref    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation_mcp_servers (
@@ -90,18 +100,26 @@ CREATE TABLE IF NOT EXISTS conversation_mcp_servers (
     PRIMARY KEY (conversation_id, mcp_server_id)
 );
 
--- Credentials themselves live in the macOS Keychain; this table only stores the
--- lookup key so that a database copy never leaks a secret.
+-- Remote model providers the user holds the key for: OpenRouter, OpenAI,
+-- Anthropic, a rented GPU box, anything speaking the OpenAI API.
+--
+-- Credentials live in the separate credential store (see `secrets.rs`); this
+-- table holds only the lookup reference, so a copy of the database never carries
+-- a key with it.
 CREATE TABLE IF NOT EXISTS cloud_connectors (
     id             TEXT PRIMARY KEY,
-    provider       TEXT NOT NULL,                     -- runpod | vastai | lambdalabs | custom_openai
+    provider       TEXT NOT NULL,                     -- openrouter | openai | anthropic | groq | ... | custom
     label          TEXT NOT NULL,
     keychain_ref   TEXT NOT NULL,
     base_url       TEXT,
     status         TEXT NOT NULL DEFAULT 'untested',  -- untested | ok | error
     last_tested_at TEXT,
     last_error     TEXT,
-    created_at     TEXT NOT NULL
+    created_at     TEXT NOT NULL,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    -- Model ids reported by the endpoint's own `/models`, cached from the last
+    -- successful test so the picker does not have to call out on every render.
+    models         TEXT NOT NULL DEFAULT '[]'         -- JSON array
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -146,3 +164,18 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- What the model has been asked to remember, written by the `remember` tool and
+-- read back by `recall`. Kept in the database rather than in the prompt so it
+-- survives a conversation ending, and scoped to nothing so a fact learned in one
+-- chat is available in the next.
+CREATE TABLE IF NOT EXISTS memories (
+    id         TEXT PRIMARY KEY,
+    content    TEXT NOT NULL,
+    tags       TEXT NOT NULL DEFAULT '[]',            -- JSON array
+    source     TEXT,                                  -- conversation id, when known
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memories_created
+    ON memories (created_at DESC);

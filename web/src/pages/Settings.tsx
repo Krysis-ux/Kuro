@@ -1,14 +1,27 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, formatBytes } from '../lib/api'
-import { CloudIcon } from '../components/icons'
+import { SliderField } from '../components/Slider'
 import { applyTheme, useUi } from '../store/ui'
+import { PowerIcon } from '../components/icons'
 
 /** Keys the Rust side reads. `0` (or `-1`) means "decide automatically". */
 const KEY_CONTEXT = 'engine.contextSize'
 const KEY_GPU_LAYERS = 'engine.gpuLayers'
 const KEY_THREADS = 'engine.threads'
 const KEY_IDLE = 'engine.idleUnloadMinutes'
+
+/**
+ * Upper bounds for the engine sliders.
+ *
+ * Context is capped well below what some models advertise, because a context
+ * larger than memory allows does not fail at the slider — it fails minutes later
+ * when the engine is killed. The exact field still accepts anything, for someone
+ * who knows their machine better than this heuristic does.
+ */
+const MAX_CONTEXT = 131072
+const MAX_GPU_LAYERS = 999
+const MAX_IDLE_MINUTES = 240
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
@@ -20,13 +33,14 @@ export function SettingsPage() {
 
   const save = useMutation({
     mutationFn: (patch: Record<string, unknown>) => api.settings.patch(patch),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['settings'] })
+    onSuccess: (data) => {
+      queryClient.setQueryData(['settings'], data)
       void queryClient.invalidateQueries({ queryKey: ['hardware'] })
     },
   })
 
   const machine = hardware.data?.hardware
+  const maxThreads = machine?.logical_cores ?? 16
 
   return (
     <div className="page">
@@ -57,31 +71,55 @@ export function SettingsPage() {
       <section className="panel">
         <h2 className="panel-title">Engine</h2>
         <p className="faint panel-note">
-          Applied the next time a model loads. Leave a field empty for automatic.
+          Applied the next time a model loads. Drag to adjust, or click the number to type an exact
+          value.
         </p>
 
-        <NumberField
+        <SliderField
           label="Context size"
-          hint={`Automatic: ${machine?.recommended.context_size ?? '—'} tokens`}
+          hint="How much of the conversation the model can see at once. More costs memory."
+          unit="tokens"
+          autoValue={machine?.recommended.context_size}
           value={settings.data?.[KEY_CONTEXT]}
+          min={512}
+          max={MAX_CONTEXT}
+          step={512}
           onSave={(value) => save.mutate({ [KEY_CONTEXT]: value })}
         />
-        <NumberField
+
+        <SliderField
           label="GPU layers"
-          hint={`Automatic: ${machine?.recommended.gpu_layers ?? '—'} (all layers offloaded)`}
+          hint="Layers offloaded to the GPU. The maximum offloads all of them, which is almost always what you want."
+          autoValue={machine?.recommended.gpu_layers}
           value={settings.data?.[KEY_GPU_LAYERS]}
+          min={0}
+          max={MAX_GPU_LAYERS}
+          step={1}
+          zeroLabel="CPU only"
           onSave={(value) => save.mutate({ [KEY_GPU_LAYERS]: value })}
         />
-        <NumberField
+
+        <SliderField
           label="CPU threads"
-          hint={`Automatic: ${machine?.recommended.threads ?? '—'}`}
+          hint={`This machine has ${machine?.physical_cores ?? '—'} physical cores. More than that usually slows things down.`}
+          autoValue={machine?.recommended.threads}
           value={settings.data?.[KEY_THREADS]}
+          min={1}
+          max={maxThreads}
+          step={1}
           onSave={(value) => save.mutate({ [KEY_THREADS]: value })}
         />
-        <NumberField
-          label="Unload after (minutes)"
-          hint="How long an unused model stays in memory. 0 keeps it loaded."
+
+        <SliderField
+          label="Unload after"
+          hint="How long an unused model stays in memory before its memory is given back."
+          unit="min"
+          autoValue={30}
           value={settings.data?.[KEY_IDLE]}
+          min={0}
+          max={MAX_IDLE_MINUTES}
+          step={5}
+          zeroLabel="never unload"
           onSave={(value) => save.mutate({ [KEY_IDLE]: value })}
         />
       </section>
@@ -90,12 +128,11 @@ export function SettingsPage() {
         <h2 className="panel-title">Server</h2>
         <Row label="Status" value={status.data ? 'Running' : 'Unreachable'} />
         <Row label="Address" value={status.data?.address ?? '—'} mono />
-        <Row
-          label="Uptime"
-          value={status.data ? formatUptime(status.data.uptimeSeconds) : '—'}
-        />
+        <Row label="Uptime" value={status.data ? formatUptime(status.data.uptimeSeconds) : '—'} />
         <Row label="Version" value={status.data?.version ?? '—'} mono />
         <Row label="Data directory" value={status.data?.dataDirectory ?? '—'} mono />
+
+        <ShutdownControl />
 
         <div className="loaded-models">
           <span className="faint">Loaded models</span>
@@ -118,39 +155,13 @@ export function SettingsPage() {
         <h2 className="panel-title">Hardware</h2>
         <Row label="Chip" value={machine?.chip ?? '—'} />
         <Row label="Memory" value={formatBytes(machine?.total_memory_bytes)} />
-        <Row label="Cores" value={machine ? `${machine.physical_cores} physical` : '—'} />
         <Row
-          label="GPU"
-          value={machine?.gpu_available ? machine.gpu_backend : 'CPU only'}
+          label="Cores"
+          value={
+            machine ? `${machine.physical_cores} physical · ${machine.logical_cores} logical` : '—'
+          }
         />
-      </section>
-
-      <section className="panel">
-        <h2 className="panel-title">Cloud</h2>
-        <p className="faint panel-note">
-          Kuro is local-first. Cloud is optional and always uses your own provider account.
-        </p>
-
-        <div className="cloud-card is-disabled">
-          <div className="cloud-card-head">
-            <CloudIcon size={16} />
-            <span>Your cloud accounts</span>
-            <span className="tag">Soon</span>
-          </div>
-          <p className="muted">
-            Connect RunPod, Vast.ai, Lambda Labs or any OpenAI-compatible endpoint. Kuro
-            orchestrates through your account; credentials stay in the macOS Keychain.
-          </p>
-        </div>
-
-        <div className="cloud-card is-disabled">
-          <div className="cloud-card-head">
-            <CloudIcon size={16} />
-            <span>Kuro Cloud</span>
-            <span className="tag">Coming soon</span>
-          </div>
-          <p className="muted">A hosted option for models this machine cannot run.</p>
-        </div>
+        <Row label="GPU" value={machine?.gpu_available ? machine.gpu_backend : 'CPU only'} />
       </section>
 
       <section className="panel">
@@ -159,10 +170,69 @@ export function SettingsPage() {
           Kuro speaks the OpenAI API. Point any existing tool at it — no code changes needed.
         </p>
         <pre className="code-block mono">
-{`OPENAI_BASE_URL=${status.data?.address ?? 'http://127.0.0.1:8420'}/v1
+          {`OPENAI_BASE_URL=${status.data?.address ?? 'http://127.0.0.1:8420'}/v1
 OPENAI_API_KEY=not-needed`}
         </pre>
       </section>
+    </div>
+  )
+}
+
+/**
+ * Stop the server.
+ *
+ * Two clicks, because the consequence is not obvious from the button: this closes
+ * the API every other tool on the machine may be pointed at, and the only way back
+ * is a terminal. Confirmation is the difference between a deliberate stop and a
+ * misclick that looks like a crash.
+ */
+function ShutdownControl() {
+  const [confirming, setConfirming] = useState(false)
+  const [stopped, setStopped] = useState(false)
+
+  const stop = useMutation({
+    mutationFn: () => api.shutdown(),
+    onSuccess: () => setStopped(true),
+    // A connection error here usually means it worked and the socket closed
+    // before the response arrived, which is success, not failure.
+    onError: () => setStopped(true),
+  })
+
+  if (stopped) {
+    return (
+      <div className="row">
+        <span className="faint">Server</span>
+        <span className="muted">
+          Stopped. Run <code className="mono">kuro serve</code> to start it again.
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="row">
+      <span className="faint">Shut down</span>
+      {confirming ? (
+        <div className="inline-form shutdown-confirm">
+          <span className="muted">Unload every model and stop the server?</span>
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={() => stop.mutate()}
+            disabled={stop.isPending}
+          >
+            {stop.isPending ? <span className="spinner" /> : <PowerIcon size={13} />}
+            Stop
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(true)}>
+          <PowerIcon size={13} />
+          Stop server
+        </button>
+      )}
     </div>
   )
 }
@@ -184,46 +254,6 @@ function Field({
       </div>
       <div className="field-control">{children}</div>
     </div>
-  )
-}
-
-/** Number input that only writes when the value actually changes. */
-function NumberField({
-  label,
-  hint,
-  value,
-  onSave,
-}: {
-  label: string
-  hint: string
-  value: unknown
-  onSave: (value: number | null) => void
-}) {
-  const stored = typeof value === 'number' ? String(value) : ''
-  const [draft, setDraft] = useState(stored)
-
-  // Adopt the stored value once it loads, without clobbering an in-progress edit.
-  useEffect(() => setDraft(stored), [stored])
-
-  const commit = () => {
-    const trimmed = draft.trim()
-    if (trimmed === stored) return
-    onSave(trimmed === '' ? null : Number(trimmed))
-  }
-
-  return (
-    <Field label={label} hint={hint}>
-      <input
-        className="input field-input"
-        type="number"
-        min={0}
-        placeholder="Auto"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => event.key === 'Enter' && commit()}
-      />
-    </Field>
   )
 }
 
