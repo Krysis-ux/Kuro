@@ -61,8 +61,18 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const { effort, setEffort, webSearch, setWebSearch, memory, setMemory, selectedModel, setSelectedModel } =
-    useUi()
+  const {
+    effort,
+    setEffort,
+    webSearch,
+    setWebSearch,
+    memory,
+    setMemory,
+    files,
+    setFiles,
+    selectedModel,
+    setSelectedModel,
+  } = useUi()
 
   // Grow with the content instead of scrolling inside a fixed box.
   useEffect(() => {
@@ -220,6 +230,20 @@ export function Composer({
             >
               <BrainIcon />
               Memory
+            </button>
+
+            <button
+              className={`btn btn-ghost composer-toggle ${files ? 'is-on' : ''}`}
+              onClick={() => setFiles(!files)}
+              title={
+                files
+                  ? 'On: the model can use the folders granted in Tools → Files.'
+                  : 'Off: the model cannot read or write any file. Grant folders in Tools → Files.'
+              }
+              aria-pressed={files}
+            >
+              <FolderIcon />
+              Files
             </button>
 
             <EffortPicker value={effort} onChange={setEffort} />

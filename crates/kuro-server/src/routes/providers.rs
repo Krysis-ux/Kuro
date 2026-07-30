@@ -1,12 +1,17 @@
-//! Remote model providers.
+//! Remote model endpoints: API providers, and hardware you rent.
 //!
-//! `/api/providers` rather than `/api/cloud`, because from the user's side these
-//! are not "the cloud" — they are named companies whose keys they hold. The
-//! storage table is still `cloud_connectors`; renaming it would need a migration
-//! that buys nothing.
+//! One endpoint serves both, because the mechanism is identical — an
+//! OpenAI-compatible URL and a key the user holds. What differs is the decision,
+//! so every entry carries a `surface` (`provider` or `cloud`) and the interface
+//! shows them on two screens. See [`kuro_core::cloud::presets::Surface`] for why
+//! that separation is worth making.
+//!
+//! The storage table is still `cloud_connectors`; renaming it would need a
+//! migration that buys nothing.
 
 use axum::extract::{Path, State};
 use axum::Json;
+use kuro_core::cloud::presets::surface_for;
 use kuro_core::cloud::PRESETS;
 use kuro_core::KuroError;
 use serde::Deserialize;
@@ -30,13 +35,27 @@ pub async fn list_providers(State(state): State<SharedState>) -> AppResult<Json<
                 object.remove("keychain_ref");
             }
             encoded["hasKey"] = json!(has_key);
+            // Which of the two screens this belongs on, resolved from the preset
+            // it was created from so the client never has to know the mapping.
+            encoded["surface"] = json!(surface_for(&connector.provider).as_str());
+            encoded
+        })
+        .collect();
+
+    // `surface` is derived from `kind` rather than stored on the preset, so that
+    // there is one place deciding which screen an entry belongs on.
+    let presets: Vec<Value> = PRESETS
+        .iter()
+        .map(|preset| {
+            let mut encoded = serde_json::to_value(preset).unwrap_or_else(|_| json!({}));
+            encoded["surface"] = json!(preset.kind.surface().as_str());
             encoded
         })
         .collect();
 
     Ok(Json(json!({
         "providers": connected,
-        "presets": PRESETS,
+        "presets": presets,
     })))
 }
 

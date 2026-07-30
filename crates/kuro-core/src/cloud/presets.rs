@@ -22,6 +22,52 @@ pub enum PresetKind {
     Custom,
 }
 
+/// Which screen an entry belongs on.
+///
+/// The two are the same mechanism — an OpenAI-compatible URL and a key — and
+/// completely different decisions. Adding OpenAI means paying a company per token
+/// to run their model. Adding a RunPod endpoint means running *your* model on
+/// hardware you rented, where the choice of model, the quantisation and the
+/// context length are all still yours. Putting both behind one "Providers" screen
+/// made the second look like a variant of the first, when it is closer to running
+/// locally with someone else's GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Surface {
+    /// Someone else's model, on someone else's hardware, billed per token.
+    Provider,
+    /// Your model, on hardware you rent or own, billed by the hour.
+    Cloud,
+}
+
+impl PresetKind {
+    pub fn surface(self) -> Surface {
+        match self {
+            Self::Aggregator | Self::FirstParty => Surface::Provider,
+            Self::RentedGpu | Self::Custom => Surface::Cloud,
+        }
+    }
+}
+
+impl Surface {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Provider => "provider",
+            Self::Cloud => "cloud",
+        }
+    }
+}
+
+/// Which screen a connector belongs on, given the preset slug it was created from.
+///
+/// An unrecognised slug is treated as cloud: the only way to get one is to have
+/// added a custom endpoint, which is what the cloud screen is for.
+pub fn surface_for(provider_slug: &str) -> Surface {
+    find(provider_slug)
+        .map(|preset| preset.kind.surface())
+        .unwrap_or(Surface::Cloud)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Preset {
     pub slug: &'static str,
@@ -116,7 +162,7 @@ pub const PRESETS: &[Preset] = &[
         name: "RunPod",
         base_url: "",
         blurb: "A GPU you rented, running vLLM or llama.cpp. Paste the endpoint URL your pod \
-                exposes — usually ending in `/v1`.",
+                exposes — usually ending in /v1.",
         kind: PresetKind::RentedGpu,
         credentials_url: Some("https://www.runpod.io/console/user/settings"),
         key_hint: None,
@@ -129,6 +175,50 @@ pub const PRESETS: &[Preset] = &[
         blurb: "Same idea as RunPod: your instance, your endpoint, your bill.",
         kind: PresetKind::RentedGpu,
         credentials_url: Some("https://cloud.vast.ai/manage-keys/"),
+        key_hint: None,
+        needs_url: true,
+    },
+    Preset {
+        slug: "lambda",
+        name: "Lambda",
+        base_url: "",
+        blurb: "A Lambda GPU instance running an OpenAI-compatible server. Paste the endpoint \
+                your instance exposes, usually ending in /v1.",
+        kind: PresetKind::RentedGpu,
+        credentials_url: Some("https://cloud.lambda.ai/api-keys"),
+        key_hint: None,
+        needs_url: true,
+    },
+    Preset {
+        slug: "vllm",
+        name: "vLLM server",
+        base_url: "",
+        blurb: "A vLLM server you started yourself, anywhere. Give its address; if you launched \
+                it without --api-key, any value will do as the key.",
+        kind: PresetKind::RentedGpu,
+        credentials_url: Some("https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html"),
+        key_hint: None,
+        needs_url: true,
+    },
+    Preset {
+        slug: "llamacpp",
+        name: "llama.cpp server",
+        base_url: "",
+        blurb: "A llama-server running on another machine — a workstation at home, a box on \
+                the network. The same engine Kuro runs locally, somewhere with more memory.",
+        kind: PresetKind::RentedGpu,
+        credentials_url: None,
+        key_hint: None,
+        needs_url: true,
+    },
+    Preset {
+        slug: "ollama",
+        name: "Ollama",
+        base_url: "",
+        blurb: "An Ollama instance on another machine. Its OpenAI-compatible address ends in \
+                /v1, and it needs no key — put anything in the key field.",
+        kind: PresetKind::RentedGpu,
+        credentials_url: None,
         key_hint: None,
         needs_url: true,
     },
@@ -199,6 +289,61 @@ mod tests {
         for preset in PRESETS {
             assert!(preset.blurb.len() > 30, "`{}` needs a real description", preset.slug);
             assert!(!preset.name.is_empty());
+        }
+    }
+
+    #[test]
+    fn blurbs_carry_no_markup() {
+        // The interface renders a blurb as plain text, so a backtick meant as code
+        // formatting is shown as a backtick.
+        for preset in PRESETS {
+            assert!(
+                !preset.blurb.contains('`'),
+                "`{}` has a backtick in its blurb, which is displayed literally",
+                preset.slug
+            );
+        }
+    }
+
+    #[test]
+    fn hosted_apis_and_rented_hardware_land_on_different_screens() {
+        assert_eq!(surface_for("openai"), Surface::Provider);
+        assert_eq!(surface_for("openrouter"), Surface::Provider);
+        assert_eq!(surface_for("runpod"), Surface::Cloud);
+        assert_eq!(surface_for("vllm"), Surface::Cloud);
+        assert_eq!(surface_for("custom"), Surface::Cloud);
+    }
+
+    #[test]
+    fn an_unknown_slug_is_treated_as_a_custom_endpoint() {
+        // The only way to hold one is to have added a custom endpoint, which is
+        // exactly what the cloud screen covers.
+        assert_eq!(surface_for("something-from-a-newer-build"), Surface::Cloud);
+    }
+
+    #[test]
+    fn both_screens_have_something_to_show() {
+        for surface in [Surface::Provider, Surface::Cloud] {
+            assert!(
+                PRESETS.iter().any(|preset| preset.kind.surface() == surface),
+                "`{}` would be an empty screen",
+                surface.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn every_bring_your_own_cloud_entry_asks_for_its_url() {
+        // The whole point of this screen is that the endpoint is the user's.
+        for preset in PRESETS
+            .iter()
+            .filter(|preset| preset.kind.surface() == Surface::Cloud)
+        {
+            assert!(
+                preset.needs_url,
+                "`{}` is on the cloud screen but hardcodes an endpoint",
+                preset.slug
+            );
         }
     }
 

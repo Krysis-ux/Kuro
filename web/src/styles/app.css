@@ -675,7 +675,20 @@
   background: var(--bg-raised);
 }
 
+/*
+ * The flex row is what aligns the icon with the label.
+ *
+ * This rule used to be a plain block, and only `.panel-head .panel-title` was
+ * given the flex treatment — so a heading inside a panel head lined up and the
+ * same heading anywhere else did not. The icon in those cases fell back to
+ * baseline alignment, which put its centre about 3px above the centre of the
+ * letters: small enough that no single heading looks broken, consistent enough
+ * that the whole page looks slightly off.
+ */
 .panel-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: var(--text-sm);
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -1180,11 +1193,10 @@
   flex-wrap: wrap;
 }
 
+/* The flex row and gap now come from `.panel-title` itself, so a heading is laid
+   out the same way whether or not it sits in a `.panel-head`. */
 .panel-head .panel-title {
   margin-bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: 7px;
 }
 
 .panel-title svg {
@@ -1922,6 +1934,45 @@
 }
 
 /* ---------- Inline forms and small shared bits ---------- */
+
+/* Granted folders.
+ *
+ * A path is long, arbitrary and the only thing on the row that can be shortened,
+ * so it is the part that truncates — with the whole path in a `title` so it stays
+ * readable. The remove button must never be the thing pushed out of view: it is
+ * how a grant is taken back. */
+.file-roots {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+}
+
+.file-root-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.file-root-row code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+}
+
+/* The notes explain the guarantees around the control above them, so they need
+   separating from it rather than reading as part of the form. */
+.file-notes {
+  margin-top: var(--space-4);
+}
 
 .inline-form {
   display: flex;

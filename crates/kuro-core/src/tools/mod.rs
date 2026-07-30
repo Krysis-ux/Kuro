@@ -12,7 +12,9 @@
 //! never asks where a tool came from.
 
 pub mod fetch;
+pub mod files;
 pub mod html;
+pub mod intent;
 pub mod memory;
 pub mod web_search;
 
@@ -20,6 +22,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::db::Db;
+use crate::tools::files::FilePermissions;
 use crate::tools::web_search::{SearchConfig, SearchResult};
 use crate::Result;
 
@@ -30,6 +33,9 @@ pub enum Builtin {
     FetchUrl,
     Remember,
     Recall,
+    ListFiles,
+    ReadFile,
+    WriteFile,
 }
 
 impl Builtin {
@@ -38,6 +44,9 @@ impl Builtin {
         Builtin::FetchUrl,
         Builtin::Remember,
         Builtin::Recall,
+        Builtin::ListFiles,
+        Builtin::ReadFile,
+        Builtin::WriteFile,
     ];
 
     pub fn name(self) -> &'static str {
@@ -46,7 +55,18 @@ impl Builtin {
             Self::FetchUrl => "fetch_url",
             Self::Remember => "remember",
             Self::Recall => "recall",
+            Self::ListFiles => "list_files",
+            Self::ReadFile => "read_file",
+            Self::WriteFile => "write_file",
         }
+    }
+
+    /// Whether a call to this tool changes something outside Kuro.
+    ///
+    /// The interface marks these in the transcript, because "it wrote a file" is
+    /// not something a person should have to infer from a tool name.
+    pub fn modifies_the_machine(self) -> bool {
+        matches!(self, Self::WriteFile)
     }
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -62,6 +82,7 @@ impl Builtin {
         match self {
             Self::WebSearch | Self::FetchUrl => ToolGroup::Web,
             Self::Remember | Self::Recall => ToolGroup::Memory,
+            Self::ListFiles | Self::ReadFile | Self::WriteFile => ToolGroup::Files,
         }
     }
 
@@ -82,6 +103,20 @@ impl Builtin {
             Self::Recall => {
                 "Look up facts saved earlier with remember. Use this when the user refers to \
                  something they told you before."
+            }
+            Self::ListFiles => {
+                "List the contents of a folder on this computer. Only the folders the user has \
+                 granted are reachable. Use this to find a file before reading it."
+            }
+            Self::ReadFile => {
+                "Read a text file from this computer. Only the folders the user has granted are \
+                 reachable. Read a file before describing or changing it — never guess at what \
+                 it contains."
+            }
+            Self::WriteFile => {
+                "Create or overwrite a text file on this computer, inside the folders the user \
+                 has granted. This replaces the whole file. Read it first if you are changing \
+                 something that already exists, and say what you wrote afterwards."
             }
         }
     }
@@ -136,6 +171,40 @@ impl Builtin {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 25 },
                 },
             }),
+            Self::ListFiles => json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Folder to list. Absolute, or relative to the first granted folder.",
+                    },
+                },
+                "required": ["path"],
+            }),
+            Self::ReadFile => json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File to read. Absolute, or relative to the first granted folder.",
+                    },
+                },
+                "required": ["path"],
+            }),
+            Self::WriteFile => json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File to create or overwrite.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The complete new contents of the file.",
+                    },
+                },
+                "required": ["path", "content"],
+            }),
         }
     }
 
@@ -155,6 +224,10 @@ impl Builtin {
 pub enum ToolGroup {
     Web,
     Memory,
+    /// Reading and writing files on this machine. Gated by [`files::FilePermissions`]
+    /// on top of this switch, because the switch alone would be too blunt a
+    /// control for something that can change the user's own work.
+    Files,
 }
 
 impl ToolGroup {
@@ -162,6 +235,7 @@ impl ToolGroup {
         match self {
             Self::Web => "web",
             Self::Memory => "memory",
+            Self::Files => "files",
         }
     }
 
@@ -169,6 +243,7 @@ impl ToolGroup {
         match raw.trim().to_ascii_lowercase().as_str() {
             "web" => Some(Self::Web),
             "memory" => Some(Self::Memory),
+            "files" => Some(Self::Files),
             _ => None,
         }
     }
@@ -263,6 +338,8 @@ pub struct BuiltinContext<'a> {
     pub db: &'a Db,
     pub client: &'a reqwest::Client,
     pub search: SearchConfig,
+    /// Which folders the file tools may touch, and whether they may write.
+    pub files: FilePermissions,
     /// Recorded on anything the model remembers, so a fact can be traced back to
     /// the conversation that produced it.
     pub conversation_id: Option<&'a str>,
@@ -280,6 +357,56 @@ pub async fn run_builtin(tool: Builtin, arguments: &Value, context: &BuiltinCont
         Builtin::FetchUrl => run_fetch(arguments, context).await,
         Builtin::Remember => run_remember(arguments, context),
         Builtin::Recall => run_recall(arguments, context),
+        Builtin::ListFiles => run_list_files(arguments, context),
+        Builtin::ReadFile => run_read_file(arguments, context),
+        Builtin::WriteFile => run_write_file(arguments, context),
+    }
+}
+
+fn run_list_files(arguments: &Value, context: &BuiltinContext<'_>) -> ToolOutcome {
+    let Some(path) = string_argument(arguments, "path") else {
+        return ToolOutcome::failed("`path` is required and must be a string");
+    };
+
+    match context.files.resolve_path(&path, false) {
+        Ok(resolved) => match files::list_directory(&resolved) {
+            Ok(entries) => ToolOutcome::ok(files::format_listing(&resolved, &entries)),
+            Err(error) => ToolOutcome::failed(error),
+        },
+        Err(error) => ToolOutcome::failed(error),
+    }
+}
+
+fn run_read_file(arguments: &Value, context: &BuiltinContext<'_>) -> ToolOutcome {
+    let Some(path) = string_argument(arguments, "path") else {
+        return ToolOutcome::failed("`path` is required and must be a string");
+    };
+
+    match context.files.resolve_path(&path, false) {
+        Ok(resolved) => match files::read_file(&resolved) {
+            Ok(text) => ToolOutcome::ok(format!("`{}`:\n\n{text}", resolved.display())),
+            Err(error) => ToolOutcome::failed(error),
+        },
+        Err(error) => ToolOutcome::failed(error),
+    }
+}
+
+fn run_write_file(arguments: &Value, context: &BuiltinContext<'_>) -> ToolOutcome {
+    let Some(path) = string_argument(arguments, "path") else {
+        return ToolOutcome::failed("`path` is required and must be a string");
+    };
+    // An empty file is a legitimate thing to write, so `content` is read directly
+    // rather than through the blank-rejecting helper.
+    let Some(content) = arguments.get("content").and_then(Value::as_str) else {
+        return ToolOutcome::failed("`content` is required and must be a string");
+    };
+
+    match context.files.resolve_path(&path, true) {
+        Ok(resolved) => match files::write_file(&resolved, content) {
+            Ok(report) => ToolOutcome::ok(report.describe(&resolved)),
+            Err(error) => ToolOutcome::failed(error),
+        },
+        Err(error) => ToolOutcome::failed(error),
     }
 }
 
@@ -428,11 +555,23 @@ pub fn unique_tool_name(preferred: &str, taken: &[String]) -> String {
 }
 
 /// Which built-ins are on, given the groups the user enabled.
-pub fn builtins_for_groups(groups: &[ToolGroup]) -> Vec<Builtin> {
+///
+/// File permissions are applied here rather than at call time so that a model is
+/// never shown a tool it would only be refused for using. `write_file` in
+/// particular is absent entirely at the read-only tier: a model that cannot see
+/// it cannot decide to try it, which is a stronger guarantee than refusing the
+/// call afterwards and a much clearer one to explain.
+pub fn builtins_for_groups(groups: &[ToolGroup], files: &FilePermissions) -> Vec<Builtin> {
     Builtin::ALL
         .iter()
         .copied()
         .filter(|tool| groups.contains(&tool.group()))
+        .filter(|tool| {
+            if tool.group() != ToolGroup::Files {
+                return true;
+            }
+            files.is_usable() && (!tool.modifies_the_machine() || files.access.allows_write())
+        })
         .collect()
 }
 
@@ -495,26 +634,72 @@ mod tests {
         assert!(encoded["function"]["description"].as_str().unwrap().len() > 20);
     }
 
+    /// File permissions with everything granted, for the group tests.
+    fn full_file_access() -> FilePermissions {
+        FilePermissions {
+            access: files::FileAccess::Write,
+            roots: vec![std::env::temp_dir()],
+        }
+    }
+
     #[test]
     fn groups_bundle_related_tools_behind_one_switch() {
-        let web = builtins_for_groups(&[ToolGroup::Web]);
+        let none = FilePermissions::default();
+
+        let web = builtins_for_groups(&[ToolGroup::Web], &none);
         assert!(web.contains(&Builtin::WebSearch));
         assert!(web.contains(&Builtin::FetchUrl));
         assert!(!web.contains(&Builtin::Remember));
 
-        let both = builtins_for_groups(&[ToolGroup::Web, ToolGroup::Memory]);
-        assert_eq!(both.len(), Builtin::ALL.len());
+        let all = builtins_for_groups(
+            &[ToolGroup::Web, ToolGroup::Memory, ToolGroup::Files],
+            &full_file_access(),
+        );
+        assert_eq!(all.len(), Builtin::ALL.len());
 
-        assert!(builtins_for_groups(&[]).is_empty());
+        assert!(builtins_for_groups(&[], &none).is_empty());
+    }
+
+    #[test]
+    fn the_file_switch_alone_does_not_grant_file_tools() {
+        // Turning the group on without granting a folder must offer nothing,
+        // rather than offering tools whose every call is then refused.
+        let offered = builtins_for_groups(&[ToolGroup::Files], &FilePermissions::default());
+        assert!(offered.is_empty());
+    }
+
+    #[test]
+    fn the_read_only_tier_does_not_offer_the_write_tool() {
+        let read_only = FilePermissions {
+            access: files::FileAccess::Read,
+            roots: vec![std::env::temp_dir()],
+        };
+
+        let offered = builtins_for_groups(&[ToolGroup::Files], &read_only);
+
+        assert!(offered.contains(&Builtin::ReadFile));
+        assert!(offered.contains(&Builtin::ListFiles));
+        assert!(
+            !offered.contains(&Builtin::WriteFile),
+            "a model cannot try what it was never shown"
+        );
     }
 
     #[test]
     fn group_names_round_trip() {
-        for group in [ToolGroup::Web, ToolGroup::Memory] {
+        for group in [ToolGroup::Web, ToolGroup::Memory, ToolGroup::Files] {
             assert_eq!(ToolGroup::parse(group.as_str()), Some(group));
         }
         assert_eq!(ToolGroup::parse(" MEMORY "), Some(ToolGroup::Memory));
         assert_eq!(ToolGroup::parse("sql"), None);
+    }
+
+    #[test]
+    fn only_writing_is_marked_as_changing_the_machine() {
+        assert!(Builtin::WriteFile.modifies_the_machine());
+        for tool in [Builtin::ReadFile, Builtin::ListFiles, Builtin::WebSearch] {
+            assert!(!tool.modifies_the_machine());
+        }
     }
 
     #[test]
@@ -586,6 +771,7 @@ mod tests {
             db: &db,
             client: &client,
             search: SearchConfig::default(),
+            files: FilePermissions::default(),
             conversation_id: None,
         };
 
@@ -603,6 +789,7 @@ mod tests {
             db: &db,
             client: &client,
             search: SearchConfig::default(),
+            files: FilePermissions::default(),
             conversation_id: Some("conversation-1"),
         };
 
@@ -628,6 +815,7 @@ mod tests {
             db: &db,
             client: &client,
             search: SearchConfig::default(),
+            files: FilePermissions::default(),
             conversation_id: None,
         };
 

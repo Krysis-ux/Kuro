@@ -109,6 +109,28 @@ a {
   }
 }
 
+/* ---------- Icons ---------- */
+
+/*
+ * Two defaults that are wrong for icons, fixed once rather than per component.
+ *
+ * An inline SVG is aligned on the text baseline, which rests its bottom edge on
+ * the bottom of the letters. Since an icon is usually taller than the cap height
+ * beside it, the rest of it then sticks up past the text — measured at about 3px
+ * of offset for the sizes used here. Small enough that nothing looks broken,
+ * consistent enough that the interface looks slightly misaligned everywhere.
+ * `vertical-align: middle` centres it on the text instead, for any icon not
+ * already in a flex row (which handles its own alignment).
+ *
+ * The second is that a flex item may shrink below its natural size, so an icon
+ * next to a long label gets squashed into an ellipse. Icons are a fixed size by
+ * definition; the label is what should wrap.
+ */
+svg {
+  vertical-align: middle;
+  flex: none;
+}
+
 /* ---------- Shared primitives ---------- */
 
 .btn {

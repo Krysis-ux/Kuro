@@ -11,6 +11,7 @@ use kuro_core::settings::{
     default_tool_groups, memory_preload_enabled, SearchSettings, KEY_SEARCH_BASE_URL,
     KEY_SEARCH_PROVIDER,
 };
+use kuro_core::tools::files::{FileAccess, FilePermissions};
 use kuro_core::tools::web_search::{self, SearchProvider};
 use kuro_core::tools::{describe_builtins, ToolGroup};
 use kuro_core::skills;
@@ -31,10 +32,35 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
 
     let enabled_skills = skills::enabled_slugs(&state.db)?;
     let active: Vec<&skills::Skill> = skills::enabled(&state.db)?;
+    let files = FilePermissions::resolve(&state.db)?;
 
     Ok(Json(json!({
         "builtins": describe_builtins(),
         "defaultGroups": groups,
+        "files": {
+            "access": files.access.as_str(),
+            "roots": files.root_descriptions(),
+            // Whether the tools would actually be offered. A tier with no folders
+            // grants nothing, and the interface says so rather than looking on.
+            "usable": files.is_usable(),
+            "tiers": [
+                {
+                    "id": FileAccess::Off.as_str(),
+                    "name": "Off",
+                    "description": FileAccess::Off.describe(),
+                },
+                {
+                    "id": FileAccess::Read.as_str(),
+                    "name": "Read only",
+                    "description": FileAccess::Read.describe(),
+                },
+                {
+                    "id": FileAccess::Write.as_str(),
+                    "name": "Read and write",
+                    "description": FileAccess::Write.describe(),
+                },
+            ],
+        },
         "skills": {
             "catalogue": skills::SKILLS,
             "enabled": enabled_skills,
@@ -203,6 +229,85 @@ pub async fn configure_defaults(
     }
 
     overview(State(state)).await
+}
+
+/* ---------- Files ---------- */
+
+#[derive(Debug, Deserialize)]
+pub struct FilesRequest {
+    /// `off` | `read` | `write`.
+    #[serde(default)]
+    pub access: Option<String>,
+    /// The complete list of granted folders, sent whole rather than as a diff.
+    #[serde(default)]
+    pub roots: Option<Vec<String>>,
+}
+
+/// Set the file access tier and the folders it applies to.
+///
+/// Folders are checked here rather than at call time, so that granting one that
+/// does not exist is a mistake caught while the user is still looking at the
+/// form. A grant that silently covers nothing is worse than a refusal: it looks
+/// like access was given.
+pub async fn configure_files(
+    State(state): State<SharedState>,
+    Json(request): Json<FilesRequest>,
+) -> AppResult<Json<Value>> {
+    let current = FilePermissions::resolve(&state.db)?;
+
+    let access = match &request.access {
+        Some(raw) => FileAccess::parse(raw).ok_or_else(|| {
+            KuroError::bad_request(format!(
+                "unknown file access level `{raw}`. Use off, read or write."
+            ))
+        })?,
+        None => current.access,
+    };
+
+    let roots = match request.roots {
+        Some(roots) => {
+            for root in &roots {
+                let trimmed = root.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let expanded = expand_for_check(trimmed);
+                if !expanded.exists() {
+                    return Err(KuroError::bad_request(format!(
+                        "`{trimmed}` does not exist."
+                    ))
+                    .into());
+                }
+                if !expanded.is_dir() {
+                    return Err(KuroError::bad_request(format!(
+                        "`{trimmed}` is a file. Grant the folder that contains it."
+                    ))
+                    .into());
+                }
+            }
+            roots
+        }
+        None => current.root_descriptions(),
+    };
+
+    FilePermissions::store(&state.db, access, &roots)?;
+    overview(State(state)).await
+}
+
+/// Expand a leading `~` so the existence check matches what the tools will use.
+fn expand_for_check(raw: &str) -> std::path::PathBuf {
+    let Some(rest) = raw.strip_prefix('~') else {
+        return std::path::PathBuf::from(raw);
+    };
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return std::path::PathBuf::from(raw);
+    };
+    let rest = rest.trim_start_matches('/');
+    if rest.is_empty() {
+        home
+    } else {
+        home.join(rest)
+    }
 }
 
 /* ---------- Memory ---------- */

@@ -4,9 +4,15 @@ A local model server. Download GGUF weights, run them on your own machine, and
 talk to them through a minimal web interface, a terminal, or the OpenAI API.
 
 Models run locally by default, and nothing leaves the machine unless you switch on
-something that says it will: web search, an MCP server, or a provider you hold the
-key for. Each of those is a control you flip, never a default and never a decision
-the model makes for you.
+something that says it will: web search, an MCP server, or an endpoint you hold the
+key for. Nothing on the machine is touched unless you grant it either — file access
+is off until you name the folders. Each of those is a control you flip, never a
+default and never a decision the model makes for you.
+
+**Double-click `Start Kuro.command`.** It builds anything missing on the first
+run, starts the server, and opens the interface. Closing that window stops Kuro.
+
+From a terminal, if you prefer:
 
 ```
 kuro serve                    # start the server
@@ -37,6 +43,15 @@ Then open <http://127.0.0.1:8420>.
   works even on models too small to request a tool themselves. Sources are listed
   by the interface rather than left to the model, which is what stops a small model
   inventing plausible URLs.
+
+  The switch means *may* search, not *always* search. A greeting, a question about
+  Kuro itself, or a question about the conversation is answered without a search,
+  because searching the web for "hi" returns dictionary definitions and searching
+  it for "what MCP servers did I connect" cannot work at all. When a search does
+  run, the instruction is stripped from the query — "search for papers on X" is
+  searched as "papers on X" — and the top three results are opened and read in
+  full, not just their snippets. A snippet is the sentence a search engine picked
+  for matching the query, which is often not the one that answers it.
 - **MCP tool servers**, over stdio and streamable HTTP. A short recommended list
   is built in (Context7, DeepWiki, Exa, GitHub, Hugging Face, Filesystem, Fetch,
   Sequential Thinking); adding a server connects to it immediately and reports what
@@ -44,20 +59,44 @@ Then open <http://127.0.0.1:8420>.
 - **Memory.** `remember` and `recall` are real tools backed by SQLite, and saved
   facts are put in front of the model automatically so memory works without the
   model having to think to look.
-- **Skills** — installable instruction packs for Rust, Python, TypeScript, Go,
-  SQL, shell, code review, debugging, explaining and careful step-by-step
-  reasoning. Prompt guidance only, which is what makes them safe to toggle, and the
-  single highest-leverage improvement available on a small local model.
+- **Files, with permission levels.** The model can read and write real files on
+  this machine, and the controls are built the other way round from everything
+  else: nothing is permitted until you say so, and each permission is a specific
+  folder rather than a capability. Three tiers — off, read only, read and write —
+  and a list of folders. There is no default folder, so a tier on its own grants
+  nothing. Paths are resolved before they are checked, so `..` and symlinks cannot
+  lead out of a granted folder, and credentials are refused wherever they appear
+  inside one: `.ssh`, `.aws`, `.env` files, private keys. At the read-only tier the
+  write tool is not offered to the model at all, which is a stronger guarantee than
+  refusing the call afterwards.
+
+- **Skills** — 32 installable instruction packs. Languages (Rust, Python,
+  TypeScript, Go, Java, C#, C++, Swift, Kotlin, PHP, Ruby, SQL, shell, HTML/CSS,
+  React), engineering practice (code review, debugging, testing, security,
+  performance, architecture, refactoring, Git, API design), interface work (design,
+  accessibility) and writing (explaining, brainstorming, summarising, teaching,
+  editing, careful step-by-step reasoning). Prompt guidance only, which is what
+  makes them safe to toggle, and the single highest-leverage improvement available
+  on a small local model.
 - **A brief for the model.** Every turn starts with a system prompt stating where
-  it is running, whether web and memory are on *this turn*, which tools it may
-  call, and that inventing a URL is not allowed. Without it a model answers
-  questions about its own capabilities from training data, which is never about
-  this deployment.
+  it is running, whether web, memory and file access are on *this turn*, which
+  folders it may touch, which MCP servers are connected, which tools it may call,
+  and that inventing a URL is not allowed. Without it a model answers questions
+  about its own capabilities from training data, which is never about this
+  deployment — and asked what it is connected to, it guesses.
 - **Providers** — bring your own key for OpenRouter, Anthropic, OpenAI, Groq,
-  DeepSeek, Mistral, Together, a rented RunPod/Vast box, or any OpenAI-compatible
-  URL. Their models appear in the same picker as local ones, marked as leaving the
-  machine, and everything else works identically. Keys live in an owner-only file
-  beside the database, never in it.
+  DeepSeek, Mistral or Together. Their models appear in the same picker as local
+  ones, marked as leaving the machine, and everything else works identically. Keys
+  live in an owner-only file beside the database, never in it.
+
+- **Cloud** — bring your own cloud. A GPU you rented on RunPod, Vast or Lambda, a
+  vLLM or `llama-server` you started yourself, an Ollama box on the network, or any
+  OpenAI-compatible URL. Same mechanism as a provider and a deliberately separate
+  screen, because it is a different decision: a provider rents you access to
+  *their* model, while a cloud endpoint runs *your* weights on hardware you are
+  paying for by the hour, with the model, the quantisation and the context length
+  still your choices. Closer to running locally with someone else's GPU than to
+  signing up for a service.
 - **Hugging Face search** from inside the app, filtered to GGUF, with the
   quantizations each repository publishes and a fit estimate per result.
 - **Projects** — standing instructions plus a grouping of conversations. What you
@@ -90,15 +129,21 @@ hiding them:
 - **Files attached to a project.** Projects carry instructions today, not a
   document set.
 - **Saved prompt templates.**
-- **Folder access** without going through the Filesystem MCP server.
 - **Multi-part GGUF weights.** Repositories that publish only shards are shown in
   search and marked, rather than downloaded into something that cannot load.
 - **Authentication.** The server is loopback-only for exactly this reason; LAN
   serving waits on API keys.
 - **Fine-tuning.** Deliberately a separate future application.
 
-There is no Kuro-hosted cloud and no plan for one. "Providers" means *your*
-account and *your* key, and the request goes straight from this machine to them.
+There is no Kuro-hosted cloud. Both "Providers" and "Cloud" mean *your* account
+and *your* key, and the request goes straight from this machine to the endpoint.
+The Cloud screen is bring-your-own-cloud, and it is not a step towards a hosted
+one — everything on it is an endpoint you own.
+
+Also not built: **per-call approval prompts for file writes.** Access is granted
+per folder ahead of time rather than confirmed per write. Every call is shown in
+the transcript as it happens, but nothing pauses to ask first, which is why the
+write tier says so plainly.
 
 ## Requirements
 
@@ -195,7 +240,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cd web && npm run typecheck
 ```
 
-337 tests, no network access required — the search parsers, the MCP protocol
+395 tests, no network access required — the search parsers, the MCP protocol
 handling and the tool loop are all tested against recorded payloads rather than
 against live services, so the suite does not break when someone else's site
 changes. What *does* need a live check is whether a provider's markup still parses;

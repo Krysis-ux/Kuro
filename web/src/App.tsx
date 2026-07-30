@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { ChatPage } from './pages/Chat'
+import { CloudPage } from './pages/Cloud'
 import { ModelsPage } from './pages/Models'
 import { ProjectPage, ProjectsPage } from './pages/Projects'
 import { ProvidersPage } from './pages/Providers'
@@ -26,6 +27,7 @@ export function App() {
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/tools" element={<ToolsPage />} />
           <Route path="/providers" element={<ProvidersPage />} />
+          <Route path="/cloud" element={<CloudPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           {/* The tools page absorbed the old MCP-only screen; keep the link working. */}
           <Route path="/mcp" element={<Navigate to="/tools" replace />} />
