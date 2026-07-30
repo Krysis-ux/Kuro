@@ -1,7 +1,7 @@
 //! The Kuro LLM daemon.
 //!
 //! One process serves the JSON API, the OpenAI-compatible API and the web
-//! interface. Inference happens in separate `llama-server` child processes that
+//! interface. Inference happens in separate `kuro-engine` child processes that
 //! this daemon starts, supervises and stops.
 
 use std::collections::HashMap;
@@ -26,8 +26,9 @@ mod static_files;
 
 use state::AppState;
 
-/// Default port. Chosen to avoid llama.cpp's own web UI on 8080, Ollama on
-/// 11434 and LM Studio on 1234, so Kuro can run alongside them.
+/// Default port. Deliberately outside the ranges other local model servers
+/// claim by default — 8080, 11434, 1234 — so Kuro can run alongside whatever
+/// else is already on the machine.
 const DEFAULT_PORT: u16 = 8420;
 
 #[tokio::main]

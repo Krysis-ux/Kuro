@@ -1,6 +1,6 @@
 //! Deciding which engines are running.
 //!
-//! One `llama-server` per loaded model, started on demand and stopped when it
+//! One engine process per loaded model, started on demand and stopped when it
 //! has been idle. Loads are serialised behind a single lock: two large models
 //! loading at once would compete for the same memory, so making that impossible
 //! is intentional rather than a limitation.
@@ -206,11 +206,15 @@ impl EngineManager {
             .get_setting(KEY_ENGINE_RELEASE_TAG)?
             .and_then(|value| value.as_str().map(str::to_string));
 
-        // Fast path: already installed, no download record needed.
+        // Fast path: already installed, no download record needed. It still goes
+        // through `adopt_installed`, which is what brings an engine installed by
+        // an older build up to the current name — this path is the one every
+        // existing install takes, so skipping it would mean the rename only ever
+        // reached people who reinstalled.
         let requested = tag.as_deref().unwrap_or(crate::engine::bootstrap::DEFAULT_ENGINE_TAG);
         if let Some(existing) = self.db.get_engine_runtime(requested)? {
             if std::path::Path::new(&existing.path).exists() {
-                return Ok(existing);
+                return crate::engine::bootstrap::adopt_installed(&self.db, existing);
             }
         }
 

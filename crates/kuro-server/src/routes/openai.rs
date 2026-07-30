@@ -1,7 +1,7 @@
 //! OpenAI-compatible endpoints.
 //!
 //! These are a thin proxy in front of the engine rather than a reimplementation:
-//! whatever `llama-server` supports — tool calls, JSON schemas, vision content
+//! whatever the engine supports — tool calls, JSON schemas, vision content
 //! blocks, sampling parameters Kuro has never heard of — passes through
 //! untouched. Kuro's contribution is resolving the model name and making sure
 //! an engine is running before the request arrives.

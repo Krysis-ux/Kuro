@@ -1,6 +1,6 @@
 //! Internal port allocation for engine processes.
 //!
-//! Every loaded model gets its own `llama-server` on a loopback port that users
+//! Every loaded model gets its own engine process on a loopback port that users
 //! never see; they only ever talk to Kuro's own port. Ports are taken from a
 //! private range and probed before use so Kuro does not collide with whatever
 //! else is running on the machine.

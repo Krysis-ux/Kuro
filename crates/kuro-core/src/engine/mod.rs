@@ -1,7 +1,7 @@
 //! Inference engine supervision.
 //!
-//! Kuro runs models through `llama.cpp`'s `llama-server`, one process per loaded
-//! model, managed entirely by [`manager::EngineManager`].
+//! Kuro runs models through `kuro-engine`, one process per loaded model,
+//! managed entirely by [`manager::EngineManager`].
 
 pub mod bootstrap;
 pub mod manager;
