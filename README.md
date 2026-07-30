@@ -3,7 +3,10 @@
 A local model server. Download GGUF weights, run them on your own machine, and
 talk to them through a minimal web interface, a terminal, or the OpenAI API.
 
-Everything runs locally. Nothing is sent anywhere.
+Models run locally by default, and nothing leaves the machine unless you switch on
+something that says it will: web search, an MCP server, or a provider you hold the
+key for. Each of those is a control you flip, never a default and never a decision
+the model makes for you.
 
 ```
 kuro serve                    # start the server
@@ -26,7 +29,37 @@ Then open <http://127.0.0.1:8420>.
   with markdown, streaming, and a per-message inspector showing token counts,
   tokens/second and time to first token.
 - **An effort control** (low / balanced / high / max) instead of a wall of
-  sampling sliders. The raw knobs live in Settings.
+  sampling sliders. The raw knobs live in Settings, on sliders that also accept an
+  exact typed value.
+- **Web search that works on install.** DuckDuckGo needs no key; Brave, Tavily and
+  a SearXNG instance are supported when you want a stable API. Turning the switch
+  on searches *before* the model answers and puts the results in its context, so it
+  works even on models too small to request a tool themselves. Sources are listed
+  by the interface rather than left to the model, which is what stops a small model
+  inventing plausible URLs.
+- **MCP tool servers**, over stdio and streamable HTTP. A short recommended list
+  is built in (Context7, DeepWiki, Exa, GitHub, Hugging Face, Filesystem, Fetch,
+  Sequential Thinking); adding a server connects to it immediately and reports what
+  it found rather than saving silently and failing later.
+- **Memory.** `remember` and `recall` are real tools backed by SQLite, and saved
+  facts are put in front of the model automatically so memory works without the
+  model having to think to look.
+- **Skills** — installable instruction packs for Rust, Python, TypeScript, Go,
+  SQL, shell, code review, debugging, explaining and careful step-by-step
+  reasoning. Prompt guidance only, which is what makes them safe to toggle, and the
+  single highest-leverage improvement available on a small local model.
+- **A brief for the model.** Every turn starts with a system prompt stating where
+  it is running, whether web and memory are on *this turn*, which tools it may
+  call, and that inventing a URL is not allowed. Without it a model answers
+  questions about its own capabilities from training data, which is never about
+  this deployment.
+- **Providers** — bring your own key for OpenRouter, Anthropic, OpenAI, Groq,
+  DeepSeek, Mistral, Together, a rented RunPod/Vast box, or any OpenAI-compatible
+  URL. Their models appear in the same picker as local ones, marked as leaving the
+  machine, and everything else works identically. Keys live in an owner-only file
+  beside the database, never in it.
+- **Hugging Face search** from inside the app, filtered to GGUF, with the
+  quantizations each repository publishes and a fit estimate per result.
 - **OpenAI-compatible API**, so existing tools work by changing a base URL:
   ```
   OPENAI_BASE_URL=http://127.0.0.1:8420/v1
@@ -40,13 +73,23 @@ Then open <http://127.0.0.1:8420>.
 
 ## Not built yet
 
-Listed honestly, because the interface shows placeholders for some of it:
+Listed honestly, because the interface shows some of these as disabled rather than
+hiding them:
 
-- MCP tool servers, and the web-search toggle in the composer.
-- Attaching folders, saved prompt templates.
-- Cloud connectors for your own RunPod / Vast.ai / Lambda Labs account.
-- Kuro's own hosted cloud (the "coming soon" card in Settings has no backend).
-- Fine-tuning. That is deliberately a separate future application.
+- **Images, audio, video and PDF attachments.** Text and code files are read into
+  the prompt; the other modalities need engine work Kuro does not have yet. The
+  `+` menu says which model capability each one would need.
+- **Projects** — a workspace grouping conversations, files and instructions.
+- **Saved prompt templates.**
+- **Folder access** without going through the Filesystem MCP server.
+- **Multi-part GGUF weights.** Repositories that publish only shards are shown in
+  search and marked, rather than downloaded into something that cannot load.
+- **Authentication.** The server is loopback-only for exactly this reason; LAN
+  serving waits on API keys.
+- **Fine-tuning.** Deliberately a separate future application.
+
+There is no Kuro-hosted cloud and no plan for one. "Providers" means *your*
+account and *your* key, and the request goes straight from this machine to them.
 
 ## Requirements
 
@@ -113,13 +156,18 @@ running set and the next request starts a fresh one.
 
 | Path | What lives there |
 | --- | --- |
-| `crates/kuro-core` | Models, downloads, engine supervision, storage, hardware detection. No HTTP, no CLI parsing. |
+| `crates/kuro-core` | Models, downloads, engine supervision, storage, hardware detection, tools, MCP client, providers, the model's system prompt. No HTTP, no CLI parsing. |
 | `crates/kuro-server` | The Axum daemon: routing, streaming, static files. |
 | `crates/kuro-cli` | The `kuro` command. A thin client over the same HTTP API the browser uses. |
 | `web` | React + TypeScript interface. Plain CSS with monochrome design tokens. |
 
 Data lives in `~/Library/Application Support/Kuro` — SQLite database, model
 weights, engine builds and per-engine logs. Set `KURO_HOME` to move it.
+
+API keys and bearer tokens are the one thing kept *out* of the database, in
+`credentials.json` beside it with `0600` permissions. The database is what gets
+copied, backed up and attached to bug reports; a provider key travelling with it
+would be a bad default. The database stores only a reference to each entry.
 
 ### Ports
 
@@ -137,6 +185,12 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cd web && npm run typecheck
 ```
+
+319 tests, no network access required — the search parsers, the MCP protocol
+handling and the tool loop are all tested against recorded payloads rather than
+against live services, so the suite does not break when someone else's site
+changes. What *does* need a live check is whether a provider's markup still parses;
+Tools → Web search has a Test button for that.
 
 ## Licence
 

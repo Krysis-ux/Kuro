@@ -43,6 +43,191 @@ export interface InstalledModel {
   fit: FitEstimate | null
 }
 
+/**
+ * A model belonging to a connected provider.
+ *
+ * `id` carries a `cloud:` prefix and is usable anywhere a local model id is, so
+ * the composer and the conversation store need no notion of "remote".
+ */
+export interface RemoteModel {
+  id: string
+  name: string
+  connector_id: string
+  connector_label: string
+  provider: string
+}
+
+/** A GGUF repository found on Hugging Face. */
+export interface HubModel {
+  repo: string
+  name: string
+  owner: string
+  downloads: number
+  likes: number
+  last_modified: string | null
+  quants: string[]
+  param_count: string | null
+  gated: boolean
+  /** Published only as multi-part shards, which cannot be loaded yet. */
+  split_only: boolean
+  fit: FitEstimate | null
+  installed: boolean
+}
+
+/* ---------- Tools ---------- */
+
+export type ToolGroup = 'web' | 'memory'
+
+export interface BuiltinTool {
+  name: string
+  description: string
+  group: ToolGroup
+}
+
+export interface SearchProviderOption {
+  id: string
+  name: string
+  note: string
+  needsApiKey: boolean
+  needsBaseUrl: boolean
+  credentialsUrl: string | null
+}
+
+export type SkillCategory = 'language' | 'practice' | 'writing'
+
+/** An instruction pack appended to the system prompt when switched on. */
+export interface Skill {
+  slug: string
+  name: string
+  blurb: string
+  category: SkillCategory
+  instructions: string
+  approx_tokens: number
+}
+
+export interface ToolsOverview {
+  builtins: BuiltinTool[]
+  defaultGroups: ToolGroup[]
+  skills: {
+    catalogue: Skill[]
+    enabled: string[]
+    /** Rough context cost of what is on, so a user can see it adding up. */
+    approxTokens: number
+  }
+  memory: { preload: boolean; count: number }
+  search: {
+    provider: string
+    baseUrl: string | null
+    /** Whether a key is stored. The key itself is never sent to the browser. */
+    hasApiKey: boolean
+    needsApiKey: boolean
+    needsBaseUrl: boolean
+    providers: SearchProviderOption[]
+  }
+}
+
+export interface SearchResult {
+  title: string
+  url: string
+  snippet: string
+}
+
+export interface MemoryRecord {
+  id: string
+  content: string
+  tags: string[]
+  source: string | null
+  created_at: string
+}
+
+/* ---------- MCP ---------- */
+
+export type McpTransport = 'stdio' | 'http'
+export type McpStatus = 'connected' | 'disconnected' | 'error'
+
+export interface ExposedTool {
+  /** The name the model is given, after collision handling. */
+  name: string
+  /** The name the server itself uses. */
+  remote_name: string
+  description: string
+}
+
+export interface McpServer {
+  id: string
+  name: string
+  transport: McpTransport
+  command: string | null
+  args: string[]
+  env: Record<string, unknown>
+  url: string | null
+  headers: Record<string, unknown>
+  enabled: boolean
+  status: McpStatus
+  last_error: string | null
+  slug: string | null
+  tool_count: number | null
+  created_at: string
+  tools: ExposedTool[]
+  /** Whether a bearer token is stored. Never the token. */
+  has_auth: boolean
+}
+
+export type McpRequirement = 'none' | 'api_key' | 'local_runtime'
+
+export interface McpRegistryEntry {
+  slug: string
+  name: string
+  blurb: string
+  detail: string
+  transport: McpTransport
+  url: string | null
+  command: string | null
+  args: string[]
+  requirement: McpRequirement
+  credentials_url: string | null
+  homepage: string
+  recommended: boolean
+  installed: boolean
+}
+
+/** Result of a connection attempt, reported alongside the row it belongs to. */
+export interface ConnectionResult {
+  ok: boolean
+  toolCount?: number
+  error?: string
+}
+
+/* ---------- Providers ---------- */
+
+export type ProviderStatus = 'untested' | 'ok' | 'error'
+export type PresetKind = 'aggregator' | 'first_party' | 'rented_gpu' | 'custom'
+
+export interface ProviderPreset {
+  slug: string
+  name: string
+  base_url: string
+  blurb: string
+  kind: PresetKind
+  credentials_url: string | null
+  key_hint: string | null
+  needs_url: boolean
+}
+
+export interface Provider {
+  id: string
+  provider: string
+  label: string
+  base_url: string
+  status: ProviderStatus
+  last_tested_at: string | null
+  last_error: string | null
+  enabled: boolean
+  models: string[]
+  created_at: string
+  hasKey: boolean
+}
+
 export interface RecommendedModel {
   id: string
   slug: string
@@ -99,6 +284,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   reasoning_content: string | null
+  /** The tool trail for this turn, as recorded by the server. */
+  tool_calls: { name: string; ok: boolean; preview: string }[] | null
   used_web_search: boolean
   web_sources: { title: string; url: string }[] | null
   model_id: string | null
@@ -187,14 +374,27 @@ const post = <T>(path: string, body?: unknown) =>
 
 export const api = {
   status: () => request<ServerStatus>('/api/status'),
+  /** Unload every engine and stop the daemon. */
+  shutdown: () => post<{ stopping: boolean; unloadingEngines: number }>('/api/shutdown'),
   hardware: () =>
     request<{ hardware: HardwareInfo; effectiveEngineSettings: Record<string, number> }>(
       '/api/hardware',
     ),
 
   models: {
-    list: () => request<{ models: InstalledModel[] }>('/api/models'),
+    list: () =>
+      request<{ models: InstalledModel[]; remote: RemoteModel[] }>('/api/models'),
     recommended: () => request<{ models: RecommendedModel[] }>('/api/models/recommended'),
+    /** Search Hugging Face. An empty query returns the most-downloaded. */
+    searchHub: (query: string, limit?: number) => {
+      const params = new URLSearchParams()
+      if (query.trim()) params.set('q', query.trim())
+      if (limit) params.set('limit', String(limit))
+      const suffix = params.toString()
+      return request<{ models: HubModel[] }>(
+        `/api/models/search${suffix ? `?${suffix}` : ''}`,
+      )
+    },
     loaded: () => request<{ loaded: LoadedEngine[] }>('/api/models/loaded'),
     preview: (model: string) => post<PullPreview>('/api/models/preview', { model }),
     pull: (model: string) => post<{ downloadId: string }>('/api/models/pull', { model }),
@@ -232,14 +432,89 @@ export const api = {
         body: JSON.stringify(patch),
       }),
   },
+
+  tools: {
+    overview: () => request<ToolsOverview>('/api/tools'),
+    setDefaults: (patch: { groups?: ToolGroup[]; memoryPreload?: boolean }) =>
+      post<ToolsOverview>('/api/tools/defaults', patch),
+    /** The whole set is sent, not a diff, so concurrent toggles cannot disagree. */
+    setSkills: (enabled: string[]) => post<ToolsOverview>('/api/tools/skills', { enabled }),
+    configureSearch: (patch: { provider?: string; baseUrl?: string; apiKey?: string }) =>
+      post<ToolsOverview>('/api/tools/search', patch),
+    /** Run a real search, so a user never has to send a message to find out. */
+    testSearch: (query?: string) =>
+      post<{ ok: boolean; provider: string; results?: SearchResult[]; error?: string }>(
+        '/api/tools/search/test',
+        { query },
+      ),
+  },
+
+  memories: {
+    list: (query?: string) =>
+      request<{ memories: MemoryRecord[] }>(
+        `/api/memories${query ? `?q=${encodeURIComponent(query)}` : ''}`,
+      ),
+    create: (content: string, tags: string[] = []) =>
+      post<{ memory: MemoryRecord }>('/api/memories', { content, tags }),
+    remove: (id: string) => request<void>(`/api/memories/${id}`, { method: 'DELETE' }),
+  },
+
+  mcp: {
+    /** `connect` dials every enabled server; off by default so loads are instant. */
+    servers: (connect = false) =>
+      request<{ servers: McpServer[] }>(`/api/mcp/servers${connect ? '?connect=true' : ''}`),
+    registry: () => request<{ entries: McpRegistryEntry[] }>('/api/mcp/registry'),
+    add: (body: {
+      slug?: string
+      name?: string
+      transport?: McpTransport
+      url?: string
+      command?: string
+      args?: string[]
+      env?: Record<string, string>
+      headers?: Record<string, string>
+      authToken?: string
+    }) => post<{ server: McpServer; connection: ConnectionResult }>('/api/mcp/servers', body),
+    refresh: (id: string) => post<ConnectionResult>(`/api/mcp/servers/${id}/refresh`),
+    setEnabled: (id: string, enabled: boolean) =>
+      post<{ enabled: boolean }>(`/api/mcp/servers/${id}/enabled`, { enabled }),
+    setAuth: (id: string, authToken: string) =>
+      post<ConnectionResult>(`/api/mcp/servers/${id}/auth`, { authToken }),
+    remove: (id: string) => request<void>(`/api/mcp/servers/${id}`, { method: 'DELETE' }),
+  },
+
+  providers: {
+    list: () => request<{ providers: Provider[]; presets: ProviderPreset[] }>('/api/providers'),
+    add: (body: { provider: string; label?: string; baseUrl?: string; apiKey: string }) =>
+      post<{ provider: Provider }>('/api/providers', body),
+    test: (id: string) =>
+      post<{ ok: boolean; models?: string[]; error?: string }>(`/api/providers/${id}/test`),
+    replaceKey: (id: string, apiKey: string) =>
+      post<{ status: ProviderStatus; last_error: string | null; models: string[] }>(
+        `/api/providers/${id}/key`,
+        { apiKey },
+      ),
+    setEnabled: (id: string, enabled: boolean) =>
+      post<{ enabled: boolean }>(`/api/providers/${id}/enabled`, { enabled }),
+    remove: (id: string) => request<void>(`/api/providers/${id}`, { method: 'DELETE' }),
+  },
 }
 
 /* ---------- Streaming ---------- */
+
+export interface WebSource {
+  title: string
+  url: string
+}
 
 export type ChatEvent =
   | { type: 'token'; content: string }
   | { type: 'reasoning'; content: string }
   | { type: 'error'; message: string }
+  /** Something went wrong that did not stop the turn — a failed search, say. */
+  | { type: 'notice'; message: string }
+  | { type: 'tool_call'; name: string; arguments: Record<string, unknown> }
+  | { type: 'tool_result'; name: string; ok: boolean; preview: string }
   | {
       type: 'done'
       messageId: string
@@ -247,6 +522,8 @@ export type ChatEvent =
       finishReason: string | null
       usage: { promptTokens: number | null; completionTokens: number | null }
       timings: { ttftMs: number | null; totalMs: number | null; tokensPerSecond: number | null }
+      sources: WebSource[]
+      toolRounds: number
     }
 
 /**
@@ -258,7 +535,15 @@ export type ChatEvent =
  */
 export async function* streamMessage(
   conversationId: string,
-  body: { content: string; model?: string; effort?: Effort },
+  body: {
+    content: string
+    model?: string
+    effort?: Effort
+    /** Tool groups on for this message. */
+    tools?: ToolGroup[]
+    /** Search before answering, rather than hoping the model asks. */
+    web_search?: boolean
+  },
   signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
   const response = await fetch(`/api/conversations/${conversationId}/messages`, {
@@ -341,14 +626,41 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${bytes} B`
 }
 
+/** Prefix marking a model as belonging to a provider rather than this machine. */
+const REMOTE_PREFIX = 'cloud:'
+
+export function isRemoteModel(id: string): boolean {
+  return id.startsWith(REMOTE_PREFIX) && id.slice(REMOTE_PREFIX.length).includes('/')
+}
+
 /** Strip the quantization suffix so lists stay readable. */
 export function friendlyModelName(id: string): string {
+  if (isRemoteModel(id)) {
+    // Everything after the connector id is the provider's own name for it,
+    // which may itself contain slashes.
+    const rest = id.slice(REMOTE_PREFIX.length)
+    return rest.slice(rest.indexOf('/') + 1)
+  }
   return id.split(':')[0] ?? id
 }
 
 export function quantOf(id: string): string | null {
+  if (isRemoteModel(id)) return null
   const parts = id.split(':')
   return parts.length > 1 ? (parts[1]?.toUpperCase() ?? null) : null
+}
+
+/** Owner half of a `publisher/name` model id, when there is one. */
+export function publisherOf(id: string): string | null {
+  const name = friendlyModelName(id)
+  const slash = name.indexOf('/')
+  return slash > 0 ? name.slice(0, slash) : null
+}
+
+export function formatCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`
+  return String(value)
 }
 
 export function relativeTime(iso: string): string {

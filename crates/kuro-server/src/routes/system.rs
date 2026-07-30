@@ -28,6 +28,42 @@ pub async fn status(State(state): State<SharedState>) -> AppResult<Json<Value>> 
     })))
 }
 
+/// Stop the daemon.
+///
+/// The response is sent before the shutdown begins, because a request that dies
+/// with the server it is killing looks like a crash to the browser. The delay is
+/// long enough for the response to be flushed and short enough not to feel like a
+/// hang.
+///
+/// Engines are stopped first. They are separate processes holding gigabytes, and
+/// letting them outlive the daemon that supervises them would leave a machine with
+/// no way to reclaim that memory short of finding the pids by hand.
+pub async fn shutdown(State(state): State<SharedState>) -> AppResult<Json<Value>> {
+    let loaded = state.engines.loaded().await.len();
+    tracing::info!(engines = loaded, "shutdown requested from the interface");
+
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        state.engines.unload_all().await;
+        tracing::info!("stopping");
+        // The graceful-shutdown future in `main` is watching for a signal, so
+        // raising one here takes the same path as Ctrl-C rather than a second,
+        // separately-maintained exit route.
+        #[cfg(unix)]
+        // SAFETY: raising SIGTERM in our own process, which `main` handles.
+        unsafe {
+            libc::raise(libc::SIGTERM);
+        }
+        #[cfg(not(unix))]
+        std::process::exit(0);
+    });
+
+    Ok(Json(json!({
+        "stopping": true,
+        "unloadingEngines": loaded,
+    })))
+}
+
 /// Detected hardware plus the engine defaults derived from it.
 pub async fn hardware(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     let settings =

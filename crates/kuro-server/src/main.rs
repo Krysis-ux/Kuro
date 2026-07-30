@@ -10,9 +10,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context;
+use kuro_core::cloud::ProviderRegistry;
 use kuro_core::db::Db;
 use kuro_core::engine::EngineManager;
-use kuro_core::{hardware, http, Paths};
+use kuro_core::mcp::McpManager;
+use kuro_core::{hardware, http, tools, Paths, SecretStore};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
@@ -41,18 +43,39 @@ async fn main() -> anyhow::Result<()> {
     let db = Db::open(&paths.database_file()).context("opening the Kuro database")?;
     let hardware = hardware::detect();
 
+    // A duplicate built-in tool name would make dispatch ambiguous, which is a
+    // programming mistake rather than a runtime condition — so it fails at
+    // startup rather than mid-conversation.
+    tools::assert_builtin_names_are_unique().context("checking the built-in tools")?;
+
     let port = resolve_port();
     let engines = Arc::new(
         EngineManager::new(db.clone(), paths.clone(), hardware.clone())
             .context("starting the engine manager")?,
     );
 
+    let outbound = http::client()?;
+    let secrets = SecretStore::new(paths.credentials_file());
+    let mcp = Arc::new(McpManager::new(
+        db.clone(),
+        secrets.clone(),
+        outbound.clone(),
+    ));
+    let providers = Arc::new(ProviderRegistry::new(
+        db.clone(),
+        secrets.clone(),
+        outbound.clone(),
+    ));
+
     let app_state = Arc::new(AppState {
         db,
         paths: paths.clone(),
         hardware,
         engines: engines.clone(),
-        outbound: http::client()?,
+        outbound,
+        secrets,
+        mcp,
+        providers,
         started_at: chrono::Utc::now(),
         port,
         download_cancels: Mutex::new(HashMap::new()),

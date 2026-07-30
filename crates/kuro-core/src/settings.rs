@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
 use crate::hardware::HardwareInfo;
+use crate::tools::web_search::SearchProvider;
+use crate::tools::ToolGroup;
 use crate::Result;
 
 pub const KEY_CONTEXT_SIZE: &str = "engine.contextSize";
@@ -17,6 +19,12 @@ pub const KEY_THREADS: &str = "engine.threads";
 pub const KEY_IDLE_UNLOAD_MINUTES: &str = "engine.idleUnloadMinutes";
 pub const KEY_ENGINE_RELEASE_TAG: &str = "engine.releaseTag";
 pub const KEY_DEFAULT_MODEL: &str = "chat.defaultModel";
+pub const KEY_SEARCH_PROVIDER: &str = "search.provider";
+pub const KEY_SEARCH_BASE_URL: &str = "search.baseUrl";
+/// Tool groups on by default in a new conversation.
+pub const KEY_DEFAULT_TOOL_GROUPS: &str = "tools.defaultGroups";
+/// Whether saved memories are prepended to a conversation without being asked for.
+pub const KEY_MEMORY_PRELOAD: &str = "tools.memoryPreload";
 
 /// How long a model stays resident with no requests before it is unloaded.
 /// Zero means "keep it loaded until told otherwise".
@@ -58,6 +66,68 @@ impl EngineSettings {
             idle_unload_minutes,
         })
     }
+}
+
+/// Web search preferences.
+///
+/// The API key is deliberately absent: it lives in the credential store, and the
+/// settings endpoint is readable by the browser. Keeping the two apart means the
+/// UI can show which provider is selected without ever being able to read its key.
+#[derive(Debug, Clone)]
+pub struct SearchSettings {
+    pub provider: SearchProvider,
+    pub base_url: Option<String>,
+}
+
+impl SearchSettings {
+    /// Credential-store reference for the search provider's key. One reference
+    /// rather than one per provider, because only one provider is active at a time
+    /// and a stale key for an unselected provider is a liability, not a feature.
+    pub const KEY_REFERENCE: &'static str = "search:api-key";
+
+    pub fn resolve(db: &Db) -> Result<Self> {
+        let provider = db
+            .get_setting(KEY_SEARCH_PROVIDER)?
+            .and_then(|value| value.as_str().and_then(SearchProvider::parse))
+            .unwrap_or(SearchProvider::Duckduckgo);
+
+        let base_url = db
+            .get_setting(KEY_SEARCH_BASE_URL)?
+            .and_then(|value| value.as_str().map(str::to_string))
+            .filter(|url| !url.trim().is_empty());
+
+        Ok(Self { provider, base_url })
+    }
+}
+
+/// Tool groups a new conversation starts with.
+///
+/// Memory is on by default and web is not. Memory only ever reads what the user
+/// themselves asked to be saved, whereas search sends the query off the machine —
+/// which is exactly the thing this application promises not to do unprompted.
+pub fn default_tool_groups(db: &Db) -> Result<Vec<ToolGroup>> {
+    let Some(stored) = db.get_setting(KEY_DEFAULT_TOOL_GROUPS)? else {
+        return Ok(vec![ToolGroup::Memory]);
+    };
+
+    Ok(stored
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter_map(ToolGroup::parse)
+                .collect()
+        })
+        .unwrap_or_else(|| vec![ToolGroup::Memory]))
+}
+
+/// Whether saved memories are put in front of the model unasked.
+pub fn memory_preload_enabled(db: &Db) -> Result<bool> {
+    Ok(db
+        .get_setting(KEY_MEMORY_PRELOAD)?
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true))
 }
 
 fn read_u32(db: &Db, key: &str) -> Result<Option<u32>> {

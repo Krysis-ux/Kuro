@@ -4,6 +4,7 @@ pub mod curated;
 pub mod download;
 pub mod hf;
 pub mod pull;
+pub mod search;
 
 pub use curated::{find_curated, CuratedModel, CURATED_MODELS};
 pub use download::{download_to_file, sha256_file, DownloadOutcome};

@@ -1,20 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { Effort, InstalledModel } from '../lib/api'
-import { friendlyModelName, quantOf } from '../lib/api'
+import { useQuery } from '@tanstack/react-query'
+import { api, isRemoteModel, type Effort, type InstalledModel, type RemoteModel } from '../lib/api'
 import { useUi } from '../store/ui'
+import { ModelPicker } from './ModelPicker'
 import {
-  ChevronIcon,
-  CloudIcon,
+  BrainIcon,
+  FileIcon,
   FolderIcon,
-  GitHubIcon,
   GlobeIcon,
+  ImageIcon,
+  MicIcon,
   PaperclipIcon,
   PlugIcon,
   PlusIcon,
   SendIcon,
-  SparkIcon,
   StopIcon,
+  ToolIcon,
+  VideoIcon,
 } from './icons'
 
 const EFFORTS: Effort[] = ['low', 'balanced', 'high', 'max']
@@ -26,8 +29,15 @@ const EFFORT_HINT: Record<Effort, string> = {
   max: 'Maximum thinking and output',
 }
 
+/** Extensions the text path can read. Anything else needs a capable model. */
+const TEXT_ACCEPT =
+  '.txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.log,.xml,.yml,.yaml,.toml,.ini,.env,' +
+  '.ts,.tsx,.js,.jsx,.py,.rs,.go,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.rb,.php,.sh,' +
+  '.sql,.css,.scss,.html,.vue,.svelte'
+
 interface ComposerProps {
   models: InstalledModel[]
+  remote: RemoteModel[]
   onSend: (content: string) => void
   onStop: () => void
   isStreaming: boolean
@@ -35,15 +45,24 @@ interface ComposerProps {
   centred: boolean
 }
 
-export function Composer({ models, onSend, onStop, isStreaming, centred }: ComposerProps) {
+export function Composer({
+  models,
+  remote,
+  onSend,
+  onStop,
+  isStreaming,
+  centred,
+}: ComposerProps) {
   const [text, setText] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([])
+  const [attachError, setAttachError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const { effort, setEffort, webSearch, setWebSearch } = useUi()
+  const { effort, setEffort, webSearch, setWebSearch, memory, setMemory, selectedModel, setSelectedModel } =
+    useUi()
 
   // Grow with the content instead of scrolling inside a fixed box.
   useEffect(() => {
@@ -62,6 +81,16 @@ export function Composer({ models, onSend, onStop, isStreaming, centred }: Compo
     return () => document.removeEventListener('mousedown', close)
   }, [menuOpen])
 
+  const active = useMemo(() => {
+    const ready = models.filter((entry) => entry.model.status === 'ready')
+    const id = selectedModel ?? ready[0]?.model.id ?? remote[0]?.id ?? null
+    return {
+      id,
+      capabilities: ready.find((entry) => entry.model.id === id)?.model.capabilities ?? [],
+      isRemote: id ? isRemoteModel(id) : false,
+    }
+  }, [models, remote, selectedModel])
+
   const submit = () => {
     const trimmed = text.trim()
     if (!trimmed || isStreaming) return
@@ -74,6 +103,7 @@ export function Composer({ models, onSend, onStop, isStreaming, centred }: Compo
     onSend(preamble ? `${preamble}\n\n${trimmed}` : trimmed)
     setText('')
     setAttachments([])
+    setAttachError(null)
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -85,13 +115,28 @@ export function Composer({ models, onSend, onStop, isStreaming, centred }: Compo
 
   const readFiles = async (files: FileList | null) => {
     if (!files) return
-    const read = await Promise.all(
-      Array.from(files).map(async (file) => ({
-        name: file.name,
-        content: await file.text(),
-      })),
-    )
-    setAttachments((existing) => [...existing, ...read])
+    setAttachError(null)
+
+    const read: { name: string; content: string }[] = []
+    const rejected: string[] = []
+
+    for (const file of Array.from(files)) {
+      const content = await file.text()
+      // A file that decodes to control characters is binary, and pasting it into
+      // the prompt would waste the whole context window on noise.
+      if (looksBinary(content)) {
+        rejected.push(file.name)
+        continue
+      }
+      read.push({ name: file.name, content })
+    }
+
+    if (read.length > 0) setAttachments((existing) => [...existing, ...read])
+    if (rejected.length > 0) {
+      setAttachError(
+        `${rejected.join(', ')} ${rejected.length === 1 ? 'is not' : 'are not'} readable as text.`,
+      )
+    }
     setMenuOpen(false)
   }
 
@@ -117,10 +162,12 @@ export function Composer({ models, onSend, onStop, isStreaming, centred }: Compo
           </div>
         )}
 
+        {attachError && <p className="composer-warning">{attachError}</p>}
+
         <textarea
           ref={textareaRef}
           className="composer-input"
-          placeholder="Message Kuro…"
+          placeholder={active.isRemote ? 'Message — this one goes to your provider…' : 'Message Kuro…'}
           rows={1}
           value={text}
           onChange={(event) => setText(event.target.value)}
@@ -138,24 +185,53 @@ export function Composer({ models, onSend, onStop, isStreaming, centred }: Compo
               >
                 <PlusIcon />
               </button>
-              {menuOpen && <AddMenu onAttach={() => fileInputRef.current?.click()} />}
+              {menuOpen && (
+                <AddMenu
+                  capabilities={active.capabilities}
+                  isRemote={active.isRemote}
+                  onAttach={() => fileInputRef.current?.click()}
+                />
+              )}
             </div>
 
             <button
               className={`btn btn-ghost composer-toggle ${webSearch ? 'is-on' : ''}`}
               onClick={() => setWebSearch(!webSearch)}
-              title="Search the web before answering. Add a search API key in Settings to enable."
-              disabled
+              title={
+                webSearch
+                  ? 'On: your question is searched for before the model answers. Queries leave this machine.'
+                  : 'Off: search the web before answering. Queries leave this machine.'
+              }
+              aria-pressed={webSearch}
             >
               <GlobeIcon />
               Web
+            </button>
+
+            <button
+              className={`btn btn-ghost composer-toggle ${memory ? 'is-on' : ''}`}
+              onClick={() => setMemory(!memory)}
+              title={
+                memory
+                  ? 'On: the model can read and save durable facts about you.'
+                  : 'Off: memory is not read or written this turn.'
+              }
+              aria-pressed={memory}
+            >
+              <BrainIcon />
+              Memory
             </button>
 
             <EffortPicker value={effort} onChange={setEffort} />
           </div>
 
           <div className="composer-right">
-            <ModelPicker models={models} />
+            <ModelPicker
+              installed={models}
+              remote={remote}
+              selected={selectedModel}
+              onSelect={setSelectedModel}
+            />
             {isStreaming ? (
               <button className="btn btn-solid btn-icon" onClick={onStop} aria-label="Stop">
                 <StopIcon />
@@ -177,7 +253,7 @@ export function Composer({ models, onSend, onStop, isStreaming, centred }: Compo
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".txt,.md,.json,.csv,.log,.ts,.tsx,.js,.py,.rs,.go,.java,.c,.cpp,.h,.css,.html,.yml,.yaml,.toml"
+          accept={TEXT_ACCEPT}
           hidden
           onChange={(event) => {
             void readFiles(event.target.files)
@@ -187,54 +263,154 @@ export function Composer({ models, onSend, onStop, isStreaming, centred }: Compo
       </div>
 
       <p className="composer-hint faint">
-        Enter to send, Shift+Enter for a new line. Models run entirely on this machine.
+        {active.isRemote
+          ? 'Enter to send, Shift+Enter for a new line. This model runs on your provider, not here.'
+          : 'Enter to send, Shift+Enter for a new line. Models run entirely on this machine.'}
       </p>
     </div>
   )
 }
 
-/** The `+` menu. Items that are not built yet say so rather than failing quietly. */
-function AddMenu({ onAttach }: { onAttach: () => void }) {
+/**
+ * The `+` menu.
+ *
+ * Every entry stays visible whether or not it is usable, and an unusable one is
+ * dimmed rather than hidden — a menu that changes shape between models makes a
+ * capability look like a bug. The *reason* it is unusable lives in the tooltip,
+ * not on the row: spelling it out inline turned this menu into a wall of
+ * apologetic grey text that wrapped over three lines each.
+ */
+function AddMenu({
+  capabilities,
+  isRemote,
+  onAttach,
+}: {
+  capabilities: string[]
+  isRemote: boolean
+  onAttach: () => void
+}) {
   const navigate = useNavigate()
+
+  // A provider's models are not described by the local capability list, so assume
+  // the common case rather than disabling everything.
+  const has = (capability: string) => isRemote || capabilities.includes(capability)
+
+  const servers = useQuery({
+    queryKey: ['mcp', 'servers'],
+    queryFn: () => api.mcp.servers(false),
+    staleTime: 30_000,
+  })
+
+  const connected = (servers.data?.servers ?? []).filter(
+    (server) => server.enabled && server.status === 'connected',
+  )
+  const toolCount = connected.reduce(
+    (total, server) => total + (server.tool_count ?? server.tools.length),
+    0,
+  )
 
   return (
     <div className="menu fade-in" role="menu">
-      <button className="menu-item" onClick={onAttach} role="menuitem">
-        <PaperclipIcon />
-        <span>Attach files</span>
-      </button>
+      <div className="menu-label">Attach</div>
 
-      <button className="menu-item" onClick={() => navigate('/mcp')} role="menuitem">
-        <PlugIcon />
-        <span>MCP tools</span>
-      </button>
-
-      <button className="menu-item" onClick={() => navigate('/mcp')} role="menuitem">
-        <GitHubIcon />
-        <span>GitHub</span>
-        <span className="menu-note">via MCP</span>
-      </button>
+      <MenuItem
+        icon={<FileIcon />}
+        label="Text and code"
+        enabled
+        hint="Read into the prompt as text"
+        onClick={onAttach}
+      />
+      <MenuItem
+        icon={<ImageIcon />}
+        label="Images"
+        enabled={has('vision')}
+        hint="Needs a vision model"
+      />
+      <MenuItem
+        icon={<MicIcon />}
+        label="Audio"
+        enabled={has('audio')}
+        hint="Needs an audio model"
+      />
+      <MenuItem
+        icon={<VideoIcon />}
+        label="Video"
+        enabled={false}
+        hint="No local engine supports video yet"
+      />
+      <MenuItem
+        icon={<PaperclipIcon />}
+        label="PDF"
+        enabled={false}
+        hint="Text extraction is not built yet"
+      />
 
       <div className="menu-separator" />
+      <div className="menu-label">Tools</div>
 
-      <button className="menu-item" disabled role="menuitem">
-        <FolderIcon />
-        <span>Add a folder</span>
-        <span className="menu-note">Soon</span>
-      </button>
+      <MenuItem
+        icon={<ToolIcon />}
+        label="Tools and MCP"
+        enabled
+        hint="Manage built-in tools, skills and MCP servers"
+        badge={toolCount > 0 ? String(toolCount) : undefined}
+        onClick={() => navigate('/tools')}
+      />
 
-      <button className="menu-item" disabled role="menuitem">
-        <SparkIcon />
-        <span>Prompt template</span>
-        <span className="menu-note">Soon</span>
-      </button>
+      {connected.slice(0, 4).map((server) => (
+        <MenuItem
+          key={server.id}
+          icon={<PlugIcon />}
+          label={server.name}
+          enabled
+          hint={`${server.tool_count ?? server.tools.length} tools from this server`}
+          onClick={() => navigate('/tools')}
+        />
+      ))}
 
-      <button className="menu-item" disabled role="menuitem">
-        <CloudIcon />
-        <span>Run in cloud</span>
-        <span className="menu-note">Soon</span>
-      </button>
+      <MenuItem
+        icon={<FolderIcon />}
+        label="A folder"
+        enabled={false}
+        hint="Add the Filesystem MCP server to give the model a folder"
+      />
     </div>
+  )
+}
+
+/**
+ * A menu row.
+ *
+ * One line, always. The hint is a tooltip so a long explanation cannot reflow the
+ * menu, and the badge is for counts, which are short enough to show inline.
+ */
+function MenuItem({
+  icon,
+  label,
+  enabled,
+  hint,
+  badge,
+  onClick,
+}: {
+  icon: React.ReactNode
+  label: string
+  enabled: boolean
+  hint: string
+  badge?: string
+  onClick?: () => void
+}) {
+  return (
+    <button
+      className="menu-item"
+      disabled={!enabled}
+      role="menuitem"
+      title={hint}
+      onClick={onClick}
+    >
+      {icon}
+      <span className="menu-item-label">{label}</span>
+      {badge && <span className="menu-badge">{badge}</span>}
+    </button>
   )
 }
 
@@ -256,33 +432,21 @@ function EffortPicker({ value, onChange }: { value: Effort; onChange: (effort: E
   )
 }
 
-function ModelPicker({ models }: { models: InstalledModel[] }) {
-  const { selectedModel, setSelectedModel } = useUi()
-  const ready = models.filter((entry) => entry.model.status === 'ready')
+/**
+ * Whether decoded text is really binary.
+ *
+ * `File.text()` will happily decode a PNG into replacement characters, so the
+ * check is for those and for NUL — both of which are absent from any real
+ * document.
+ */
+function looksBinary(content: string): boolean {
+  const sample = content.slice(0, 4000)
+  // A NUL byte never appears in text and always appears in a binary header.
+  if (sample.includes("\u0000")) return true
 
-  // Fall back to the only installed model so a first-time user never has to
-  // choose before sending anything.
-  const active = selectedModel ?? ready[0]?.model.id ?? null
-
-  if (ready.length === 0) {
-    return <span className="faint model-picker-empty">No models installed</span>
-  }
-
-  return (
-    <div className="model-picker">
-      <select
-        value={active ?? ''}
-        onChange={(event) => setSelectedModel(event.target.value)}
-        aria-label="Model"
-      >
-        {ready.map((entry) => (
-          <option key={entry.model.id} value={entry.model.id}>
-            {friendlyModelName(entry.model.id)}
-            {quantOf(entry.model.id) ? ` · ${quantOf(entry.model.id)}` : ''}
-          </option>
-        ))}
-      </select>
-      <ChevronIcon size={13} />
-    </div>
-  )
+  // Decoding a binary file as UTF-8 leaves a field of replacement characters. A
+  // couple can legitimately appear in badly encoded text, so this is a ratio
+  // rather than a flat rejection.
+  const replacements = (sample.match(/\uFFFD/g) ?? []).length
+  return replacements > sample.length * 0.02
 }
