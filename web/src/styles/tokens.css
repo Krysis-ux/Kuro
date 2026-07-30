@@ -1,0 +1,124 @@
+/*
+ * Kuro design tokens.
+ *
+ * The palette is deliberately monochrome: one neutral ramp, no accent hue.
+ * Emphasis comes from contrast, weight and space rather than colour, which is
+ * what keeps the interface quiet enough to read model output in.
+ */
+
+:root {
+  color-scheme: dark light;
+
+  /* Neutral ramp, dark theme. 0 is the page, 12 is the brightest text. */
+  --n-0: #0a0a0a;
+  --n-1: #111111;
+  --n-2: #161616;
+  --n-3: #1c1c1c;
+  --n-4: #242424;
+  --n-5: #2e2e2e;
+  --n-6: #3a3a3a;
+  --n-7: #525252;
+  --n-8: #6e6e6e;
+  --n-9: #8f8f8f;
+  --n-10: #b4b4b4;
+  --n-11: #d8d8d8;
+  --n-12: #f5f5f5;
+
+  --bg: var(--n-0);
+  --bg-raised: var(--n-1);
+  --bg-inset: var(--n-2);
+  --bg-hover: var(--n-3);
+  --bg-active: var(--n-4);
+
+  --border: var(--n-4);
+  --border-strong: var(--n-6);
+
+  --text: var(--n-12);
+  --text-muted: var(--n-9);
+  --text-faint: var(--n-8);
+
+  /* The one inverted pair, used for primary actions. */
+  --solid: var(--n-12);
+  --solid-text: var(--n-0);
+
+  --danger: #e5484d;
+
+  /* Type. A single family, sized on a small scale — this is a tool, not a
+     landing page. */
+  --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter,
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+  --text-2xl: 32px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  --sidebar-width: 232px;
+  --content-max: 720px;
+
+  --duration: 140ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--border);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --n-0: #fbfbfa;
+  --n-1: #ffffff;
+  --n-2: #f5f5f4;
+  --n-3: #ededec;
+  --n-4: #e4e4e3;
+  --n-5: #d8d8d6;
+  --n-6: #c6c6c4;
+  --n-7: #a3a3a1;
+  --n-8: #82827f;
+  --n-9: #63635f;
+  --n-10: #45453f;
+  --n-11: #2a2a26;
+  --n-12: #121210;
+
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+
+    --n-0: #fbfbfa;
+    --n-1: #ffffff;
+    --n-2: #f5f5f4;
+    --n-3: #ededec;
+    --n-4: #e4e4e3;
+    --n-5: #d8d8d6;
+    --n-6: #c6c6c4;
+    --n-7: #a3a3a1;
+    --n-8: #82827f;
+    --n-9: #63635f;
+    --n-10: #45453f;
+    --n-11: #2a2a26;
+    --n-12: #121210;
+
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
+  }
+}

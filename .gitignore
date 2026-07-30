@@ -1,0 +1,24 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Frontend
+web/node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+
+# Kuro runtime data never belongs in the repo: it holds the local database,
+# multi-gigabyte model weights and the downloaded engine binaries.
+.kuro/
+kuro.sqlite3*
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs and scratch
+*.log
+/tmp/

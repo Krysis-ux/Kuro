@@ -1,0 +1,23 @@
+[package]
+name = "kuro-core"
+version.workspace = true
+edition.workspace = true
+description = "Kuro LLM core: model registry, engine supervision, storage"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+
+# Used only to send SIGTERM for a graceful engine shutdown before SIGKILL.
+libc = "0.2"

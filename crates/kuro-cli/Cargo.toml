@@ -1,0 +1,22 @@
+[package]
+name = "kuro-cli"
+version.workspace = true
+edition.workspace = true
+description = "Kuro LLM command line client"
+
+[[bin]]
+name = "kuro"
+path = "src/main.rs"
+
+[dependencies]
+kuro-core.workspace = true
+
+anyhow.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+clap.workspace = true
+chrono.workspace = true
