@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Kuro</title>
+  <!--
+    The application icon.
+
+    A separate file from web/public/favicon.svg on purpose. That one is a bare
+    mark that recolours itself with `prefers-color-scheme`; an .icns is a static
+    raster, so it has to commit to one colourway and carry its own background.
+    The dark ground is the same one the interface uses, so the icon in the Dock
+    and the window it opens look like the same product.
+
+    Sized in absolute units rather than left to scale, because the rasteriser
+    that turns this into PNGs honours width/height.
+  -->
+  <defs>
+    <mask id="petals">
+      <rect width="1024" height="1024" fill="black" />
+      <g fill="white" transform="translate(512 512) scale(6.4) translate(-50 -50)">
+        <!-- Eight petals behind, offset by half a step so they read between the front ones. -->
+        <g opacity="0.55">
+          <path d="M50 50 C39 42 38 25 50 15 C62 25 61 42 50 50 Z" transform="rotate(22.5 50 50)" />
+          <path d="M50 50 C39 42 38 25 50 15 C62 25 61 42 50 50 Z" transform="rotate(67.5 50 50)" />
+          <path d="M50 50 C39 42 38 25 50 15 C62 25 61 42 50 50 Z" transform="rotate(112.5 50 50)" />
+          <path d="M50 50 C39 42 38 25 50 15 C62 25 61 42 50 50 Z" transform="rotate(157.5 50 50)" />
+          <path d="M50 50 C39 42 38 25 50 15 C62 25 61 42 50 50 Z" transform="rotate(202.5 50 50)" />
+          <path d="M50 50 C39 42 38 25 50 15 C62 25 61 42 50 50 Z" transform="rotate(247.5 50 50)" />
+          <path d="M50 50 C39 42 38 25 50 15 C62 25 61 42 50 50 Z" transform="rotate(292.5 50 50)" />
+          <path d="M50 50 C39 42 38 25 50 15 C62 25 61 42 50 50 Z" transform="rotate(337.5 50 50)" />
+        </g>
+        <!-- Eight petals in front. -->
+        <path d="M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z" />
+        <path d="M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z" transform="rotate(45 50 50)" />
+        <path d="M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z" transform="rotate(90 50 50)" />
+        <path d="M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z" transform="rotate(135 50 50)" />
+        <path d="M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z" transform="rotate(180 50 50)" />
+        <path d="M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z" transform="rotate(225 50 50)" />
+        <path d="M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z" transform="rotate(270 50 50)" />
+        <path d="M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z" transform="rotate(315 50 50)" />
+      </g>
+      <!-- The centre is punched out, matching the dark disc in the original mark. -->
+      <circle cx="512" cy="512" r="57.6" fill="black" />
+    </mask>
+  </defs>
+
+  <!-- Rounded square on the macOS grid: content inset from the canvas edge,
+       corner radius a little under a quarter of the tile. -->
+  <rect x="80" y="80" width="864" height="864" rx="196" ry="196" fill="#131313" />
+  <rect
+    x="80" y="80" width="864" height="864" rx="196" ry="196"
+    fill="none" stroke="#2a2a2a" stroke-width="2"
+  />
+
+  <!-- The mark. The petals fill about 55% of their own box, so the scale here is
+       set to land them at roughly 60% of the tile — the proportion the rest of
+       the Dock is drawn to. -->
+  <g transform="translate(512 512) scale(1.1) translate(-512 -512)">
+    <rect width="1024" height="1024" fill="#fafafa" mask="url(#petals)" />
+  </g>
+</svg>
