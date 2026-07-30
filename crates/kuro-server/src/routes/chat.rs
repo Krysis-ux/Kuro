@@ -189,6 +189,33 @@ pub async fn send_message(
         .into_response())
 }
 
+/// Rewrite a message and answer again from that point.
+///
+/// The edited message and everything after it are deleted before the new turn
+/// starts. Keeping the old replies would leave a transcript where the answers
+/// belong to a question that is no longer on screen — which is worse than
+/// losing them, because it reads as though the model answered something it
+/// never saw.
+///
+/// The truncation happens first and separately: if it fails, nothing has been
+/// generated yet and the conversation is exactly as it was.
+pub async fn edit_message(
+    State(state): State<SharedState>,
+    Path((conversation_id, message_id)): Path<(String, String)>,
+    Json(request): Json<SendMessageRequest>,
+) -> AppResult<Response> {
+    if request.content.trim().is_empty() {
+        return Err(KuroError::bad_request("message content is empty").into());
+    }
+
+    state.db.delete_from(&conversation_id, &message_id)?;
+
+    // Everything after this point — persistence, titling, tools, streaming — is
+    // identical to sending a new message, so it is the same code path rather
+    // than a parallel one that can drift.
+    send_message(State(state), Path(conversation_id), Json(request)).await
+}
+
 /// Everything about one turn that does not change between tool rounds.
 struct Turn<'a> {
     conversation_id: &'a str,

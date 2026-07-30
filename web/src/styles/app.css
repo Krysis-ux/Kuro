@@ -234,8 +234,24 @@
   justify-content: flex-end;
 }
 
-.message-user .bubble {
+/*
+ * The bubble and its controls, stacked.
+ *
+ * A user message is right-aligned with no gutter beside it, so there is nowhere
+ * to put controls except underneath. Stacking them in normal flow — rather than
+ * floating a toolbar over the bubble — is what keeps them from landing on a
+ * neighbouring message when a row changes height.
+ */
+.message-user-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   max-width: 82%;
+  min-width: 0;
+}
+
+.message-user .bubble {
+  max-width: 100%;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-sm);
@@ -260,6 +276,89 @@
 .message-body {
   flex: 1;
   min-width: 0;
+}
+
+/* ---------- Message actions ---------- */
+
+/*
+ * Copy, fork and edit, under every stored message.
+ *
+ * Hidden with `visibility` rather than `display` so the strip occupies its space
+ * whether or not the pointer is over the message. A message resizes constantly
+ * — while it streams, when thinking is expanded, when the tool trail or the
+ * inspector opens — and a control that only takes up space on hover would make
+ * the whole transcript jump every time the pointer crossed it.
+ */
+.message-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: var(--space-1);
+  height: 24px;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+
+.message-actions.is-end {
+  justify-content: flex-end;
+}
+
+.message:hover .message-actions,
+.message-actions:focus-within {
+  visibility: visible;
+  opacity: 1;
+}
+
+.message-action {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+}
+
+.message-action:hover {
+  color: var(--text);
+  background: var(--bg-active);
+}
+
+/* ---------- Editing a sent message ---------- */
+
+.message-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.message-editor-input {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong, var(--border));
+  color: var(--text);
+  font: inherit;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.message-editor-input:focus {
+  outline: none;
+  border-color: var(--text-faint);
+}
+
+.message-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.message-editor-note {
+  text-align: right;
+  font-size: var(--text-xs);
 }
 
 .message-error {
@@ -418,6 +517,13 @@
   max-width: var(--content-max);
   margin: 0 auto;
   padding: var(--space-3) var(--space-5) var(--space-4);
+  /*
+   * Never take space from the transcript. `.chat-scroll` is the flexible one
+   * and can shrink to nothing, so without this a composer that grew — whether
+   * from a long message or from a bad measurement — pushes the conversation
+   * off the screen instead of being bounded itself.
+   */
+  flex: none;
 }
 
 .composer-shell.is-centred {
@@ -463,6 +569,10 @@
   padding: var(--space-2) var(--space-2) var(--space-3);
   font-size: var(--text-md);
   line-height: 1.6;
+  /* One line plus its padding, so the box has a floor even before the script
+     that sizes it has had a chance to measure anything. */
+  min-height: calc(1.6em + var(--space-2) + var(--space-3));
+  /* Kept in step with MAX_INPUT_HEIGHT in Composer.tsx. */
   max-height: 320px;
 }
 

@@ -15,6 +15,8 @@ pub struct Conversation {
     pub archived: bool,
     pub created_at: String,
     pub updated_at: String,
+    /// The conversation this one was branched from, when it was.
+    pub forked_from_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,6 +104,7 @@ fn conversation_from_row(row: &Row<'_>) -> rusqlite::Result<Conversation> {
         archived: row.get::<_, i64>("archived")? != 0,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
+        forked_from_id: row.get("forked_from_id")?,
     })
 }
 
@@ -364,6 +367,159 @@ impl Db {
             Ok(())
         })
     }
+
+    /// Delete `message_id` and everything after it in the conversation.
+    ///
+    /// This is what editing a message does: the turns that followed were answers
+    /// to the old wording, so keeping them would leave a transcript in which the
+    /// replies do not match what was asked. The cut-off is compared on
+    /// `(created_at, rowid)`, the same ordering [`Db::list_messages`] reads back,
+    /// so a message inserted in the same clock tick as its neighbour still cuts
+    /// in the position the user actually saw it in.
+    ///
+    /// Returns how many messages were removed.
+    pub fn delete_from(&self, conversation_id: &str, message_id: &str) -> Result<usize> {
+        self.with(|conn| {
+            // Checked rather than assumed: a message id from another conversation
+            // would otherwise silently delete nothing and report success.
+            let belongs: Option<String> = conn
+                .query_row(
+                    "SELECT conversation_id FROM messages WHERE id = ?1",
+                    params![message_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            match belongs.as_deref() {
+                Some(owner) if owner == conversation_id => {}
+                Some(_) => {
+                    return Err(crate::KuroError::bad_request(format!(
+                        "message `{message_id}` is not in conversation `{conversation_id}`"
+                    )))
+                }
+                None => {
+                    return Err(crate::KuroError::not_found(format!(
+                        "message `{message_id}`"
+                    )))
+                }
+            }
+
+            let removed = conn.execute(
+                "DELETE FROM messages
+                 WHERE conversation_id = ?1
+                   AND rowid IN (
+                       SELECT m.rowid
+                       FROM messages m, messages anchor
+                       WHERE anchor.id = ?2
+                         AND m.conversation_id = ?1
+                         AND (m.created_at > anchor.created_at
+                              OR (m.created_at = anchor.created_at AND m.rowid >= anchor.rowid))
+                   )",
+                params![conversation_id, message_id],
+            )?;
+
+            conn.execute(
+                "UPDATE conversations SET updated_at = ?2 WHERE id = ?1",
+                params![conversation_id, now()],
+            )?;
+
+            Ok(removed)
+        })
+    }
+
+    /// Copy a conversation into a new one, up to and including `up_to_message_id`.
+    ///
+    /// `None` copies the whole thing. The copy carries the completed usage and
+    /// tool trail of every assistant turn, not just its text, so the request
+    /// inspector in a fork shows the same numbers the original does rather than
+    /// an empty panel.
+    pub fn fork_conversation(
+        &self,
+        source_id: &str,
+        up_to_message_id: Option<&str>,
+    ) -> Result<Conversation> {
+        let source = self
+            .get_conversation(source_id)?
+            .ok_or_else(|| crate::KuroError::not_found(format!("conversation `{source_id}`")))?;
+
+        let history = self.list_messages(source_id)?;
+
+        let keep: Vec<&Message> = match up_to_message_id {
+            None => history.iter().collect(),
+            Some(cutoff) => {
+                let end = history
+                    .iter()
+                    .position(|message| message.id == cutoff)
+                    .ok_or_else(|| {
+                        crate::KuroError::not_found(format!(
+                            "message `{cutoff}` in conversation `{source_id}`"
+                        ))
+                    })?;
+                history[..=end].iter().collect()
+            }
+        };
+
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let timestamp = now();
+
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO conversations (
+                     id, title, title_mode, model_id, created_at, updated_at,
+                     project_id, forked_from_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?5,
+                     (SELECT project_id FROM conversations WHERE id = ?6), ?6)",
+                params![
+                    new_id,
+                    source.title,
+                    source.title_mode,
+                    source.model_id,
+                    timestamp,
+                    source_id,
+                ],
+            )?;
+
+            for message in &keep {
+                // Original timestamps are kept so the copy reads back in exactly
+                // the order it was said in, independent of how fast the rows are
+                // written here.
+                conn.execute(
+                    "INSERT INTO messages (
+                         id, conversation_id, role, content, reasoning_content, tool_calls,
+                         tool_call_id, attachments, used_web_search, web_sources, model_id,
+                         usage_prompt_tokens, usage_completion_tokens, timing_ttft_ms,
+                         timing_total_ms, timing_tokens_per_sec, finish_reason, created_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                               ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                    params![
+                        uuid::Uuid::new_v4().to_string(),
+                        new_id,
+                        message.role,
+                        message.content,
+                        message.reasoning_content,
+                        encode(&message.tool_calls)?,
+                        message.tool_call_id,
+                        encode(&message.attachments)?,
+                        message.used_web_search as i64,
+                        encode(&message.web_sources)?,
+                        message.model_id,
+                        message.usage_prompt_tokens,
+                        message.usage_completion_tokens,
+                        message.timing_ttft_ms,
+                        message.timing_total_ms,
+                        message.timing_tokens_per_sec,
+                        message.finish_reason,
+                        message.created_at,
+                    ],
+                )?;
+            }
+
+            Ok(())
+        })?;
+
+        self.get_conversation(&new_id)?
+            .ok_or_else(|| crate::KuroError::other("conversation vanished after fork"))
+    }
 }
 
 #[cfg(test)]
@@ -444,5 +600,163 @@ mod tests {
         db.set_conversation_flags(&convo.id, None, Some(true)).expect("archive");
 
         assert!(db.list_conversations(None).expect("list").is_empty());
+    }
+
+    /// A conversation with four alternating turns, returned with its messages.
+    fn conversation_with_history(db: &Db) -> (Conversation, Vec<Message>) {
+        let convo = db.create_conversation(Some("qwen3-4b:q4_k_m")).expect("create");
+        for text in ["first", "reply one", "second", "reply two"] {
+            let role = if text.starts_with("reply") {
+                NewMessage::assistant(text)
+            } else {
+                NewMessage::user(text)
+            };
+            db.insert_message(&convo.id, &role).expect("insert");
+        }
+        let history = db.list_messages(&convo.id).expect("list");
+        (convo, history)
+    }
+
+    #[test]
+    fn editing_a_message_cuts_it_and_everything_after_it() {
+        let db = Db::open_in_memory().expect("open");
+        let (convo, history) = conversation_with_history(&db);
+
+        // Edit the second user turn: it and both following rows must go.
+        let removed = db.delete_from(&convo.id, &history[2].id).expect("truncate");
+
+        assert_eq!(removed, 2, "the edited turn and the reply to it");
+        let left = db.list_messages(&convo.id).expect("list");
+        assert_eq!(
+            left.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(),
+            vec!["first", "reply one"]
+        );
+    }
+
+    #[test]
+    fn truncating_is_ordered_by_position_not_just_timestamp() {
+        // Every row here is written inside the same clock tick, so `created_at`
+        // alone cannot separate them. The cut must still land where the user saw
+        // the message, which is what the rowid tie-break is for.
+        let db = Db::open_in_memory().expect("open");
+        let convo = db.create_conversation(None).expect("create");
+        let stamp = now();
+        for (index, text) in ["one", "two", "three"].iter().enumerate() {
+            db.with(|conn| {
+                conn.execute(
+                    "INSERT INTO messages (id, conversation_id, role, content, created_at)
+                     VALUES (?1, ?2, 'user', ?3, ?4)",
+                    params![format!("m{index}"), convo.id, text, stamp],
+                )?;
+                Ok(())
+            })
+            .expect("insert");
+        }
+
+        db.delete_from(&convo.id, "m1").expect("truncate");
+
+        let left = db.list_messages(&convo.id).expect("list");
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].content, "one");
+    }
+
+    #[test]
+    fn truncating_refuses_a_message_from_another_conversation() {
+        let db = Db::open_in_memory().expect("open");
+        let (first, history) = conversation_with_history(&db);
+        let second = db.create_conversation(None).expect("create");
+        db.insert_message(&second.id, &NewMessage::user("unrelated"))
+            .expect("insert");
+
+        // Silently deleting nothing would look like success to the caller.
+        assert!(db.delete_from(&second.id, &history[0].id).is_err());
+        assert!(db.delete_from(&first.id, "no-such-message").is_err());
+        assert_eq!(db.list_messages(&second.id).expect("list").len(), 1);
+    }
+
+    #[test]
+    fn forking_copies_history_up_to_the_chosen_message() {
+        let db = Db::open_in_memory().expect("open");
+        let (source, history) = conversation_with_history(&db);
+
+        let fork = db
+            .fork_conversation(&source.id, Some(&history[1].id))
+            .expect("fork");
+
+        assert_eq!(fork.forked_from_id.as_deref(), Some(source.id.as_str()));
+        assert_eq!(fork.model_id, source.model_id);
+        assert_eq!(fork.title, source.title);
+
+        let copied = db.list_messages(&fork.id).expect("list");
+        assert_eq!(
+            copied.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(),
+            vec!["first", "reply one"],
+            "the cutoff message is included, nothing after it is"
+        );
+        assert!(
+            copied.iter().all(|m| m.conversation_id == fork.id),
+            "copies must belong to the fork"
+        );
+        assert!(
+            copied.iter().all(|m| !history.iter().any(|old| old.id == m.id)),
+            "copies must have their own ids, or editing one would edit the original"
+        );
+        assert_eq!(
+            db.list_messages(&source.id).expect("list").len(),
+            4,
+            "the original is left untouched"
+        );
+    }
+
+    #[test]
+    fn a_fork_carries_the_usage_numbers_the_inspector_shows() {
+        let db = Db::open_in_memory().expect("open");
+        let source = db.create_conversation(None).expect("create");
+        db.insert_message(&source.id, &NewMessage::user("explain")).expect("insert");
+        let assistant = db
+            .insert_message(&source.id, &NewMessage::assistant(""))
+            .expect("insert");
+        db.complete_message(
+            &assistant.id,
+            &MessageCompletion {
+                content: "because".to_string(),
+                usage_completion_tokens: Some(181),
+                timing_tokens_per_sec: Some(37.4),
+                finish_reason: Some("stop".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("complete");
+
+        let fork = db.fork_conversation(&source.id, None).expect("fork");
+
+        let copied = db.list_messages(&fork.id).expect("list");
+        assert_eq!(copied.len(), 2);
+        assert_eq!(copied[1].content, "because");
+        assert_eq!(copied[1].usage_completion_tokens, Some(181));
+        assert_eq!(copied[1].timing_tokens_per_sec, Some(37.4));
+        assert_eq!(copied[1].finish_reason.as_deref(), Some("stop"));
+    }
+
+    #[test]
+    fn deleting_the_original_leaves_the_fork_alone() {
+        let db = Db::open_in_memory().expect("open");
+        let (source, _) = conversation_with_history(&db);
+        let fork = db.fork_conversation(&source.id, None).expect("fork");
+
+        db.delete_conversation(&source.id).expect("delete");
+
+        let survived = db.get_conversation(&fork.id).expect("get").expect("some");
+        assert_eq!(survived.forked_from_id, None, "the link is released, not the chat");
+        assert_eq!(db.list_messages(&fork.id).expect("list").len(), 4);
+    }
+
+    #[test]
+    fn forking_at_an_unknown_message_is_an_error_not_a_full_copy() {
+        let db = Db::open_in_memory().expect("open");
+        let (source, _) = conversation_with_history(&db);
+
+        assert!(db.fork_conversation(&source.id, Some("no-such-message")).is_err());
+        assert!(db.fork_conversation("no-such-conversation", None).is_err());
     }
 }

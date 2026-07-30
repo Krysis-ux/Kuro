@@ -75,6 +75,13 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/conversations/{id}", delete(conversations::delete_conversation))
         .route("/api/conversations/{id}/messages", get(conversations::list_messages))
         .route("/api/conversations/{id}/messages", post(chat::send_message))
+        // Editing a message truncates the conversation there and answers again;
+        // forking copies it up to a message and leaves the original alone.
+        .route(
+            "/api/conversations/{id}/messages/{message_id}",
+            patch(chat::edit_message),
+        )
+        .route("/api/conversations/{id}/fork", post(conversations::fork_conversation))
         .route("/api/conversations/{id}/project", post(projects::move_conversation))
         // Projects: standing instructions plus a grouping of conversations.
         .route("/api/projects", get(projects::list_projects))

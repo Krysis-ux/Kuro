@@ -223,7 +223,8 @@ impl Db {
     pub fn list_project_conversations(&self, project_id: &str) -> Result<Vec<super::Conversation>> {
         self.with(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, title, title_mode, model_id, pinned, archived, created_at, updated_at
+                "SELECT id, title, title_mode, model_id, pinned, archived, created_at,
+                        updated_at, forked_from_id
                    FROM conversations
                   WHERE project_id = ?1 AND archived = 0
                   ORDER BY updated_at DESC",
@@ -239,6 +240,7 @@ impl Db {
                         archived: row.get::<_, i64>(5)? != 0,
                         created_at: row.get(6)?,
                         updated_at: row.get(7)?,
+                        forked_from_id: row.get(8)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;

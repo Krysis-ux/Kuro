@@ -98,6 +98,28 @@ pub async fn delete_conversation(
     Ok(Json(json!({ "deleted": true })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ForkRequest {
+    /// Branch after this message. Absent copies the whole conversation.
+    #[serde(default)]
+    pub up_to_message_id: Option<String>,
+}
+
+/// Branch a conversation into a new one.
+///
+/// The original is never modified: forking is how you try a different direction
+/// without losing the one you already have.
+pub async fn fork_conversation(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(request): Json<ForkRequest>,
+) -> AppResult<Json<Value>> {
+    let fork = state
+        .db
+        .fork_conversation(&id, request.up_to_message_id.as_deref())?;
+    Ok(Json(json!(fork)))
+}
+
 pub async fn list_messages(
     State(state): State<SharedState>,
     Path(id): Path<String>,
