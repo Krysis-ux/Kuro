@@ -30,6 +30,7 @@ pub const KEY_ENABLED: &str = "skills.enabled";
 pub enum SkillCategory {
     Language,
     Practice,
+    Design,
     Writing,
 }
 
@@ -38,9 +39,18 @@ impl SkillCategory {
         match self {
             Self::Language => "Languages",
             Self::Practice => "Engineering practice",
+            Self::Design => "Interface and design",
             Self::Writing => "Writing and reasoning",
         }
     }
+
+    /// Every category, in the order the store shows them.
+    pub const ALL: &'static [SkillCategory] = &[
+        Self::Language,
+        Self::Practice,
+        Self::Design,
+        Self::Writing,
+    ];
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -158,6 +168,150 @@ When writing shell scripts:
 - Say which shell you assume, and prefer POSIX `sh` when portability matters.",
     },
     Skill {
+        slug: "java",
+        name: "Java",
+        blurb: "Modern Java, closed resources, no null surprises.",
+        category: SkillCategory::Language,
+        approx_tokens: 110,
+        instructions: "\
+When writing Java:
+- Target 17+ unless told otherwise. Use `var` for obvious locals, records for data carriers, and switch expressions over fall-through.
+- Close every resource with try-with-resources. Never rely on a finalizer.
+- Return `Optional<T>` rather than null from a lookup; never accept `Optional` as a parameter.
+- Catch specific exceptions. Never swallow one — rethrow wrapped, or log with context.
+- Prefer `List`, `Map` and `Set` in signatures over concrete implementations.
+- Say which build tool you assume (Maven unless told otherwise) when you add a dependency.
+- For concurrency use the `java.util.concurrent` types, not raw threads, and say what owns each lock.",
+    },
+    Skill {
+        slug: "csharp",
+        name: "C#",
+        blurb: "Nullable reference types, correct async, disposal.",
+        category: SkillCategory::Language,
+        approx_tokens: 110,
+        instructions: "\
+When writing C#:
+- Target .NET 8+ with nullable reference types on. Annotate `?` deliberately rather than suppressing with `!`.
+- `async` all the way down. Never call `.Result` or `.Wait()`; return `Task`, and use `await` at the edge.
+- Pass a `CancellationToken` through every async method that does I/O.
+- Dispose everything disposable with `using`, and implement `IDisposable` when you hold one.
+- Prefer records for immutable data and expression-bodied members for one-liners.
+- Use `IEnumerable<T>` for lazy sequences but materialise with `ToList()` before iterating twice.
+- Say which project style you assume when it changes the answer (top-level statements, minimal APIs).",
+    },
+    Skill {
+        slug: "cpp",
+        name: "C++",
+        blurb: "RAII, no raw owning pointers, no undefined behaviour.",
+        category: SkillCategory::Language,
+        approx_tokens: 120,
+        instructions: "\
+When writing C++:
+- Target C++17 or later and say which. Use RAII for every resource; no naked `new` or `delete`.
+- Own with `std::unique_ptr`, share only when ownership is genuinely shared, and pass raw pointers or references for non-owning access.
+- Follow the rule of zero. If you write a destructor, explain why the compiler-generated one is wrong.
+- Pass by `const&` for anything larger than a pointer; take by value only to move it.
+- Flag anything that is undefined behaviour — signed overflow, out-of-bounds access, use after move — rather than letting it compile.
+- Prefer `std::vector` and the algorithm library over hand-written loops and C arrays.
+- Include every header the snippet needs, and say which build system you assume.",
+    },
+    Skill {
+        slug: "swift",
+        name: "Swift",
+        blurb: "Value types, no force unwrapping, correct concurrency.",
+        category: SkillCategory::Language,
+        approx_tokens: 110,
+        instructions: "\
+When writing Swift:
+- Never force unwrap with `!` in code you suggest. Use `guard let`, `if let`, or `??` with a stated default.
+- Prefer `struct` and `enum` over `class`. Reach for a class only when you need identity or inheritance, and say which.
+- Use `async`/`await` over completion handlers. Mark UI-touching types `@MainActor`.
+- Break retain cycles explicitly with `[weak self]` in escaping closures, and say why the cycle would form.
+- Model failure with `throws` and typed errors, not with optional returns that lose the reason.
+- Use `let` unless mutation is required, and prefer `map`/`filter`/`reduce` to index loops.
+- Say which platform and Swift version you assume when it changes the answer.",
+    },
+    Skill {
+        slug: "kotlin",
+        name: "Kotlin",
+        blurb: "Null safety, structured concurrency, idiomatic scope.",
+        category: SkillCategory::Language,
+        approx_tokens: 110,
+        instructions: "\
+When writing Kotlin:
+- Never use `!!`. Handle nullability with `?.`, `?:`, or a `require`/`checkNotNull` that says what was expected.
+- Prefer `val` over `var`, and data classes for values.
+- Use structured concurrency: every coroutine belongs to a scope with a stated lifetime. Never use `GlobalScope`.
+- Say which dispatcher you assume for I/O, and never block inside a coroutine.
+- Use sealed classes or interfaces for closed hierarchies and exhaustive `when` — no `else` branch on a domain type.
+- Prefer extension functions over utility classes, and scope functions (`let`, `apply`, `also`) where they read clearly, not everywhere.
+- Say whether the code is Android or plain JVM when it changes the answer.",
+    },
+    Skill {
+        slug: "php",
+        name: "PHP",
+        blurb: "Strict types, prepared statements, no silent coercion.",
+        category: SkillCategory::Language,
+        approx_tokens: 100,
+        instructions: "\
+When writing PHP:
+- Start files with `declare(strict_types=1);` and type every parameter, property and return.
+- Use PDO with prepared statements. Never interpolate a value into SQL, not even in an example.
+- Compare with `===`. `==` coerces in ways that are a source of real bugs.
+- Throw exceptions for failure; never return `false` to mean an error in new code.
+- Follow PSR-12 formatting and PSR-4 autoloading, and name the framework you assume when it matters.
+- Escape output at the point of rendering with `htmlspecialchars`, and say which context you are escaping for.
+- Never suppress errors with `@`.",
+    },
+    Skill {
+        slug: "ruby",
+        name: "Ruby",
+        blurb: "Readable idioms, safe navigation, no monkey patches.",
+        category: SkillCategory::Language,
+        approx_tokens: 100,
+        instructions: "\
+When writing Ruby:
+- Target 3.x and say so. Use keyword arguments for anything with more than two parameters.
+- Prefer `&.` and `fetch` with a default over `nil` checks scattered through a method.
+- Raise specific error classes; never `rescue Exception`, and never rescue without saying what you expect.
+- Use blocks and enumerable methods (`map`, `select`, `each_with_object`) rather than index loops.
+- Do not monkey patch core classes in application code. If you must, put it in a refinement and say why.
+- Follow standard style: two-space indent, `snake_case` methods, `?` for predicates and `!` for the dangerous variant.
+- Say whether the code assumes Rails, because a great deal of Ruby advice only holds inside it.",
+    },
+    Skill {
+        slug: "html-css",
+        name: "HTML and CSS",
+        blurb: "Semantic markup, modern layout, no magic numbers.",
+        category: SkillCategory::Language,
+        approx_tokens: 110,
+        instructions: "\
+When writing HTML and CSS:
+- Use the semantic element before a `div`: `button`, `nav`, `main`, `header`, `label`, `dialog`. A `div` with a click handler is not a button.
+- Every input needs a label, every image needs `alt`, and every interactive element must be reachable by keyboard.
+- Lay out with flexbox and grid. Never use floats or absolute positioning for page structure.
+- Put repeated values in custom properties. No unexplained magic numbers in spacing or colour.
+- Size with `rem` for type and spacing so the page respects the user's font size.
+- Write mobile-first and add `min-width` media queries, not the reverse.
+- Respect `prefers-reduced-motion` and `prefers-color-scheme` when you add motion or colour.",
+    },
+    Skill {
+        slug: "react",
+        name: "React",
+        blurb: "Correct hooks, no effect abuse, stable keys.",
+        category: SkillCategory::Language,
+        approx_tokens: 120,
+        instructions: "\
+When writing React:
+- Derive during render. Do not use an effect to compute state from props — that is an extra render and a source of stale data.
+- Use effects only to synchronise with something outside React, and return a cleanup function from every one that subscribes.
+- Include every reactive value in a dependency array. If the array is getting long, the effect is doing too much.
+- Keys must be stable ids, never the array index, for any list that can reorder or have items removed.
+- Keep state as local as possible and lift only when it is genuinely shared.
+- Do not memoise by default. Add `useMemo`/`useCallback` when the value crosses a memoised boundary or is measurably expensive.
+- Type props explicitly, and say whether a component is a server or client component when the project has both.",
+    },
+    Skill {
         slug: "code-review",
         name: "Code review",
         blurb: "Severity-ordered findings with the fix, not vibes.",
@@ -186,6 +340,210 @@ When debugging:
 - Do not suggest changing several things at once; a fix that works for unknown reasons is not a fix.
 - Ask for the exact error text, stack trace or log line when you do not have it. Do not guess at what it says.
 - Once the cause is known, say why it produced this symptom before giving the patch.",
+    },
+    Skill {
+        slug: "testing",
+        name: "Testing",
+        blurb: "Tests that fail for one reason and name it.",
+        category: SkillCategory::Practice,
+        approx_tokens: 110,
+        instructions: "\
+When writing tests:
+- Name the test after the behaviour it protects, not the function it calls: `rejects_an_order_with_no_items`, not `test_order`.
+- One reason to fail per test. A test asserting five unrelated things tells you nothing when it goes red.
+- Arrange, act, assert, in that order and visibly separated.
+- Cover the boundaries: empty, one, many, the maximum, and the malformed input. Those are where the bugs are.
+- Never assert on something the test itself computed the same way the code does — that passes when both are wrong.
+- Mock only what you do not own. A test that mocks the thing under test proves nothing.
+- Say what the test does not cover when you hand it over.",
+    },
+    Skill {
+        slug: "security",
+        name: "Security",
+        blurb: "Untrusted input, real threats, no security theatre.",
+        category: SkillCategory::Practice,
+        approx_tokens: 120,
+        instructions: "\
+When security matters:
+- Treat every input from outside the process as hostile: request bodies, file contents, environment, and anything a model produced.
+- Parameterise every query. Escape at the point of output, for the specific context (HTML, shell, SQL, URL) — never once, generically, at the input.
+- Never put a secret in source, in a log line, or in a URL. Say where it should live instead.
+- Check authorisation on the server for every request, on the specific record. A hidden button is not access control.
+- Use a vetted library for hashing, encryption and tokens. Never invent a scheme, and never use a plain hash for a password.
+- Name the actual threat before proposing a mitigation. If you cannot say who the attacker is and what they gain, say so.
+- Fail closed, and make error messages useless to an attacker while still logging the detail server-side.",
+    },
+    Skill {
+        slug: "performance",
+        name: "Performance",
+        blurb: "Measure first, fix the biggest thing, prove it moved.",
+        category: SkillCategory::Practice,
+        approx_tokens: 110,
+        instructions: "\
+When optimising:
+- Ask what was measured before suggesting anything. Never optimise from a guess, and say so plainly if no measurement exists.
+- Find the biggest cost first. A 2% win on top of an unfixed 10x problem is wasted work.
+- Name the complexity of the current approach and of your replacement. Most real wins are algorithmic, not micro.
+- Look for the usual causes in order: a query in a loop, work repeated per item that could be done once, unbounded results, no caching of an expensive pure result, and blocking a thread that could be doing something else.
+- State the trade-off you are making — memory, complexity, staleness — rather than presenting a win with no cost.
+- Say how to verify the improvement, with the same measurement as before.",
+    },
+    Skill {
+        slug: "architecture",
+        name: "Architecture",
+        blurb: "Boundaries, trade-offs, and the simplest thing that works.",
+        category: SkillCategory::Practice,
+        approx_tokens: 110,
+        instructions: "\
+When designing a system:
+- Start from the constraints: scale, team size, latency, budget, and what already exists. A design without them is a preference.
+- Give the simplest design that meets those constraints, then say what would have to change for it to stop working.
+- Present at least two options with the real trade-off between them. One option is a recommendation, not a design.
+- Draw the boundaries around things that change together, and say what crosses each one.
+- Name the failure modes: what happens when each dependency is slow, down, or returns something wrong.
+- Say what you are deliberately not building yet, and why that is safe.
+- Do not add a queue, a cache, a service or a database without saying what problem it solves.",
+    },
+    Skill {
+        slug: "refactoring",
+        name: "Refactoring",
+        blurb: "Behaviour-preserving steps, each one verifiable.",
+        category: SkillCategory::Practice,
+        approx_tokens: 100,
+        instructions: "\
+When refactoring:
+- Establish first how behaviour is currently verified. Without tests, say that the first step is characterising the existing behaviour.
+- Change one thing at a time and keep it green. Never mix a refactor with a behaviour change in the same step.
+- Name the smell you are removing — duplication, long function, feature envy, primitive obsession — rather than saying the code is bad.
+- Prefer extracting a function or a type over adding a parameter or a flag.
+- Delete rather than comment out. The history holds the old version.
+- Say which step is risky and how to check it, and stop when the code is clear enough rather than pursuing a perfect shape.",
+    },
+    Skill {
+        slug: "git",
+        name: "Git",
+        blurb: "Reversible operations, honest history, safe recovery.",
+        category: SkillCategory::Practice,
+        approx_tokens: 100,
+        instructions: "\
+When working with Git:
+- Before any command that discards work — `reset --hard`, `checkout --`, `clean -fd`, a force push — say exactly what is lost and give the safe alternative first.
+- Never rewrite history that has been pushed to a shared branch. If it must happen, say who has to be told.
+- Write commit subjects in the imperative and under about 60 characters, with the why in the body rather than the what.
+- Prefer `git revert` on shared branches and `rebase` only on your own.
+- Recovering lost work starts with `git reflog`. Say so before suggesting anything drastic.
+- Show the read-only command that confirms the state (`git status`, `git log --oneline`, `git diff`) before the command that changes it.",
+    },
+    Skill {
+        slug: "api-design",
+        name: "API design",
+        blurb: "Predictable resources, honest status codes, versioning.",
+        category: SkillCategory::Practice,
+        approx_tokens: 110,
+        instructions: "\
+When designing an HTTP API:
+- Name resources as plural nouns and use the verb the method already gives you. No `/getUser` or `/createOrder`.
+- Use the status code that is true: 400 for a malformed request, 401 unauthenticated, 403 authenticated but not allowed, 404 absent, 409 conflict, 422 valid shape but unacceptable content.
+- Return errors in one consistent shape with a stable machine-readable code, a human message, and the offending field.
+- Paginate every collection, with a stated default and maximum. An unbounded list endpoint is a future outage.
+- Make writes idempotent where you can, and say how a client should retry safely.
+- Version at the boundary and say what your compatibility promise is. Adding a field is safe; changing the meaning of one is not.
+- Document the actual request and response bodies, not prose about them.",
+    },
+    Skill {
+        slug: "ui-design",
+        name: "Interface design",
+        blurb: "Hierarchy, spacing, states — not a wall of default cards.",
+        category: SkillCategory::Design,
+        approx_tokens: 120,
+        instructions: "\
+When designing an interface:
+- Decide what the one important thing on the screen is, and make it visibly first through size and weight before reaching for colour.
+- Space on a consistent scale. Related things sit closer together than unrelated ones; that proximity is what does the grouping, not borders.
+- Design every state, not just the full one: empty, loading, error, one item, and far too many items. The empty state is the one a new user sees.
+- Write the real words. Placeholder copy hides that a label is confusing.
+- Give every interactive element a visible hover, focus and disabled state, and keep focus visible for keyboard users.
+- Limit the type scale to a few sizes and the palette to a few roles. Restraint reads as considered; variety reads as accidental.
+- Say what happens when the text is twice as long or the screen is half as wide.",
+    },
+    Skill {
+        slug: "accessibility",
+        name: "Accessibility",
+        blurb: "Keyboard, screen reader, contrast — checked, not assumed.",
+        category: SkillCategory::Design,
+        approx_tokens: 110,
+        instructions: "\
+When accessibility matters:
+- Use the native element first. A real `button`, `a`, `input` or `dialog` brings keyboard and screen reader behaviour that ARIA only imitates.
+- Every control must be reachable and operable by keyboard alone, in an order that matches the visual one, with focus never trapped or invisible.
+- Label everything: `label` for inputs, accessible names for icon-only buttons, `alt` for meaningful images and empty `alt` for decorative ones.
+- Never use colour as the only signal. Pair it with text, an icon, or a shape.
+- Meet 4.5:1 contrast for body text and 3:1 for large text and meaningful graphics. Say when you have not checked.
+- Announce changes that happen without a page load through a live region, and move focus deliberately when new content opens.
+- Do not add an ARIA role or attribute unless you can say what it changes for a screen reader.",
+    },
+    Skill {
+        slug: "brainstorming",
+        name: "Brainstorming",
+        blurb: "Many real options, then an honest recommendation.",
+        category: SkillCategory::Writing,
+        approx_tokens: 110,
+        instructions: "\
+When asked to generate ideas:
+- Give a range of genuinely different options, not one idea restated. If two share the same underlying approach, they are one option.
+- Make each one concrete enough to act on: what it is, who it is for, and the first step.
+- Include at least one obvious option and at least one that breaks an assumption in the question — and say which assumption it breaks.
+- Say the strongest objection to each option. An idea list with no downsides is a sales pitch.
+- Do not stop at three. Push past the easy ones, where the interesting ideas usually are.
+- End with a recommendation and the reason, rather than leaving the whole list on the table.
+- If the question is too vague to answer well, give options anyway and name the one thing that would narrow it.",
+    },
+    Skill {
+        slug: "summarising",
+        name: "Summarising",
+        blurb: "The point first, faithful, and actually shorter.",
+        category: SkillCategory::Writing,
+        approx_tokens: 100,
+        instructions: "\
+When summarising:
+- Lead with the single most important point. If someone reads one sentence, it should be that one.
+- Keep the source's actual position, including anything it says that undercuts its own argument. A summary that only keeps the agreeable parts is a distortion.
+- Cut examples, repetition and throat-clearing. Keep numbers, names, dates and conclusions.
+- Match the requested length. A summary that is nearly as long as the original has not summarised anything.
+- Attribute claims to the source rather than asserting them yourself when they are contested.
+- Say what you left out if it was substantial, and never add a fact the source did not contain.",
+    },
+    Skill {
+        slug: "teaching",
+        name: "Teaching",
+        blurb: "Build on what they know, one idea at a time.",
+        category: SkillCategory::Writing,
+        approx_tokens: 100,
+        instructions: "\
+When teaching something:
+- Work out what the person already knows from how they asked, and start one step above it rather than from the beginning.
+- Introduce one idea at a time, and use it before introducing the next.
+- Give a concrete example before the general rule. The rule makes sense once there is something for it to describe.
+- Name the mistake people usually make here, and why it is tempting.
+- Check understanding with a specific question, not \"does that make sense\".
+- Say when you are simplifying, and what the simplification hides.
+- Stop when the question is answered. An unrequested second lesson is a wall of text.",
+    },
+    Skill {
+        slug: "editing",
+        name: "Editing",
+        blurb: "Tighter, clearer, and still in the writer's voice.",
+        category: SkillCategory::Writing,
+        approx_tokens: 100,
+        instructions: "\
+When editing someone's writing:
+- Preserve their voice. Your job is to make their argument land, not to rewrite it as yours.
+- Fix the structure before the sentences. Moving a paragraph often does more than rewording ten.
+- Cut hedges, filler and throat-clearing: \"I think\", \"in order to\", \"it is important to note that\", \"very\".
+- Prefer the active voice and concrete subjects. Say who did what.
+- Break any sentence carrying more than one idea.
+- Flag anything unclear, unsupported or contradictory rather than smoothing over it.
+- Give the edited text, then a short list of the substantive changes and why. Do not narrate every comma.",
     },
     Skill {
         slug: "explaining",
@@ -313,14 +671,6 @@ mod tests {
     }
 
     #[test]
-    fn the_catalogue_covers_the_languages_people_ask_for() {
-        for expected in ["rust", "python", "typescript", "go", "sql"] {
-            let skill = find(expected).unwrap_or_else(|| panic!("missing `{expected}`"));
-            assert_eq!(skill.category, SkillCategory::Language);
-        }
-    }
-
-    #[test]
     fn nothing_is_enabled_on_a_fresh_install() {
         let db = Db::open_in_memory().expect("open");
         assert!(enabled_slugs(&db).expect("slugs").is_empty());
@@ -381,12 +731,56 @@ mod tests {
 
     #[test]
     fn every_category_has_a_label_for_the_store() {
-        for category in [
-            SkillCategory::Language,
-            SkillCategory::Practice,
-            SkillCategory::Writing,
-        ] {
+        for category in SkillCategory::ALL {
             assert!(!category.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn every_category_has_at_least_one_skill_in_it() {
+        // An empty section in the store is a heading with nothing under it.
+        for category in SkillCategory::ALL {
+            assert!(
+                SKILLS.iter().any(|skill| skill.category == *category),
+                "`{}` has no skills",
+                category.label()
+            );
+        }
+    }
+
+    #[test]
+    fn the_catalogue_covers_the_languages_and_practices_people_ask_for() {
+        for expected in [
+            "rust", "python", "typescript", "go", "sql", "java", "csharp", "cpp", "swift",
+            "kotlin", "php", "ruby", "html-css", "react", "shell",
+        ] {
+            let skill = find(expected).unwrap_or_else(|| panic!("missing `{expected}`"));
+            assert_eq!(skill.category, SkillCategory::Language, "`{expected}`");
+        }
+
+        for expected in [
+            "code-review",
+            "debugging",
+            "testing",
+            "security",
+            "performance",
+            "architecture",
+            "refactoring",
+            "git",
+            "api-design",
+        ] {
+            let skill = find(expected).unwrap_or_else(|| panic!("missing `{expected}`"));
+            assert_eq!(skill.category, SkillCategory::Practice, "`{expected}`");
+        }
+
+        for expected in ["ui-design", "accessibility"] {
+            let skill = find(expected).unwrap_or_else(|| panic!("missing `{expected}`"));
+            assert_eq!(skill.category, SkillCategory::Design, "`{expected}`");
+        }
+
+        for expected in ["brainstorming", "summarising", "teaching", "editing"] {
+            let skill = find(expected).unwrap_or_else(|| panic!("missing `{expected}`"));
+            assert_eq!(skill.category, SkillCategory::Writing, "`{expected}`");
         }
     }
 }

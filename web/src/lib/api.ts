@@ -76,7 +76,7 @@ export interface HubModel {
 
 /* ---------- Tools ---------- */
 
-export type ToolGroup = 'web' | 'memory'
+export type ToolGroup = 'web' | 'memory' | 'files'
 
 export interface BuiltinTool {
   name: string
@@ -93,7 +93,7 @@ export interface SearchProviderOption {
   credentialsUrl: string | null
 }
 
-export type SkillCategory = 'language' | 'practice' | 'writing'
+export type SkillCategory = 'language' | 'practice' | 'design' | 'writing'
 
 /** An instruction pack appended to the system prompt when switched on. */
 export interface Skill {
@@ -115,6 +115,7 @@ export interface ToolsOverview {
     approxTokens: number
   }
   memory: { preload: boolean; count: number }
+  files: FileSettings
   search: {
     provider: string
     baseUrl: string | null
@@ -124,6 +125,25 @@ export interface ToolsOverview {
     needsBaseUrl: boolean
     providers: SearchProviderOption[]
   }
+}
+
+/** How much of the filesystem the model may touch, and where. */
+export type FileAccess = 'off' | 'read' | 'write'
+
+export interface FileTier {
+  id: FileAccess
+  name: string
+  /** Plain words for what this tier allows, shown next to the control. */
+  description: string
+}
+
+export interface FileSettings {
+  access: FileAccess
+  /** Folders granted, as the user entered them. */
+  roots: string[]
+  /** Whether the tools would actually be offered: a tier with no folders is not. */
+  usable: boolean
+  tiers: FileTier[]
 }
 
 export interface SearchResult {
@@ -203,6 +223,14 @@ export interface ConnectionResult {
 export type ProviderStatus = 'untested' | 'ok' | 'error'
 export type PresetKind = 'aggregator' | 'first_party' | 'rented_gpu' | 'custom'
 
+/**
+ * Which screen an endpoint belongs on.
+ *
+ * `provider` is someone else's model billed per token; `cloud` is your own model
+ * on hardware you rent, billed by the hour. Same mechanism, different decision.
+ */
+export type Surface = 'provider' | 'cloud'
+
 export interface ProviderPreset {
   slug: string
   name: string
@@ -212,6 +240,7 @@ export interface ProviderPreset {
   credentials_url: string | null
   key_hint: string | null
   needs_url: boolean
+  surface: Surface
 }
 
 export interface Provider {
@@ -226,6 +255,7 @@ export interface Provider {
   models: string[]
   created_at: string
   hasKey: boolean
+  surface: Surface
 }
 
 /* ---------- Projects ---------- */
@@ -521,6 +551,9 @@ export const api = {
         '/api/tools/search/test',
         { query },
       ),
+    /** Folders are sent whole, not as a diff, and checked to exist server-side. */
+    configureFiles: (patch: { access?: FileAccess; roots?: string[] }) =>
+      post<ToolsOverview>('/api/tools/files', patch),
   },
 
   memories: {

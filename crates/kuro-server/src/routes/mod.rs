@@ -98,6 +98,7 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/tools", get(tools::overview))
         .route("/api/tools/defaults", post(tools::configure_defaults))
         .route("/api/tools/skills", post(tools::set_skills))
+        .route("/api/tools/files", post(tools::configure_files))
         .route("/api/tools/search", post(tools::configure_search))
         .route("/api/tools/search/test", post(tools::test_search))
         .route("/api/memories", get(tools::list_memories))
