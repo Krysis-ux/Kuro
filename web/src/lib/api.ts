@@ -228,6 +228,26 @@ export interface Provider {
   hasKey: boolean
 }
 
+/* ---------- Projects ---------- */
+
+/**
+ * A project: standing instructions plus a grouping of conversations.
+ *
+ * The instructions are appended to the model's brief for every chat in the
+ * project, which is the substance of the feature.
+ */
+export interface Project {
+  id: string
+  name: string
+  description: string
+  instructions: string
+  model_id: string | null
+  tool_groups: string[] | null
+  created_at: string
+  updated_at: string
+  conversation_count: number
+}
+
 export interface RecommendedModel {
   id: string
   slug: string
@@ -430,6 +450,39 @@ export const api = {
       request<Record<string, unknown>>('/api/settings', {
         method: 'PATCH',
         body: JSON.stringify(patch),
+      }),
+  },
+
+  projects: {
+    list: () => request<{ projects: Project[] }>('/api/projects'),
+    get: (id: string) =>
+      request<{ project: Project; conversations: Conversation[] }>(`/api/projects/${id}`),
+    create: (body: {
+      name: string
+      description?: string
+      instructions?: string
+      modelId?: string
+      toolGroups?: ToolGroup[]
+    }) => post<{ project: Project }>('/api/projects', body),
+    update: (
+      id: string,
+      patch: {
+        name?: string
+        description?: string
+        instructions?: string
+        modelId?: string | null
+        toolGroups?: ToolGroup[] | null
+      },
+    ) =>
+      request<{ project: Project }>(`/api/projects/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    remove: (id: string) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
+    /** `null` moves the conversation out of any project. */
+    moveConversation: (conversationId: string, projectId: string | null) =>
+      post<{ projectId: string | null }>(`/api/conversations/${conversationId}/project`, {
+        projectId,
       }),
   },
 

@@ -19,6 +19,7 @@ mod kv;
 mod mcp;
 mod memories;
 mod models;
+mod projects;
 mod runtimes;
 
 pub use cloud::{CloudConnectorRecord, CloudStatus, NewCloudConnector};
@@ -27,10 +28,18 @@ pub use downloads::{DownloadKind, DownloadRecord, DownloadStatus};
 pub use mcp::{McpServerRecord, McpStatus, McpTransport, NewMcpServer};
 pub use memories::MemoryRecord;
 pub use models::{ModelRecord, ModelSource, ModelStatus, NewModel};
+pub use projects::{NewProject, ProjectRecord, ProjectUpdate};
 pub use runtimes::EngineRuntimeRecord;
 
 const SCHEMA: &str = include_str!("schema.sql");
-const SCHEMA_VERSION: i32 = 2;
+
+/// Indexes over columns that `add_column_if_missing` may have only just created.
+/// Run after that step; see the ordering note in [`Db::migrate`].
+const LATE_INDEXES: &str = "
+    CREATE INDEX IF NOT EXISTS idx_conversations_project
+        ON conversations (project_id, updated_at DESC);
+";
+const SCHEMA_VERSION: i32 = 3;
 
 #[derive(Clone)]
 pub struct Db {
@@ -76,20 +85,30 @@ impl Db {
                 return Ok(());
             }
 
-            // Every statement in the schema is `IF NOT EXISTS`, so replaying the
-            // whole file brings an older database up to date for anything that
-            // is a new table or index.
+            // Three ordered phases. The order is load-bearing.
+            //
+            // 1. Tables and indexes that depend only on themselves. Every
+            //    statement is `IF NOT EXISTS`, so replaying the whole file brings
+            //    an older database up to date.
             conn.execute_batch(SCHEMA)?;
 
-            // Columns added to a table that already shipped. `IF NOT EXISTS` is
-            // not available for `ALTER TABLE`, so each one is checked first
-            // rather than adding it and swallowing the resulting error — a real
-            // failure should still be reported.
+            // 2. Columns added to a table that already shipped. `IF NOT EXISTS` is
+            //    not available for `ALTER TABLE`, so each one is checked first
+            //    rather than adding it and swallowing the resulting error — a real
+            //    failure should still be reported.
             add_column_if_missing(conn, "mcp_servers", "slug", "TEXT")?;
             add_column_if_missing(conn, "mcp_servers", "tool_count", "INTEGER")?;
             add_column_if_missing(conn, "mcp_servers", "auth_ref", "TEXT")?;
             add_column_if_missing(conn, "cloud_connectors", "enabled", "INTEGER NOT NULL DEFAULT 1")?;
             add_column_if_missing(conn, "cloud_connectors", "models", "TEXT NOT NULL DEFAULT '[]'")?;
+            add_column_if_missing(conn, "conversations", "project_id", "TEXT")?;
+
+            // 3. Indexes over columns phase 2 may have just added. These cannot
+            //    live in the schema file: on a fresh database the column is part
+            //    of `CREATE TABLE` and the index would work there, but on an
+            //    upgrade the column does not exist when the file runs, the batch
+            //    fails, and the daemon refuses to start.
+            conn.execute_batch(LATE_INDEXES)?;
 
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             Ok(())
@@ -130,7 +149,10 @@ fn add_column_if_missing(
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    if existing.iter().any(|name| name == column) {
+    // An empty result means the table does not exist. That is not a failure: on a
+    // fresh database the schema file creates the table with this column already
+    // in it, so there is nothing to add.
+    if existing.is_empty() || existing.iter().any(|name| name == column) {
         return Ok(());
     }
 
@@ -163,6 +185,153 @@ mod tests {
 
         // Re-running migration must be a no-op rather than an error.
         db.migrate().expect("idempotent migrate");
+    }
+
+    /// The shape version 1 shipped with: no `project_id`, no `memories`, and
+    /// `mcp_servers`/`cloud_connectors` without the columns added since.
+    ///
+    /// Kept verbatim rather than generated, because the whole point is to migrate
+    /// from what real users actually have on disk.
+    const V1_SCHEMA: &str = "
+        CREATE TABLE conversations (
+            id           TEXT PRIMARY KEY,
+            title        TEXT NOT NULL DEFAULT 'New chat',
+            title_mode   TEXT NOT NULL DEFAULT 'first_line',
+            model_id     TEXT,
+            pinned       INTEGER NOT NULL DEFAULT 0,
+            archived     INTEGER NOT NULL DEFAULT 0,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        CREATE TABLE messages (
+            id              TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
+            role            TEXT NOT NULL,
+            content         TEXT NOT NULL DEFAULT '',
+            reasoning_content TEXT, tool_calls TEXT, tool_call_id TEXT, attachments TEXT,
+            used_web_search INTEGER NOT NULL DEFAULT 0, web_sources TEXT, model_id TEXT,
+            usage_prompt_tokens INTEGER, usage_completion_tokens INTEGER,
+            timing_ttft_ms INTEGER, timing_total_ms INTEGER, timing_tokens_per_sec REAL,
+            finish_reason TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE mcp_servers (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, transport TEXT NOT NULL,
+            command TEXT, args TEXT, env TEXT, url TEXT, headers TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'disconnected',
+            last_error TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE cloud_connectors (
+            id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL,
+            keychain_ref TEXT NOT NULL, base_url TEXT,
+            status TEXT NOT NULL DEFAULT 'untested',
+            last_tested_at TEXT, last_error TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE settings (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+    ";
+
+    /// A version-1 database with a conversation and a message in it.
+    fn version_one_database() -> Connection {
+        let conn = Connection::open_in_memory().expect("open");
+        conn.execute_batch(V1_SCHEMA).expect("v1 schema");
+        conn.execute_batch(
+            "INSERT INTO conversations (id, title, created_at, updated_at)
+                 VALUES ('c1', 'What is a black hole?', '2026-01-01', '2026-01-01');
+             INSERT INTO messages (id, conversation_id, role, content, created_at)
+                 VALUES ('m1', 'c1', 'user', 'explain', '2026-01-01');",
+        )
+        .expect("seed");
+        conn.pragma_update(None, "user_version", 1).expect("version");
+        conn
+    }
+
+    #[test]
+    fn upgrades_a_version_one_database_without_losing_anything() {
+        // This is the path every existing install takes. It is separate from the
+        // fresh-database test because the two fail in different ways: a fresh
+        // database gets `project_id` from `CREATE TABLE`, so an index over it
+        // succeeds there and fails only here.
+        let db = Db::from_connection(version_one_database()).expect("migrate v1");
+
+        let version: i32 = db
+            .with(|conn| Ok(conn.query_row("PRAGMA user_version", [], |r| r.get(0))?))
+            .expect("version");
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let conversations = db.list_conversations(None).expect("conversations");
+        assert_eq!(conversations.len(), 1, "existing chats must survive an upgrade");
+        assert_eq!(conversations[0].title, "What is a black hole?");
+        assert_eq!(db.list_messages("c1").expect("messages").len(), 1);
+    }
+
+    #[test]
+    fn an_upgraded_database_has_everything_the_new_code_reads() {
+        let db = Db::from_connection(version_one_database()).expect("migrate v1");
+
+        // Tables added after version 1.
+        assert!(db.list_projects().expect("projects").is_empty());
+        assert_eq!(db.count_memories().expect("memories"), 0);
+
+        // Columns added after version 1, exercised through the accessors that
+        // read them rather than by inspecting the schema.
+        assert!(db.list_mcp_servers().expect("mcp").is_empty());
+        assert!(db.list_cloud_connectors().expect("providers").is_empty());
+
+        // And the index that caused the original failure now exists.
+        let indexes: Vec<String> = db
+            .with(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'conversations'",
+                )?;
+                let names = stmt
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(names)
+            })
+            .expect("indexes");
+        assert!(
+            indexes.iter().any(|name| name == "idx_conversations_project"),
+            "got: {indexes:?}"
+        );
+    }
+
+    #[test]
+    fn a_project_can_be_used_immediately_after_an_upgrade() {
+        let db = Db::from_connection(version_one_database()).expect("migrate v1");
+
+        let project = db
+            .insert_project(&crate::db::NewProject {
+                name: "Kuro".to_string(),
+                ..Default::default()
+            })
+            .expect("insert");
+        db.set_conversation_project("c1", Some(&project.id))
+            .expect("move the pre-existing chat into a new project");
+
+        assert_eq!(
+            db.list_project_conversations(&project.id).expect("list").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn migrating_an_already_current_database_is_a_no_op() {
+        let db = Db::open_in_memory().expect("open");
+        db.create_conversation(None).expect("conversation");
+
+        db.migrate().expect("second migrate");
+
+        assert_eq!(db.list_conversations(None).expect("list").len(), 1);
+    }
+
+    #[test]
+    fn adding_a_column_to_a_table_that_does_not_exist_is_not_an_error() {
+        // Ordering inside `migrate` should not depend on which tables happen to
+        // exist yet.
+        let conn = Connection::open_in_memory().expect("open");
+        add_column_if_missing(&conn, "not_a_table", "whatever", "TEXT").expect("no-op");
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub mod downloads;
 pub mod mcp;
 pub mod models;
 pub mod openai;
+pub mod projects;
 pub mod providers;
 pub mod settings;
 pub mod system;
@@ -73,6 +74,13 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/conversations/{id}", delete(conversations::delete_conversation))
         .route("/api/conversations/{id}/messages", get(conversations::list_messages))
         .route("/api/conversations/{id}/messages", post(chat::send_message))
+        .route("/api/conversations/{id}/project", post(projects::move_conversation))
+        // Projects: standing instructions plus a grouping of conversations.
+        .route("/api/projects", get(projects::list_projects))
+        .route("/api/projects", post(projects::create_project))
+        .route("/api/projects/{id}", get(projects::get_project))
+        .route("/api/projects/{id}", patch(projects::update_project))
+        .route("/api/projects/{id}", delete(projects::delete_project))
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings", patch(settings::patch_settings))
         .route("/api/settings/reset", post(settings::reset_settings))
