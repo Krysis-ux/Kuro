@@ -73,7 +73,7 @@ impl Paths {
         self.engine_dir().join("downloads")
     }
 
-    /// Extracted `llama-server` builds, one directory per release tag.
+    /// Installed engine builds, one directory per release tag.
     pub fn engine_versions_dir(&self) -> PathBuf {
         self.engine_dir().join("versions")
     }
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn rejects_archive_entries_that_escape_the_destination() {
         let base = Path::new("/tmp/kuro/engine");
-        assert!(is_contained(base, Path::new("bin/llama-server")));
+        assert!(is_contained(base, Path::new("bin/kuro-engine")));
         assert!(!is_contained(base, Path::new("../../../usr/bin/evil")));
         assert!(!is_contained(base, Path::new("/etc/passwd")));
     }
