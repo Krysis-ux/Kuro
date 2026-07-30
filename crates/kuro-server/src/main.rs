@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use kuro_core::cloud::ProviderRegistry;
@@ -87,9 +88,7 @@ async fn main() -> anyhow::Result<()> {
     // Loopback only. Kuro has no authentication yet, so it must not be
     // reachable from the network; LAN serving arrives with API keys.
     let address = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = TcpListener::bind(address).await.with_context(|| {
-        format!("could not bind to port {port}. Another program may be using it.")
-    })?;
+    let listener = bind(address, port).await?;
 
     tracing::info!("Kuro LLM listening on http://127.0.0.1:{port}");
     tracing::info!("data directory: {}", paths.root.display());
@@ -106,6 +105,54 @@ async fn main() -> anyhow::Result<()> {
     engines.unload_all().await;
 
     result.context("server error")
+}
+
+/// Environment variable the outgoing process sets on its successor, so a restart
+/// knows to wait for the port instead of giving up on it.
+pub const RESTART_MARKER: &str = "KURO_RESTARTING";
+
+/// How long a restarting successor waits for the outgoing process to release the
+/// port. Generous, because shutting down means stopping engine child processes.
+const RESTART_BIND_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Take the listening socket.
+///
+/// A normal start binds once and reports a clear error if the port is taken —
+/// almost always another copy of Kuro, and saying so immediately is right.
+///
+/// A *restart* is different: the process that asked for it is still shutting down
+/// and still holds the port for a moment. There the only correct behaviour is to
+/// wait, because failing would leave the user with no server and a browser tab
+/// pointed at nothing.
+async fn bind(address: SocketAddr, port: u16) -> anyhow::Result<TcpListener> {
+    let restarting = std::env::var_os(RESTART_MARKER).is_some();
+
+    if !restarting {
+        return TcpListener::bind(address).await.with_context(|| {
+            format!("could not bind to port {port}. Another program may be using it.")
+        });
+    }
+
+    let deadline = std::time::Instant::now() + RESTART_BIND_TIMEOUT;
+    let mut last_error = None;
+
+    while std::time::Instant::now() < deadline {
+        match TcpListener::bind(address).await {
+            Ok(listener) => return Ok(listener),
+            Err(error) => {
+                last_error = Some(error);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "restarting, but port {port} was still held after {} seconds: {}",
+        RESTART_BIND_TIMEOUT.as_secs(),
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ))
 }
 
 fn resolve_port() -> u16 {

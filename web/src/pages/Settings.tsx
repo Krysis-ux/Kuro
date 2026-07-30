@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, formatBytes } from '../lib/api'
 import { SliderField } from '../components/Slider'
 import { applyTheme, useUi } from '../store/ui'
-import { PowerIcon } from '../components/icons'
+import { PowerIcon, RefreshIcon } from '../components/icons'
 
 /** Keys the Rust side reads. `0` (or `-1`) means "decide automatically". */
 const KEY_CONTEXT = 'engine.contextSize'
@@ -189,6 +189,7 @@ OPENAI_API_KEY=not-needed`}
 function ShutdownControl() {
   const [confirming, setConfirming] = useState(false)
   const [stopped, setStopped] = useState(false)
+  const [restartError, setRestartError] = useState<string | null>(null)
 
   const stop = useMutation({
     mutationFn: () => api.shutdown(),
@@ -196,6 +197,25 @@ function ShutdownControl() {
     // A connection error here usually means it worked and the socket closed
     // before the response arrived, which is success, not failure.
     onError: () => setStopped(true),
+  })
+
+  /**
+   * Restart, then wait for the successor before reloading.
+   *
+   * Reloading immediately would land on a dead port; a fixed delay would be a
+   * guess. Polling `/api/health` is the only version that is both correct and as
+   * fast as the machine allows.
+   */
+  const restart = useMutation({
+    mutationFn: async () => {
+      setRestartError(null)
+      // The request itself may not complete — the server is going down — so a
+      // failure here is not yet a failure of the restart.
+      await api.restart().catch(() => undefined)
+      await api.waitUntilHealthy()
+    },
+    onSuccess: () => window.location.reload(),
+    onError: (error: Error) => setRestartError(error.message),
   })
 
   if (stopped) {
@@ -209,31 +229,63 @@ function ShutdownControl() {
     )
   }
 
+  if (restart.isPending) {
+    return (
+      <div className="row">
+        <span className="faint">Server</span>
+        <span className="muted inline-form">
+          <span className="spinner" />
+          Restarting — waiting for it to come back…
+        </span>
+      </div>
+    )
+  }
+
   return (
-    <div className="row">
-      <span className="faint">Shut down</span>
-      {confirming ? (
+    <>
+      <div className="row">
+        <span className="faint">Restart</span>
         <div className="inline-form shutdown-confirm">
-          <span className="muted">Unload every model and stop the server?</span>
-          <button
-            className="btn btn-danger btn-sm"
-            onClick={() => stop.mutate()}
-            disabled={stop.isPending}
-          >
-            {stop.isPending ? <span className="spinner" /> : <PowerIcon size={13} />}
-            Stop
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>
-            Cancel
+          <span className="faint">Applies engine settings and clears a stuck engine.</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => restart.mutate()}>
+            <RefreshIcon size={13} />
+            Restart server
           </button>
         </div>
-      ) : (
-        <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(true)}>
-          <PowerIcon size={13} />
-          Stop server
-        </button>
+      </div>
+
+      {restartError && (
+        <div className="row">
+          <span className="faint">Restart</span>
+          <span className="form-error">{restartError}</span>
+        </div>
       )}
-    </div>
+
+      <div className="row">
+        <span className="faint">Shut down</span>
+        {confirming ? (
+          <div className="inline-form shutdown-confirm">
+            <span className="muted">Unload every model and stop the server?</span>
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={() => stop.mutate()}
+              disabled={stop.isPending}
+            >
+              {stop.isPending ? <span className="spinner" /> : <PowerIcon size={13} />}
+              Stop
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(true)}>
+            <PowerIcon size={13} />
+            Stop server
+          </button>
+        )}
+      </div>
+    </>
   )
 }
 
