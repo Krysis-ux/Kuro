@@ -2,6 +2,12 @@
 /target/
 **/*.rs.bk
 
+# Packaging output: an assembled app bundle and the disk image built from it.
+# Both are reproducible from packaging/macos/build-dmg.sh, and the image is
+# hundreds of megabytes.
+/build/
+/dist/
+
 # Frontend
 web/node_modules/
 web/dist/
