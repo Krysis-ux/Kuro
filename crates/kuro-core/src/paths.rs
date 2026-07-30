@@ -96,6 +96,12 @@ impl Paths {
         self.root.join("attachments")
     }
 
+    /// API keys and bearer tokens, kept out of the database so a copy of it never
+    /// carries a secret. Written owner-only; see [`crate::secrets`].
+    pub fn credentials_file(&self) -> PathBuf {
+        self.root.join("credentials.json")
+    }
+
     /// Local path for a model's weights, namespaced by model id.
     pub fn model_file(&self, model_id: &str, file_name: &str) -> PathBuf {
         self.models_dir()

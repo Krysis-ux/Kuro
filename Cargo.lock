@@ -927,6 +927,7 @@ dependencies = [
  "chrono",
  "futures",
  "kuro-core",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

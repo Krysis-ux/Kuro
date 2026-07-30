@@ -2,7 +2,16 @@ import { useState } from 'react'
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, relativeTime } from '../lib/api'
-import { ChatIcon, CubeIcon, PlugIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './icons'
+import {
+  ChatIcon,
+  CloudIcon,
+  CubeIcon,
+  PlusIcon,
+  SearchIcon,
+  SettingsIcon,
+  ToolIcon,
+  TrashIcon,
+} from './icons'
 import { Logo } from './Logo'
 
 export function Sidebar() {
@@ -59,9 +68,13 @@ export function Sidebar() {
           <CubeIcon size={15} />
           Models
         </NavLink>
-        <NavLink to="/mcp" className="nav-item">
-          <PlugIcon size={15} />
-          MCP servers
+        <NavLink to="/tools" className="nav-item">
+          <ToolIcon size={15} />
+          Tools
+        </NavLink>
+        <NavLink to="/providers" className="nav-item">
+          <CloudIcon size={15} />
+          Providers
         </NavLink>
         <NavLink to="/settings" className="nav-item">
           <SettingsIcon size={15} />

@@ -56,6 +56,11 @@ impl EngineLaunchSpec {
             // Kuro serves its own interface; the engine's bundled one would
             // only be reachable on an internal port nobody is told about.
             "--no-webui".to_string(),
+            // Use the chat template baked into the GGUF. Without this the engine
+            // falls back to a generic template and ignores the `tools` field
+            // entirely, so every tool call silently becomes prose describing a
+            // tool call. Tool support is not optional enough to leave off.
+            "--jinja".to_string(),
         ]
     }
 }
@@ -197,6 +202,10 @@ mod tests {
         assert!(joined.contains("--threads 10"));
         assert!(joined.contains("--no-webui"));
         assert!(joined.contains("--alias qwen3-4b:q4_k_m"));
+        assert!(
+            joined.contains("--jinja"),
+            "without --jinja the engine ignores tool definitions"
+        );
     }
 
     #[test]

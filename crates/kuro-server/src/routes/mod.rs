@@ -18,10 +18,14 @@ pub mod chat;
 pub mod common;
 pub mod conversations;
 pub mod downloads;
+pub mod mcp;
 pub mod models;
 pub mod openai;
+pub mod providers;
 pub mod settings;
 pub mod system;
+pub mod tools;
+pub mod tools_runtime;
 
 pub fn router(state: SharedState) -> Router {
     // The API is bound to loopback, and the browser UI is served from the same
@@ -46,11 +50,13 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/health", get(system::health))
         .route("/api/status", get(system::status))
         .route("/api/hardware", get(system::hardware))
+        .route("/api/shutdown", post(system::shutdown))
         // Literal segments are matched ahead of `{id}`, so `/models/loaded`
         // and `/models/recommended` are not captured as model ids.
         .route("/api/models", get(models::list_models))
         .route("/api/models/recommended", get(models::recommended_models))
         .route("/api/models/loaded", get(models::loaded_models))
+        .route("/api/models/search", get(models::search_hub))
         .route("/api/models/pull", post(models::pull_model))
         .route("/api/models/preview", post(models::preview_pull))
         .route("/api/models/{id}", get(models::get_model))
@@ -70,6 +76,31 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings", patch(settings::patch_settings))
         .route("/api/settings/reset", post(settings::reset_settings))
+        // MCP tool servers. `/registry` is the recommended list and is matched
+        // ahead of `{id}` for the same reason `/models/loaded` is.
+        .route("/api/mcp/servers", get(mcp::list_servers))
+        .route("/api/mcp/servers", post(mcp::add_server))
+        .route("/api/mcp/registry", get(mcp::list_registry))
+        .route("/api/mcp/servers/{id}", delete(mcp::delete_server))
+        .route("/api/mcp/servers/{id}/refresh", post(mcp::refresh_server))
+        .route("/api/mcp/servers/{id}/enabled", post(mcp::set_enabled))
+        .route("/api/mcp/servers/{id}/auth", post(mcp::set_auth))
+        // Kuro's own tools, and what powers them.
+        .route("/api/tools", get(tools::overview))
+        .route("/api/tools/defaults", post(tools::configure_defaults))
+        .route("/api/tools/skills", post(tools::set_skills))
+        .route("/api/tools/search", post(tools::configure_search))
+        .route("/api/tools/search/test", post(tools::test_search))
+        .route("/api/memories", get(tools::list_memories))
+        .route("/api/memories", post(tools::create_memory))
+        .route("/api/memories/{id}", delete(tools::delete_memory))
+        // Remote model providers.
+        .route("/api/providers", get(providers::list_providers))
+        .route("/api/providers", post(providers::add_provider))
+        .route("/api/providers/{id}", delete(providers::delete_provider))
+        .route("/api/providers/{id}/test", post(providers::test_provider))
+        .route("/api/providers/{id}/key", post(providers::replace_key))
+        .route("/api/providers/{id}/enabled", post(providers::set_enabled))
 }
 
 fn openai_routes() -> Router<SharedState> {

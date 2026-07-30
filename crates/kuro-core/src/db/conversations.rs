@@ -83,6 +83,13 @@ pub struct MessageCompletion {
     pub timing_total_ms: Option<i64>,
     pub timing_tokens_per_sec: Option<f64>,
     pub finish_reason: Option<String>,
+    /// Tool calls the turn made, in order, as a JSON array. Stored on the
+    /// assistant row rather than as separate messages so that reloading a
+    /// conversation shows the same tool trail the user watched appear.
+    pub tool_calls: Option<Value>,
+    pub used_web_search: bool,
+    /// Pages the turn drew on, as a JSON array of `{title, url}`.
+    pub web_sources: Option<Value>,
 }
 
 fn conversation_from_row(row: &Row<'_>) -> rusqlite::Result<Conversation> {
@@ -320,13 +327,17 @@ impl Db {
     /// Write the final text plus the usage and timing numbers that the request
     /// inspector shows.
     pub fn complete_message(&self, id: &str, completion: &MessageCompletion) -> Result<()> {
+        let tool_calls = encode(&completion.tool_calls)?;
+        let web_sources = encode(&completion.web_sources)?;
+
         self.with(|conn| {
             conn.execute(
                 "UPDATE messages SET
                      content = ?2, reasoning_content = ?3,
                      usage_prompt_tokens = ?4, usage_completion_tokens = ?5,
                      timing_ttft_ms = ?6, timing_total_ms = ?7, timing_tokens_per_sec = ?8,
-                     finish_reason = ?9
+                     finish_reason = ?9, tool_calls = ?10,
+                     used_web_search = ?11, web_sources = ?12
                  WHERE id = ?1",
                 params![
                     id,
@@ -338,6 +349,9 @@ impl Db {
                     completion.timing_total_ms,
                     completion.timing_tokens_per_sec,
                     completion.finish_reason,
+                    tool_calls,
+                    completion.used_web_search as i64,
+                    web_sources,
                 ],
             )?;
             Ok(())

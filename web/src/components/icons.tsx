@@ -139,3 +139,80 @@ export const DownloadIcon = (props: IconProps) => (
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
   </Svg>
 )
+
+export const CheckIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="m4 12 5 5L20 6" />
+  </Svg>
+)
+
+export const ToolIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M14.7 6.3a4 4 0 0 1 5 5L20 12l-8 8-4-4 8-8zM7 14l-4 4 3 3 4-4" />
+  </Svg>
+)
+
+export const BrainIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8V15a3 3 0 0 0 3 3h1v3M15 3a3 3 0 0 1 3 3 3 3 0 0 1 1 5.8V15a3 3 0 0 1-3 3h-1v3" />
+  </Svg>
+)
+
+export const ImageIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <circle cx="8.5" cy="9.5" r="1.5" />
+    <path d="m21 16-5-5-6 6" />
+  </Svg>
+)
+
+export const FileIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M14 3v5h5M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+  </Svg>
+)
+
+export const MicIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="9" y="2" width="6" height="11" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0M12 18v4" />
+  </Svg>
+)
+
+export const VideoIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="2" y="6" width="13" height="12" rx="2" />
+    <path d="m15 11 7-4v10l-7-4z" />
+  </Svg>
+)
+
+export const RefreshIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5" />
+  </Svg>
+)
+
+export const KeyIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <circle cx="8" cy="15" r="4" />
+    <path d="m11 12 8-8 3 3-2 2-2-2M16 7l3 3" />
+  </Svg>
+)
+
+export const ExternalIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+  </Svg>
+)
+
+export const StoreIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M3 9h18l-1.5-5.2A1 1 0 0 0 18.5 3h-13a1 1 0 0 0-1 .8zM4 9v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9M9 21v-6h6v6" />
+  </Svg>
+)
+
+export const PowerIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M12 3v9M18.4 6.6a9 9 0 1 1-12.8 0" />
+  </Svg>
+)

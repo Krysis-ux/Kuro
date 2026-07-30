@@ -1,6 +1,6 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
-use kuro_core::catalog::{self, CURATED_MODELS};
+use kuro_core::catalog::{self, search, CURATED_MODELS};
 use kuro_core::hardware::estimate_fit;
 use kuro_core::KuroError;
 use serde::Deserialize;
@@ -8,6 +8,54 @@ use serde_json::{json, Value};
 
 use crate::error::AppResult;
 use crate::state::SharedState;
+
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Search Hugging Face for GGUF repositories.
+///
+/// With no query this returns the most-downloaded ones, which makes the same
+/// endpoint serve both "browse" and "search" — the distinction is not one a user
+/// thinks in.
+pub async fn search_hub(
+    State(state): State<SharedState>,
+    Query(query): Query<SearchQuery>,
+) -> AppResult<Json<Value>> {
+    let limit = query.limit.unwrap_or_else(search::default_limit);
+    let term = query.q.as_deref().map(str::trim).unwrap_or("");
+
+    let hits = if term.is_empty() {
+        search::trending_gguf(&state.outbound, limit).await?
+    } else {
+        search::search_gguf(&state.outbound, term, limit).await?
+    };
+
+    let installed = state.db.list_models()?;
+
+    let described: Vec<Value> = hits
+        .into_iter()
+        .map(|hit| {
+            let fit = search::estimate_fit(&hit, &state.hardware);
+            // Any installed model from this repository counts as installed, since
+            // the quantization is chosen at download time.
+            let is_installed = installed
+                .iter()
+                .any(|model| model.hf_repo.as_deref() == Some(hit.repo.as_str()));
+
+            let mut encoded = serde_json::to_value(&hit).unwrap_or_else(|_| json!({}));
+            encoded["fit"] = serde_json::to_value(fit).unwrap_or(Value::Null);
+            encoded["installed"] = json!(is_installed);
+            encoded
+        })
+        .collect();
+
+    Ok(Json(json!({ "models": described })))
+}
 
 /// Models the user has pulled, each annotated with whether it is loaded and how
 /// well it fits this machine.
@@ -31,7 +79,12 @@ pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Val
         })
         .collect();
 
-    Ok(Json(json!({ "models": described })))
+    // Provider models ride along in the same response so the composer needs one
+    // request to render a picker containing everything the user can talk to.
+    Ok(Json(json!({
+        "models": described,
+        "remote": state.providers.remote_models()?,
+    })))
 }
 
 /// Kuro's built-in suggestions, with a fit estimate and whether each is already
