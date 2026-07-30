@@ -9,6 +9,21 @@ key for. Nothing on the machine is touched unless you grant it either — file a
 is off until you name the folders. Each of those is a control you flip, never a
 default and never a decision the model makes for you.
 
+## Install
+
+Download `Kuro-<version>.dmg` from the
+[latest release](https://github.com/Krysis-ux/Kuro/releases), open it, and drag
+Kuro into Applications. Nothing else is needed — no Rust, no Node, no compiling.
+
+The app is not signed by Apple yet, so the first launch needs **right-click →
+Open** rather than a double-click. macOS then offers the same warning with an
+Open button on it; after that it starts normally.
+
+Kuro runs as an ordinary app: it starts the server and opens the interface in
+your browser. Quitting Kuro stops the server and unloads any model.
+
+### From source
+
 **Double-click `Start Kuro.command`.** It builds anything missing on the first
 run, starts the server, and opens the interface. Closing that window stops Kuro.
 
@@ -24,7 +39,7 @@ Then open <http://127.0.0.1:8420>.
 
 ## What it does today
 
-- **Runs GGUF models** through `llama.cpp`, one supervised child process per
+- **Runs GGUF models** through `kuro-engine`, one supervised child process per
   loaded model. The engine binary is downloaded automatically on first use — no
   manual setup, no compiling.
 - **Finds models for you.** A curated list of recommended models, each labelled
@@ -90,7 +105,7 @@ Then open <http://127.0.0.1:8420>.
   live in an owner-only file beside the database, never in it.
 
 - **Cloud** — bring your own cloud. A GPU you rented on RunPod, Vast or Lambda, a
-  vLLM or `llama-server` you started yourself, an Ollama box on the network, or any
+  model server you started yourself, a box on your own network, or any
   OpenAI-compatible URL. Same mechanism as a provider and a deliberately separate
   screen, because it is a different decision: a provider rents you access to
   *their* model, while a cloud endpoint runs *your* weights on hardware you are
@@ -166,6 +181,18 @@ cd web && npm install && npm run build && cd ..
 
 Put `target/release` on your `PATH` to use `kuro` from anywhere.
 
+### Building the installer
+
+```bash
+packaging/macos/build-dmg.sh              # universal (Apple Silicon + Intel)
+packaging/macos/build-dmg.sh --host-only  # this machine's architecture only
+```
+
+Writes `dist/Kuro-<version>.dmg`. The universal build compiles twice and adds
+the second toolchain target on first run, so `--host-only` is much faster while
+iterating. The bundle is unsigned; `NOTARISATION` at the end of that script has
+the two commands to add once there is a Developer ID.
+
 If Rust was installed through Homebrew's `rustup`, its binaries are not on the
 default `PATH`:
 
@@ -196,7 +223,7 @@ frontend changes do not require a Rust rebuild.
                      |
                EngineManager                     load, supervise, unload
       ┌──────────────┼──────────────┐
-  llama-server   llama-server   llama-server     one per loaded model
+  kuro-engine    kuro-engine    kuro-engine      one per loaded model
    (port 392xx)   (port 392xx)   (port 392xx)
 ```
 
@@ -256,6 +283,6 @@ already had data.
 
 Not yet chosen.
 
-The `llama.cpp` binaries Kuro downloads at runtime are MIT licensed and remain
-the property of their authors; Kuro does not redistribute them. Model weights
-carry their own licences, which you accept with the model publisher.
+Kuro downloads its engine binary and model weights at runtime rather than
+redistributing them; both carry their own licences. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
