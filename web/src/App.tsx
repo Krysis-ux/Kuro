@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { ChatPage } from './pages/Chat'
 import { ModelsPage } from './pages/Models'
+import { ProjectPage, ProjectsPage } from './pages/Projects'
 import { ProvidersPage } from './pages/Providers'
 import { SettingsPage } from './pages/Settings'
 import { ToolsPage } from './pages/Tools'
@@ -20,6 +21,8 @@ export function App() {
         <Routes>
           <Route path="/" element={<ChatPage />} />
           <Route path="/chat/:id" element={<ChatPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/projects/:id" element={<ProjectPage />} />
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/tools" element={<ToolsPage />} />
           <Route path="/providers" element={<ProvidersPage />} />

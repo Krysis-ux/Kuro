@@ -38,6 +38,15 @@ pub struct PromptContext<'a> {
     pub tool_names: &'a [String],
     /// Skills the user switched on.
     pub skills: &'a [&'a Skill],
+    /// Standing instructions from the project this conversation belongs to.
+    pub project: Option<ProjectBrief<'a>>,
+}
+
+/// A project's name and standing instructions.
+#[derive(Debug, Clone, Copy)]
+pub struct ProjectBrief<'a> {
+    pub name: &'a str,
+    pub instructions: &'a str,
 }
 
 /// Build the system prompt for one turn.
@@ -57,7 +66,29 @@ pub fn build(context: &PromptContext<'_>) -> String {
         out.push_str(&skills(context));
     }
 
+    // Project instructions go last, so that when they conflict with anything above
+    // the user's own words are what the model read most recently.
+    if let Some(project) = &context.project {
+        out.push_str(&project_section(project));
+    }
+
     out
+}
+
+fn project_section(project: &ProjectBrief<'_>) -> String {
+    let instructions = project.instructions.trim();
+    if instructions.is_empty() {
+        return format!(
+            "This conversation is in the project \"{}\".\n\n",
+            project.name
+        );
+    }
+
+    format!(
+        "This conversation is in the project \"{}\". \
+         Its standing instructions, which take precedence over the general guidance above:\n\n{}\n\n",
+        project.name, instructions
+    )
 }
 
 fn identity(context: &PromptContext<'_>) -> String {
@@ -187,6 +218,7 @@ mod tests {
             memory_count: 0,
             tool_names: &[],
             skills: &[],
+            project: None,
         }
     }
 
@@ -347,5 +379,76 @@ mod tests {
             words < 400,
             "a 0.5B model has little context to spare; got {words} words"
         );
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+
+    fn base() -> PromptContext<'static> {
+        PromptContext {
+            model_id: "m",
+            is_remote: false,
+            web_enabled: false,
+            search_ran: false,
+            memory_enabled: false,
+            memory_count: 0,
+            tool_names: &[],
+            skills: &[],
+            project: None,
+        }
+    }
+
+    #[test]
+    fn project_instructions_are_included_and_named() {
+        let prompt = build(&PromptContext {
+            project: Some(ProjectBrief {
+                name: "Kuro",
+                instructions: "Assume Rust 2021. Never suggest adding a dependency.",
+            }),
+            ..base()
+        });
+
+        assert!(prompt.contains("project \"Kuro\""));
+        assert!(prompt.contains("Never suggest adding a dependency"));
+        assert!(prompt.contains("take precedence"));
+    }
+
+    #[test]
+    fn a_project_with_no_instructions_is_still_named() {
+        let prompt = build(&PromptContext {
+            project: Some(ProjectBrief {
+                name: "Scratch",
+                instructions: "   ",
+            }),
+            ..base()
+        });
+
+        assert!(prompt.contains("project \"Scratch\""));
+        assert!(
+            !prompt.contains("take precedence"),
+            "there is nothing to take precedence over"
+        );
+    }
+
+    #[test]
+    fn project_instructions_come_last() {
+        let prompt = build(&PromptContext {
+            project: Some(ProjectBrief {
+                name: "Kuro",
+                instructions: "PROJECT_MARKER",
+            }),
+            ..base()
+        });
+
+        let marker = prompt.find("PROJECT_MARKER").expect("present");
+        let rules = prompt.find("Rules:").expect("present");
+        assert!(marker > rules, "the user's own instructions should read last");
+    }
+
+    #[test]
+    fn no_project_section_appears_without_a_project() {
+        assert!(!build(&base()).contains("This conversation is in the project"));
     }
 }

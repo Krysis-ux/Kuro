@@ -253,6 +253,11 @@ async fn run_turn(
     // index 0 so it is the first thing the model reads.
     let tool_names: Vec<String> = tool_set.names().into_iter().map(str::to_string).collect();
     let active_skills = skills::enabled(&state.db).unwrap_or_default();
+    // A project's standing instructions apply to every conversation in it.
+    let project = state
+        .db
+        .project_for_conversation(turn.conversation_id)
+        .unwrap_or(None);
     let brief = prompt::build(&prompt::PromptContext {
         // The name the model is known by, not Kuro's internal id — a provider
         // model's recorded id carries a connector UUID, which tells the model
@@ -265,6 +270,10 @@ async fn run_turn(
         memory_count: turn.memory_count,
         tool_names: &tool_names,
         skills: &active_skills,
+        project: project.as_ref().map(|held| prompt::ProjectBrief {
+            name: &held.name,
+            instructions: &held.instructions,
+        }),
     });
     messages.insert(0, json!({ "role": "system", "content": brief }));
 
