@@ -1,0 +1,118 @@
+//! The Kuro LLM daemon.
+//!
+//! One process serves the JSON API, the OpenAI-compatible API and the web
+//! interface. Inference happens in separate `llama-server` child processes that
+//! this daemon starts, supervises and stops.
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use anyhow::Context;
+use kuro_core::db::Db;
+use kuro_core::engine::EngineManager;
+use kuro_core::{hardware, http, Paths};
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+
+mod error;
+mod routes;
+mod state;
+mod static_files;
+
+use state::AppState;
+
+/// Default port. Chosen to avoid llama.cpp's own web UI on 8080, Ollama on
+/// 11434 and LM Studio on 1234, so Kuro can run alongside them.
+const DEFAULT_PORT: u16 = 8420;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("KURO_LOG")
+                .unwrap_or_else(|_| "kuro_server=info,kuro_core=info,warn".into()),
+        )
+        .with_target(false)
+        .init();
+
+    let paths = Paths::resolve_and_create().context("preparing the Kuro data directory")?;
+    let db = Db::open(&paths.database_file()).context("opening the Kuro database")?;
+    let hardware = hardware::detect();
+
+    let port = resolve_port();
+    let engines = Arc::new(
+        EngineManager::new(db.clone(), paths.clone(), hardware.clone())
+            .context("starting the engine manager")?,
+    );
+
+    let app_state = Arc::new(AppState {
+        db,
+        paths: paths.clone(),
+        hardware,
+        engines: engines.clone(),
+        outbound: http::client()?,
+        started_at: chrono::Utc::now(),
+        port,
+        download_cancels: Mutex::new(HashMap::new()),
+    });
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    tokio::spawn(engines.clone().run_idle_loop(shutdown.clone()));
+
+    // Loopback only. Kuro has no authentication yet, so it must not be
+    // reachable from the network; LAN serving arrives with API keys.
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = TcpListener::bind(address).await.with_context(|| {
+        format!("could not bind to port {port}. Another program may be using it.")
+    })?;
+
+    tracing::info!("Kuro LLM listening on http://127.0.0.1:{port}");
+    tracing::info!("data directory: {}", paths.root.display());
+
+    let app = routes::router(app_state);
+    let result = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await;
+
+    // Engines are child processes; leaving them running would hold gigabytes of
+    // memory after Kuro exits.
+    shutdown.store(true, Ordering::Relaxed);
+    tracing::info!("stopping engines");
+    engines.unload_all().await;
+
+    result.context("server error")
+}
+
+fn resolve_port() -> u16 {
+    std::env::var("KURO_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_PORT)
+}
+
+async fn shutdown_signal() {
+    let interrupt = async {
+        tokio::signal::ctrl_c().await.ok();
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut signal) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            signal.recv().await;
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = interrupt => {}
+        _ = terminate => {}
+    }
+
+    tracing::info!("shutting down");
+}
