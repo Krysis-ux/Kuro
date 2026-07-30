@@ -74,6 +74,10 @@ Then open <http://127.0.0.1:8420>.
 - **Automatic hardware defaults.** Context size, GPU layers and thread count are
   derived from the machine and overridable in Settings.
 - **Idle unloading** so a model you have stopped using gives its memory back.
+- **Restart and shut down from Settings.** Restart starts the successor before this
+  process exits and the page waits for it to answer, so it is a restart rather than
+  a shutdown with extra steps. Useful when an engine setting needs a reload or a
+  child process has wedged.
 
 ## Not built yet
 

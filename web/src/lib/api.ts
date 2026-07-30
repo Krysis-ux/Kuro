@@ -396,6 +396,27 @@ export const api = {
   status: () => request<ServerStatus>('/api/status'),
   /** Unload every engine and stop the daemon. */
   shutdown: () => post<{ stopping: boolean; unloadingEngines: number }>('/api/shutdown'),
+  /** Relaunch the daemon. The successor starts before this one exits. */
+  restart: () => post<{ restarting: boolean; port: number }>('/api/restart'),
+  /**
+   * Resolve once the server answers again, or reject on timeout.
+   *
+   * Used after a restart: the browser cannot know when the successor is ready, and
+   * a fixed delay would either be wrong or feel slow.
+   */
+  waitUntilHealthy: async (timeoutMs = 30_000): Promise<void> => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch('/api/health', { cache: 'no-store' })
+        if (response.ok) return
+      } catch {
+        // Expected while the port is between owners.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    }
+    throw new Error('Kuro did not come back. Check the terminal it was started from.')
+  },
   hardware: () =>
     request<{ hardware: HardwareInfo; effectiveEngineSettings: Record<string, number> }>(
       '/api/hardware',
