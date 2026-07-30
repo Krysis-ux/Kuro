@@ -52,6 +52,7 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/status", get(system::status))
         .route("/api/hardware", get(system::hardware))
         .route("/api/shutdown", post(system::shutdown))
+        .route("/api/restart", post(system::restart))
         // Literal segments are matched ahead of `{id}`, so `/models/loaded`
         // and `/models/recommended` are not captured as model ids.
         .route("/api/models", get(models::list_models))
