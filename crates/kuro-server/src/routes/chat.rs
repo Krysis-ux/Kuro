@@ -36,7 +36,8 @@ use kuro_core::cloud::ChatTarget;
 use kuro_core::db::{MessageCompletion, NewMessage};
 use kuro_core::settings::{default_tool_groups, memory_preload_enabled, Effort};
 use kuro_core::sse::{drain_events, is_done};
-use kuro_core::tools::{memory, web_search, ToolGroup, WebSource};
+use kuro_core::tools::files::FilePermissions;
+use kuro_core::tools::{fetch, intent, memory, web_search, ToolGroup, WebSource};
 use kuro_core::{prompt, skills};
 use kuro_core::KuroError;
 use serde::Deserialize;
@@ -228,23 +229,39 @@ async fn run_turn(
     let mut used_web_search = false;
 
     // The deterministic search, for models that would not have asked.
+    //
+    // The switch being on is permission to search, not an instruction to search
+    // every message. "hi" with the switch on used to return five dictionary
+    // definitions of the word, which is what a model then tried to answer from.
     let mut search_ran = false;
     if turn.search_first {
-        used_web_search = true;
-        match upfront_search(state, turn.query, sender).await {
-            Ok((context, found)) => {
-                search_ran = true;
-                runtime::merge_sources(&mut sources, found);
-                messages.insert(
-                    messages.len().saturating_sub(1),
-                    json!({ "role": "system", "content": context }),
-                );
+        match intent::decide(turn.query) {
+            intent::SearchDecision::Skip(reason) => {
+                // Deliberately not a notice. Nothing went wrong, and telling
+                // somebody their greeting was not searched is noise.
+                tracing::debug!(reason = reason.explain(), "no up-front search for this message");
             }
-            Err(error) => {
-                // A search failure is reported to the user and the turn continues
-                // without it. Refusing to answer at all would be worse — but the
-                // prompt must not then claim results are present.
-                let _ = send_event(sender, "notice", json!({ "message": error.to_string() })).await;
+            intent::SearchDecision::Search(query) => {
+                used_web_search = true;
+                match upfront_search(state, &query, sender).await {
+                    Ok((context, found)) => {
+                        search_ran = true;
+                        runtime::merge_sources(&mut sources, found);
+                        messages.insert(
+                            messages.len().saturating_sub(1),
+                            json!({ "role": "system", "content": context }),
+                        );
+                    }
+                    Err(error) => {
+                        // A search failure is reported to the user and the turn
+                        // continues without it. Refusing to answer at all would be
+                        // worse — but the prompt must not then claim results are
+                        // present.
+                        let _ =
+                            send_event(sender, "notice", json!({ "message": error.to_string() }))
+                                .await;
+                    }
+                }
             }
         }
     }
@@ -252,7 +269,19 @@ async fn run_turn(
     // The brief goes in last so it can describe what actually happened, and at
     // index 0 so it is the first thing the model reads.
     let tool_names: Vec<String> = tool_set.names().into_iter().map(str::to_string).collect();
+    let mcp_servers = tool_set.mcp_server_names();
     let active_skills = skills::enabled(&state.db).unwrap_or_default();
+
+    // Only described to the model when the group is on for this message *and*
+    // the permissions actually grant something, so the brief never claims an
+    // access the tools would refuse.
+    let file_permissions = FilePermissions::resolve(&state.db).unwrap_or_default();
+    let file_roots = file_permissions.root_descriptions();
+    let files_brief = (turn.groups.contains(&ToolGroup::Files) && file_permissions.is_usable())
+        .then(|| prompt::FileBrief {
+            can_write: file_permissions.access.allows_write(),
+            roots: &file_roots,
+        });
     // A project's standing instructions apply to every conversation in it.
     let project = state
         .db
@@ -269,6 +298,8 @@ async fn run_turn(
         memory_enabled: turn.groups.contains(&ToolGroup::Memory),
         memory_count: turn.memory_count,
         tool_names: &tool_names,
+        mcp_servers: &mcp_servers,
+        files: files_brief,
         skills: &active_skills,
         project: project.as_ref().map(|held| prompt::ProjectBrief {
             name: &held.name,
@@ -375,7 +406,19 @@ async fn run_turn(
     .await
 }
 
-/// Search before the model has said anything, and describe it to the client.
+/// How many of the top results are opened and read in full.
+///
+/// A snippet is one or two sentences the search engine picked for matching the
+/// query, which is frequently not the sentence that answers it. Handing a model
+/// five snippets and asking for an answer produces a summary of a results page;
+/// handing it the actual text of the top pages produces an answer. Three is the
+/// most that fits alongside a conversation without crowding out the history.
+const PAGES_TO_READ: usize = 3;
+/// Characters kept from each page that is read.
+const CHARS_PER_PAGE: usize = 4_000;
+
+/// Search before the model has said anything, read the best results, and describe
+/// what happened to the client.
 async fn upfront_search(
     state: &SharedState,
     query: &str,
@@ -393,24 +436,76 @@ async fn upfront_search(
     let results =
         web_search::search(&state.outbound, &config, query, web_search::DEFAULT_MAX_RESULTS).await?;
 
+    let pages = read_top_pages(state, &results).await;
+
     let _ = send_event(
         sender,
         "tool_result",
         json!({
             "name": "web_search",
             "ok": true,
-            "preview": format!("{} results", results.len()),
+            "preview": match pages.len() {
+                0 => format!("{} results", results.len()),
+                read => format!("{} results, {read} pages read", results.len()),
+            },
         }),
     )
     .await;
 
-    let context = format!(
-        "The user's question was searched for before you answered. \
-         Use these results and cite the URLs you rely on.\n\n{}",
-        web_search::format_for_model(query, &results)
+    let mut context = String::with_capacity(4096);
+    context.push_str(
+        "A web search ran before you answered, so that you would not have to answer from \
+         memory. Everything below came from the live web just now and is real.\n\n",
+    );
+    context.push_str(&web_search::format_for_model(query, &results));
+
+    if !pages.is_empty() {
+        context.push_str("\n\nThe most relevant pages, read in full:\n");
+        for page in &pages {
+            let title = page.title.as_deref().unwrap_or(&page.url);
+            let body: String = page.text.chars().take(CHARS_PER_PAGE).collect();
+            context.push_str(&format!("\n--- {title}\n{}\n{body}\n", page.url));
+        }
+    }
+
+    context.push_str(
+        "\n\nNow answer the user's question in your own words, using what is above. \
+         Take the facts out of it and put them together — a list of links is not an answer, \
+         and the interface already shows the sources under your reply. If the material does \
+         not cover part of the question, answer the part it does cover and say which part it \
+         did not.",
     );
 
     Ok((context, results.iter().map(WebSource::from).collect()))
+}
+
+/// Open the top few results and extract their text.
+///
+/// Concurrent, because three sequential page loads is most of the wait before the
+/// first token. A page that refuses, times out or turns out to be a PDF is
+/// dropped without comment: the snippets are still there, and one unavailable
+/// source is not worth interrupting an answer for.
+async fn read_top_pages(
+    state: &SharedState,
+    results: &[web_search::SearchResult],
+) -> Vec<fetch::FetchedPage> {
+    let reads = results
+        .iter()
+        .take(PAGES_TO_READ)
+        .map(|result| fetch::fetch_url(&state.outbound, &result.url));
+
+    futures::future::join_all(reads)
+        .await
+        .into_iter()
+        .filter_map(|outcome| match outcome {
+            Ok(page) if !page.text.trim().is_empty() => Some(page),
+            Ok(_) => None,
+            Err(error) => {
+                tracing::debug!(%error, "a search result could not be read");
+                None
+            }
+        })
+        .collect()
 }
 
 /// One request to the engine or provider, streamed.

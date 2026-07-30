@@ -7,6 +7,7 @@ import {
   CloudIcon,
   CubeIcon,
   FolderIcon,
+  KeyIcon,
   PlusIcon,
   SearchIcon,
   SettingsIcon,
@@ -78,8 +79,12 @@ export function Sidebar() {
           Tools
         </NavLink>
         <NavLink to="/providers" className="nav-item">
-          <CloudIcon size={15} />
+          <KeyIcon size={15} />
           Providers
+        </NavLink>
+        <NavLink to="/cloud" className="nav-item">
+          <CloudIcon size={15} />
+          Cloud
         </NavLink>
         <NavLink to="/settings" className="nav-item">
           <SettingsIcon size={15} />

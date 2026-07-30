@@ -4,6 +4,7 @@
 //! "stream a reply and also manage a tool registry". Everything here is about
 //! producing a [`ToolSet`] and then dispatching against it.
 
+use kuro_core::tools::files::FilePermissions;
 use kuro_core::tools::{
     self, Builtin, BuiltinContext, ToolGroup, ToolOrigin, ToolOutcome, ToolSpec, WebSource,
 };
@@ -31,7 +32,11 @@ impl ToolSet {
     /// Built-ins are added first so that an MCP server cannot take the name
     /// `web_search` and quietly replace it.
     pub async fn assemble(state: &SharedState, groups: &[ToolGroup]) -> Self {
-        let mut specs: Vec<ToolSpec> = tools::builtins_for_groups(groups)
+        // A failure to read the permissions is treated as no permission, which is
+        // the only safe direction for a setting that governs writing to disk.
+        let files = FilePermissions::resolve(&state.db).unwrap_or_default();
+
+        let mut specs: Vec<ToolSpec> = tools::builtins_for_groups(groups, &files)
             .into_iter()
             .map(Builtin::spec)
             .collect();
@@ -78,6 +83,23 @@ impl ToolSet {
     pub fn names(&self) -> Vec<&str> {
         self.specs.iter().map(|spec| spec.name.as_str()).collect()
     }
+
+    /// Distinct MCP servers behind the tools in this set, in the order first seen.
+    ///
+    /// Free, because the origins are already here. The model's brief names these
+    /// so that "what did I just connect" has an answer that does not require
+    /// guessing which server a tool name belongs to.
+    pub fn mcp_server_names(&self) -> Vec<String> {
+        let mut seen: Vec<String> = Vec::new();
+        for spec in &self.specs {
+            if let ToolOrigin::Mcp { server_name, .. } = &spec.origin {
+                if !seen.iter().any(|held| held == server_name) {
+                    seen.push(server_name.clone());
+                }
+            }
+        }
+        seen
+    }
 }
 
 /// One tool call the model asked for.
@@ -121,6 +143,9 @@ pub async fn dispatch(
                 db: &state.db,
                 client: &state.outbound,
                 search,
+                // Re-read per call rather than captured at turn start, so revoking
+                // access takes effect on the next call instead of the next message.
+                files: FilePermissions::resolve(&state.db).unwrap_or_default(),
                 conversation_id: Some(conversation_id),
             };
             tools::run_builtin(builtin, &call.arguments, &context).await

@@ -36,10 +36,26 @@ pub struct PromptContext<'a> {
     pub memory_count: i64,
     /// Tool names offered this turn, exactly as the model will see them.
     pub tool_names: &'a [String],
+    /// Names of the MCP servers currently connected.
+    ///
+    /// Asked "what MCP servers did I just connect", a model with only the tool
+    /// names has to guess which server each came from. Naming them is a dozen
+    /// tokens and turns a wrong answer into a right one.
+    pub mcp_servers: &'a [String],
+    /// File access, when the user has granted any.
+    pub files: Option<FileBrief<'a>>,
     /// Skills the user switched on.
     pub skills: &'a [&'a Skill],
     /// Standing instructions from the project this conversation belongs to.
     pub project: Option<ProjectBrief<'a>>,
+}
+
+/// What the model may do with files this turn.
+#[derive(Debug, Clone, Copy)]
+pub struct FileBrief<'a> {
+    pub can_write: bool,
+    /// The folders granted, exactly as the user entered them.
+    pub roots: &'a [String],
 }
 
 /// A project's name and standing instructions.
@@ -114,7 +130,8 @@ fn capabilities(context: &PromptContext<'_>) -> String {
         out.push_str(
             "- You have web access. The user's question was already searched for, and the \
              results appear in this context as \"Web results\". They are real and current. \
-             Use them.\n",
+             Read them and write the answer yourself, in your own words. Do not reply with \
+             only a list of links — the interface already shows the sources under your reply.\n",
         );
     } else if context.web_enabled {
         out.push_str(
@@ -148,12 +165,49 @@ fn capabilities(context: &PromptContext<'_>) -> String {
         out.push_str("- Memory is off this turn. You cannot save or look up saved facts.\n");
     }
 
+    out.push_str(&files_line(context));
+
+    if !context.mcp_servers.is_empty() {
+        out.push_str(&format!(
+            "- Connected MCP tool servers: {}. These are the servers the user has connected to \
+             Kuro. If they ask what is connected, this list is the answer.\n",
+            context.mcp_servers.join(", ")
+        ));
+    }
+
     out.push_str(
         "- You can see the whole conversation above, including everything the user has \
          said in it. Answer questions about it directly.\n\n",
     );
 
     out
+}
+
+/// What the model can do with the user's files, stated exactly.
+///
+/// Vagueness here is the failure. Told only "you have file tools", a model either
+/// claims access to the whole machine or refuses a folder it was given; naming the
+/// granted folders and the tier means both questions have a factual answer.
+fn files_line(context: &PromptContext<'_>) -> String {
+    let Some(files) = &context.files else {
+        return "- You have NO access to the user's files. You cannot read, list or write \
+                anything on this computer. If they ask, say file access is off and that \
+                Tools → Files turns it on for folders they choose.\n"
+            .to_string();
+    };
+
+    let verb = if files.can_write {
+        "read, list, create and overwrite files"
+    } else {
+        "read and list files, but not change them"
+    };
+
+    format!(
+        "- You can {verb}, and only inside these folders: {}. \
+         Anything outside them is refused. Use `read_file` before describing a file's \
+         contents; never guess at them.\n",
+        files.roots.join(", ")
+    )
 }
 
 fn tools(context: &PromptContext<'_>) -> String {
@@ -166,8 +220,24 @@ fn tools(context: &PromptContext<'_>) -> String {
 }
 
 /// The rules that stop the specific failures seen in real transcripts.
+///
+/// Ordering is load-bearing. A small model weights the first rule it reads most
+/// heavily, and an earlier version of this function opened the list with `Say "I
+/// don't know" when you do not know`. That is correct advice for a factual
+/// question and catastrophic as a general instruction: the observed result was
+/// "hi" answered with "I don't know", because a greeting contains no fact the
+/// model could claim to know and the most prominent rule told it what to do about
+/// that. Replying normally therefore comes first, and not-knowing is stated last
+/// and scoped explicitly to facts that were asked for and are missing.
 fn honesty(context: &PromptContext<'_>) -> String {
     let mut out = String::from("Rules:\n");
+
+    out.push_str(
+        "- Reply like a person would. A greeting gets a greeting, small talk gets small talk, \
+         and a question about you gets an answer from the list above. Never answer any of \
+         these with \"I don't know\".\n\
+         - Answer the question that was asked. Skip preamble and restatement.\n",
+    );
 
     // Invented URLs were the worst observed failure: a question about a net worth
     // produced five fabricated links, each of which looked entirely plausible.
@@ -176,18 +246,24 @@ fn honesty(context: &PromptContext<'_>) -> String {
          get it from a tool result or from the user, you do not have it.\n",
     );
 
-    if context.search_ran || context.web_enabled {
+    if context.search_ran {
+        out.push_str(
+            "- Answer from the web results above. Pull the facts out of them and put them \
+             together into a direct answer. If they do not cover the question, say which part \
+             they did not answer — do not discard the rest of what they do say.\n\
+             - Only cite URLs that appear verbatim in those results. Quote them exactly.\n",
+        );
+    } else if context.web_enabled {
         out.push_str(
             "- Only cite URLs that appear verbatim in a tool result. Quote them exactly.\n",
         );
     }
 
     out.push_str(
-        "- Say \"I don't know\" when you do not know. A wrong confident answer is worse \
-         than an admission.\n\
-         - Do not describe your own limitations from memory. What you can do this turn is \
+        "- Do not describe your own limitations from memory. What you can do this turn is \
          listed above, and that list is authoritative.\n\
-         - Answer the question that was asked. Skip preamble and restatement.\n\n",
+         - If you are asked for a specific fact you do not have, say which fact is missing \
+         and how it could be found. \"I don't know\" on its own is never a complete reply.\n\n",
     );
 
     out
@@ -217,6 +293,8 @@ mod tests {
             memory_enabled: false,
             memory_count: 0,
             tool_names: &[],
+            mcp_servers: &[],
+            files: None,
             skills: &[],
             project: None,
         }
@@ -310,7 +388,105 @@ mod tests {
     fn fabrication_is_forbidden_explicitly() {
         let prompt = build(&context());
         assert!(prompt.contains("Never invent a URL"));
-        assert!(prompt.contains("I don't know"));
+    }
+
+    #[test]
+    fn replying_normally_is_the_first_rule_and_not_knowing_is_the_last() {
+        // The transcript bug: "hi" was answered with "I don't know", because the
+        // rules opened by telling the model to say exactly that. A small model
+        // follows the rule it read first.
+        let prompt = build(&context());
+
+        let rules = prompt.find("Rules:").expect("rules section");
+        let reply_normally = prompt.find("Reply like a person").expect("present");
+        let not_knowing = prompt.find("say which fact is missing").expect("present");
+
+        assert!(reply_normally > rules);
+        assert!(
+            reply_normally < not_knowing,
+            "answering normally must be read before the caveat about not knowing"
+        );
+    }
+
+    #[test]
+    fn a_greeting_is_explicitly_excluded_from_i_dont_know() {
+        let prompt = build(&context());
+
+        assert!(prompt.contains("A greeting gets a greeting"));
+        assert!(
+            prompt.contains("Never answer any of these with \"I don't know\""),
+            "the failure was general enough to need naming outright"
+        );
+        assert!(
+            prompt.contains("\"I don't know\" on its own is never a complete reply"),
+            "a bare admission is what the transcripts actually produced"
+        );
+    }
+
+    #[test]
+    fn search_results_must_be_synthesised_rather_than_listed() {
+        // The other half of the transcript bug: with results in context the model
+        // replied "I don't know" and printed five links.
+        let prompt = build(&PromptContext {
+            web_enabled: true,
+            search_ran: true,
+            ..context()
+        });
+
+        assert!(prompt.contains("write the answer yourself"));
+        assert!(prompt.contains("only a list of links"));
+        assert!(prompt.contains("Pull the facts out of them"));
+    }
+
+    #[test]
+    fn connected_mcp_servers_are_named_so_the_question_can_be_answered() {
+        // Asked "what MCP servers did I just connect", the model previously had
+        // no way to know, and said so.
+        let servers = vec!["Filesystem".to_string(), "Context7".to_string()];
+        let prompt = build(&PromptContext {
+            mcp_servers: &servers,
+            ..context()
+        });
+
+        assert!(prompt.contains("Connected MCP tool servers"));
+        assert!(prompt.contains("Filesystem"));
+        assert!(prompt.contains("Context7"));
+        assert!(prompt.contains("this list is the answer"));
+    }
+
+    #[test]
+    fn no_mcp_line_appears_when_nothing_is_connected() {
+        assert!(!build(&context()).contains("Connected MCP tool servers"));
+    }
+
+    #[test]
+    fn file_access_off_is_stated_as_plainly_as_web_access_off() {
+        let prompt = build(&context());
+
+        assert!(prompt.contains("NO access to the user's files"));
+        assert!(prompt.contains("Tools → Files"), "it should say how to turn it on");
+    }
+
+    #[test]
+    fn granted_folders_are_named_and_the_tier_is_stated() {
+        let roots = vec!["/Users/me/Projects".to_string()];
+
+        let read_only = build(&PromptContext {
+            files: Some(FileBrief { can_write: false, roots: &roots }),
+            ..context()
+        });
+        assert!(read_only.contains("/Users/me/Projects"));
+        assert!(read_only.contains("not change them"));
+
+        let writable = build(&PromptContext {
+            files: Some(FileBrief { can_write: true, roots: &roots }),
+            ..context()
+        });
+        assert!(writable.contains("create and overwrite"));
+        assert!(
+            writable.contains("only inside these folders"),
+            "the boundary matters more than the capability"
+        );
     }
 
     #[test]
@@ -365,18 +541,26 @@ mod tests {
     #[test]
     fn the_prompt_stays_short_enough_for_a_small_model() {
         let names: Vec<String> = (0..6).map(|i| format!("tool_{i}")).collect();
+        let servers = vec!["Filesystem".to_string()];
+        let roots = vec!["/Users/me/Projects".to_string()];
         let prompt = build(&PromptContext {
             web_enabled: true,
             search_ran: true,
             memory_enabled: true,
             memory_count: 3,
             tool_names: &names,
+            mcp_servers: &servers,
+            files: Some(FileBrief { can_write: true, roots: &roots }),
             ..context()
         });
 
         let words = prompt.split_whitespace().count();
+        // Every switch on at once is the worst case and not the common one. The
+        // ceiling moved up from 400 when the file and MCP lines were added; those
+        // paid for themselves by turning two wrong answers into right ones, but
+        // the budget still needs a limit or it will drift indefinitely.
         assert!(
-            words < 400,
+            words < 500,
             "a 0.5B model has little context to spare; got {words} words"
         );
     }
@@ -395,6 +579,8 @@ mod project_tests {
             memory_enabled: false,
             memory_count: 0,
             tool_names: &[],
+            mcp_servers: &[],
+            files: None,
             skills: &[],
             project: None,
         }
