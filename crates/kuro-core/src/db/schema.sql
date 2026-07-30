@@ -1,4 +1,4 @@
--- Kuro LLM schema, version 3.
+-- Kuro LLM schema, version 4.
 --
 -- Every statement is `IF NOT EXISTS`, so the whole file is safe to re-run
 -- against a database created by an earlier version. Columns added after a table
@@ -62,7 +62,11 @@ CREATE TABLE IF NOT EXISTS conversations (
     -- Set when the conversation lives in a project. Deleting a project releases
     -- its conversations rather than destroying them: the chats are the work, the
     -- project is only a grouping.
-    project_id   TEXT REFERENCES projects (id) ON DELETE SET NULL
+    project_id   TEXT REFERENCES projects (id) ON DELETE SET NULL,
+    -- Set when this conversation was branched off another one. Deleting the
+    -- original leaves the branch alone: a fork is a chat in its own right from
+    -- the moment it is made.
+    forked_from_id TEXT REFERENCES conversations (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_updated

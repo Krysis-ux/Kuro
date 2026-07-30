@@ -39,7 +39,7 @@ const LATE_INDEXES: &str = "
     CREATE INDEX IF NOT EXISTS idx_conversations_project
         ON conversations (project_id, updated_at DESC);
 ";
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 #[derive(Clone)]
 pub struct Db {
@@ -102,6 +102,7 @@ impl Db {
             add_column_if_missing(conn, "cloud_connectors", "enabled", "INTEGER NOT NULL DEFAULT 1")?;
             add_column_if_missing(conn, "cloud_connectors", "models", "TEXT NOT NULL DEFAULT '[]'")?;
             add_column_if_missing(conn, "conversations", "project_id", "TEXT")?;
+            add_column_if_missing(conn, "conversations", "forked_from_id", "TEXT")?;
 
             // 3. Indexes over columns phase 2 may have just added. These cannot
             //    live in the schema file: on a fresh database the column is part

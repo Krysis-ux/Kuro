@@ -216,3 +216,26 @@ export const PowerIcon = (props: IconProps) => (
     <path d="M12 3v9M18.4 6.6a9 9 0 1 1-12.8 0" />
   </Svg>
 )
+
+export const CopyIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15V5a1 1 0 0 1 1-1h9" />
+  </Svg>
+)
+
+export const PencilIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17zM14 6l4 4" />
+  </Svg>
+)
+
+/** Two paths diverging from one, for branching a conversation. */
+export const BranchIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <circle cx="6" cy="5" r="2.2" />
+    <circle cx="6" cy="19" r="2.2" />
+    <circle cx="18" cy="12" r="2.2" />
+    <path d="M6 7.2v9.6M8.2 17.6A8 8 0 0 0 15.9 12.6" />
+  </Svg>
+)

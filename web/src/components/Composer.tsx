@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, isRemoteModel, type Effort, type InstalledModel, type RemoteModel } from '../lib/api'
@@ -21,6 +21,10 @@ import {
 } from './icons'
 
 const EFFORTS: Effort[] = ['low', 'balanced', 'high', 'max']
+
+/** Tallest the input grows before it starts scrolling. Matches `max-height`
+ *  on `.composer-input`; the two have to agree or the box scrolls early. */
+const MAX_INPUT_HEIGHT = 320
 
 const EFFORT_HINT: Record<Effort, string> = {
   low: 'Short answers, least compute',
@@ -75,12 +79,43 @@ export function Composer({
   } = useUi()
 
   // Grow with the content instead of scrolling inside a fixed box.
+  //
+  // The width check is load-bearing. A textarea asked for its `scrollHeight`
+  // before layout has given it a width answers with a number that has nothing
+  // to do with its contents — several hundred pixels for an empty box. Because
+  // this only re-ran when the text changed, and the text of a fresh composer
+  // never does, that number used to be latched in for good: an empty input
+  // half the height of the window, sitting over the conversation it had
+  // squeezed out of the way.
+  const fitToContent = useCallback(() => {
+    const node = textareaRef.current
+    if (!node || node.clientWidth === 0) return
+    node.style.height = 'auto'
+    node.style.height = `${Math.min(node.scrollHeight, MAX_INPUT_HEIGHT)}px`
+  }, [])
+
+  useEffect(fitToContent, [text, fitToContent])
+
+  // Re-measure when the input's width changes. That covers the window being
+  // resized, and — the case that matters — a first render that happened before
+  // the element had been laid out, which is what makes the measurement above
+  // safe to skip rather than guess at.
   useEffect(() => {
     const node = textareaRef.current
     if (!node) return
-    node.style.height = 'auto'
-    node.style.height = `${Math.min(node.scrollHeight, 320)}px`
-  }, [text])
+
+    let lastWidth = node.clientWidth
+    const observer = new ResizeObserver(() => {
+      // Height changes are this effect's own doing; reacting to them would
+      // loop. Only a width change can invalidate the measurement.
+      if (node.clientWidth === lastWidth) return
+      lastWidth = node.clientWidth
+      fitToContent()
+    })
+
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [fitToContent])
 
   useEffect(() => {
     if (!menuOpen) return

@@ -326,6 +326,20 @@ export interface Conversation {
   archived: boolean
   created_at: string
   updated_at: string
+  /** The conversation this one was branched from, when it was. */
+  forked_from_id: string | null
+}
+
+/**
+ * Prefix on the stand-in row shown while a message is still being sent.
+ *
+ * Such a row has no server-side id yet, so anything that addresses a message by
+ * id — forking, editing — has to wait for the real one.
+ */
+export const OPTIMISTIC_ID_PREFIX = 'optimistic-'
+
+export function isOptimistic(messageId: string): boolean {
+  return messageId.startsWith(OPTIMISTIC_ID_PREFIX)
 }
 
 export interface Message {
@@ -493,6 +507,9 @@ export const api = {
       }),
     remove: (id: string) => request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
     messages: (id: string) => request<{ messages: Message[] }>(`/api/conversations/${id}/messages`),
+    /** Branch a chat into a new one, up to and including `upToMessageId`. */
+    fork: (id: string, upToMessageId?: string) =>
+      post<Conversation>(`/api/conversations/${id}/fork`, { up_to_message_id: upToMessageId }),
   },
 
   settings: {
@@ -633,6 +650,17 @@ export type ChatEvent =
       toolRounds: number
     }
 
+/** What a turn is asked to do, whether it is a new message or a rewritten one. */
+export interface TurnRequest {
+  content: string
+  model?: string
+  effort?: Effort
+  /** Tool groups on for this message. */
+  tools?: ToolGroup[]
+  /** Search before answering, rather than hoping the model asks. */
+  web_search?: boolean
+}
+
 /**
  * Send a message and yield events as they arrive.
  *
@@ -640,21 +668,43 @@ export type ChatEvent =
  * body directly. Bytes are decoded incrementally and only complete events are
  * emitted, which keeps multi-byte characters intact across chunk boundaries.
  */
-export async function* streamMessage(
+export function streamMessage(
   conversationId: string,
-  body: {
-    content: string
-    model?: string
-    effort?: Effort
-    /** Tool groups on for this message. */
-    tools?: ToolGroup[]
-    /** Search before answering, rather than hoping the model asks. */
-    web_search?: boolean
-  },
+  body: TurnRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
-  const response = await fetch(`/api/conversations/${conversationId}/messages`, {
-    method: 'POST',
+  return streamTurn(`/api/conversations/${conversationId}/messages`, 'POST', body, signal)
+}
+
+/**
+ * Rewrite a message and answer again from that point.
+ *
+ * The server drops the edited message and everything after it before
+ * generating, so the events that arrive here describe a transcript that now
+ * ends where the edit was made.
+ */
+export function streamEditMessage(
+  conversationId: string,
+  messageId: string,
+  body: TurnRequest,
+  signal?: AbortSignal,
+): AsyncGenerator<ChatEvent> {
+  return streamTurn(
+    `/api/conversations/${conversationId}/messages/${messageId}`,
+    'PATCH',
+    body,
+    signal,
+  )
+}
+
+async function* streamTurn(
+  url: string,
+  method: 'POST' | 'PATCH',
+  body: TurnRequest,
+  signal?: AbortSignal,
+): AsyncGenerator<ChatEvent> {
+  const response = await fetch(url, {
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,

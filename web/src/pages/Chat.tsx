@@ -4,7 +4,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Composer } from '../components/Composer'
 import { MessageList, type StreamingState } from '../components/MessageList'
 import { Logo } from '../components/Logo'
-import { api, streamMessage, type Message } from '../lib/api'
+import {
+  api,
+  streamEditMessage,
+  streamMessage,
+  OPTIMISTIC_ID_PREFIX,
+  type Message,
+} from '../lib/api'
 import { activeToolGroups, useUi } from '../store/ui'
 
 export function ChatPage() {
@@ -40,7 +46,15 @@ export function ChatPage() {
   // Abandoning a stream by navigating away should stop it, not leave it running.
   useEffect(() => () => abortRef.current?.abort(), [])
 
-  const send = async (content: string) => {
+  /**
+   * Run a turn: either a new message, or a rewrite of an existing one.
+   *
+   * `editing` carries the id of the message being replaced. The server drops
+   * that message and everything after it, so the local cache is trimmed to
+   * match before the optimistic row goes in — otherwise the old replies stay on
+   * screen underneath the new question until the refetch lands.
+   */
+  const send = async (content: string, editing?: string) => {
     setError(null)
     setNotices([])
 
@@ -53,9 +67,15 @@ export function ChatPage() {
     }
 
     // Show the user's own message immediately rather than waiting for a refetch.
-    queryClient.setQueryData<{ messages: Message[] }>(['messages', targetId], (existing) => ({
-      messages: [...(existing?.messages ?? []), optimisticUserMessage(targetId, content)],
-    }))
+    queryClient.setQueryData<{ messages: Message[] }>(['messages', targetId], (existing) => {
+      const held = existing?.messages ?? []
+      const cut = editing ? held.findIndex((message) => message.id === editing) : -1
+      // A cut of -1 means the row is not in the cache. Keeping everything is the
+      // safe reading: the refetch that follows will correct it either way, and
+      // `slice(0, -1)` would quietly drop the wrong message.
+      const kept = cut === -1 ? held : held.slice(0, cut)
+      return { messages: [...kept, optimisticUserMessage(targetId as string, content)] }
+    })
 
     setStreaming(emptyStream())
 
@@ -63,17 +83,16 @@ export function ChatPage() {
     abortRef.current = controller
 
     try {
-      const events = streamMessage(
-        targetId,
-        {
-          content,
-          model: selectedModel ?? undefined,
-          effort,
-          tools: activeToolGroups({ webSearch, memory, files }),
-          web_search: webSearch,
-        },
-        controller.signal,
-      )
+      const request = {
+        content,
+        model: selectedModel ?? undefined,
+        effort,
+        tools: activeToolGroups({ webSearch, memory, files }),
+        web_search: webSearch,
+      }
+      const events = editing
+        ? streamEditMessage(targetId, editing, request, controller.signal)
+        : streamMessage(targetId, request, controller.signal)
 
       for await (const event of events) {
         if (event.type === 'token') {
@@ -123,6 +142,23 @@ export function ChatPage() {
 
   const stop = () => abortRef.current?.abort()
 
+  /**
+   * Branch this conversation at a message and open the copy.
+   *
+   * The original is untouched — that is the point of forking rather than
+   * editing: two directions from the same history, both kept.
+   */
+  const fork = async (messageId: string) => {
+    setError(null)
+    try {
+      const branch = await api.conversations.fork(conversationId as string, messageId)
+      void queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      navigate(`/chat/${branch.id}`)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not fork this conversation.')
+    }
+  }
+
   const composer = (centred: boolean) => (
     <Composer
       models={models.data?.models ?? []}
@@ -151,6 +187,8 @@ export function ChatPage() {
               streaming={streaming}
               error={error}
               notices={notices}
+              onFork={(messageId) => void fork(messageId)}
+              onEdit={(messageId, content) => void send(content, messageId)}
             />
           </div>
           {composer(false)}
@@ -203,7 +241,7 @@ function welcomeLine(data: { models: unknown[]; remote: unknown[] } | undefined)
  */
 function optimisticUserMessage(conversationId: string, content: string): Message {
   return {
-    id: `optimistic-${Date.now()}`,
+    id: `${OPTIMISTIC_ID_PREFIX}${Date.now()}`,
     conversation_id: conversationId,
     role: 'user',
     content,

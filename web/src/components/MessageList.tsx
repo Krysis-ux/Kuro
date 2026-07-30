@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { Message } from '../lib/api'
+import { isOptimistic, type Message } from '../lib/api'
 import { CheckIcon, ChevronIcon, ExternalIcon, GlobeIcon, InfoIcon, ToolIcon } from './icons'
 import { Logo } from './Logo'
+import { MessageActions } from './MessageActions'
 
 /** One tool call, as the composer watches it happen. */
 export interface StreamingTool {
@@ -25,13 +26,32 @@ interface MessageListProps {
   error: string | null
   /** Things that went wrong without ending the turn. */
   notices?: string[]
+  /** Branch a new conversation ending at this message. */
+  onFork: (messageId: string) => void
+  /** Replace a user message and answer again from there. */
+  onEdit: (messageId: string, content: string) => void
 }
 
-export function MessageList({ messages, streaming, error, notices = [] }: MessageListProps) {
+export function MessageList({
+  messages,
+  streaming,
+  error,
+  notices = [],
+  onFork,
+  onEdit,
+}: MessageListProps) {
   return (
     <div className="messages">
       {messages.map((message) => (
-        <MessageRow key={message.id} message={message} />
+        <MessageRow
+          key={message.id}
+          message={message}
+          // A turn still being generated has nothing to fork or edit yet, and
+          // an optimistic row has no id the server would recognise.
+          actionable={!isOptimistic(message.id) && streaming === null}
+          onFork={() => onFork(message.id)}
+          onEdit={(content) => onEdit(message.id, content)}
+        />
       ))}
 
       {streaming && <StreamingRow state={streaming} />}
@@ -51,13 +71,44 @@ export function MessageList({ messages, streaming, error, notices = [] }: Messag
   )
 }
 
-function MessageRow({ message }: { message: Message }) {
+interface MessageRowProps {
+  message: Message
+  actionable: boolean
+  onFork: () => void
+  onEdit: (content: string) => void
+}
+
+function MessageRow({ message, actionable, onFork, onEdit }: MessageRowProps) {
   const [showDetails, setShowDetails] = useState(false)
+  const [editing, setEditing] = useState(false)
 
   if (message.role === 'user') {
     return (
       <div className="message message-user">
-        <div className="bubble">{message.content}</div>
+        <div className="message-user-col">
+          {editing ? (
+            <MessageEditor
+              initial={message.content}
+              onCancel={() => setEditing(false)}
+              onSubmit={(content) => {
+                setEditing(false)
+                onEdit(content)
+              }}
+            />
+          ) : (
+            <>
+              <div className="bubble">{message.content}</div>
+              {actionable && (
+                <MessageActions
+                  content={message.content}
+                  onFork={onFork}
+                  onEdit={() => setEditing(true)}
+                  align="end"
+                />
+              )}
+            </>
+          )}
+        </div>
       </div>
     )
   }
@@ -136,7 +187,71 @@ function MessageRow({ message }: { message: Message }) {
             )}
           </div>
         )}
+
+        {actionable && (
+          <MessageActions content={message.content} onFork={onFork} />
+        )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * A user message being rewritten.
+ *
+ * Sends on Enter and cancels on Escape, matching the composer, since this is
+ * the same act of writing a message. Submitting is what truncates the
+ * conversation, so an accidental Enter is worth guarding: an unchanged or empty
+ * message just closes the editor rather than discarding the replies below it.
+ */
+function MessageEditor({
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  initial: string
+  onSubmit: (content: string) => void
+  onCancel: () => void
+}) {
+  const [draft, setDraft] = useState(initial)
+
+  const submit = () => {
+    const content = draft.trim()
+    if (content === '' || content === initial.trim()) {
+      onCancel()
+      return
+    }
+    onSubmit(content)
+  }
+
+  return (
+    <div className="message-editor">
+      <textarea
+        className="message-editor-input"
+        value={draft}
+        autoFocus
+        rows={Math.min(10, draft.split('\n').length + 1)}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            submit()
+          } else if (event.key === 'Escape') {
+            onCancel()
+          }
+        }}
+      />
+      <div className="message-editor-actions">
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" className="btn btn-solid" onClick={submit}>
+          Send
+        </button>
+      </div>
+      <p className="faint message-editor-note">
+        Sending replaces this message. The replies after it are removed.
+      </p>
     </div>
   )
 }
