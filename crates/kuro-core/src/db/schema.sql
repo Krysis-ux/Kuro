@@ -1,4 +1,4 @@
--- Kuro LLM schema, version 2.
+-- Kuro LLM schema, version 3.
 --
 -- Every statement is `IF NOT EXISTS`, so the whole file is safe to re-run
 -- against a database created by an earlier version. Columns added after a table
@@ -30,6 +30,26 @@ CREATE TABLE IF NOT EXISTS models (
     last_used_at      TEXT
 );
 
+-- A project groups conversations under standing instructions. The instructions
+-- are appended to the model's brief for every conversation in the project, which
+-- is the whole feature: "always answer as if reviewing production Rust" said once
+-- rather than at the top of every chat.
+CREATE TABLE IF NOT EXISTS projects (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    instructions TEXT NOT NULL DEFAULT '',
+    -- Model and tool defaults for chats started here, so a project can be
+    -- "the one where web search is always on".
+    model_id     TEXT,
+    tool_groups  TEXT,                                -- JSON array, null means inherit
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_updated
+    ON projects (updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS conversations (
     id           TEXT PRIMARY KEY,
     title        TEXT NOT NULL DEFAULT 'New chat',
@@ -38,11 +58,19 @@ CREATE TABLE IF NOT EXISTS conversations (
     pinned       INTEGER NOT NULL DEFAULT 0,
     archived     INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
+    updated_at   TEXT NOT NULL,
+    -- Set when the conversation lives in a project. Deleting a project releases
+    -- its conversations rather than destroying them: the chats are the work, the
+    -- project is only a grouping.
+    project_id   TEXT REFERENCES projects (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_updated
     ON conversations (archived, updated_at DESC);
+
+-- Note: the index on `project_id` is NOT here. It cannot be, because on an
+-- upgrade the column does not exist yet when this file runs — see LATE_INDEXES
+-- in `db/mod.rs`.
 
 CREATE TABLE IF NOT EXISTS messages (
     id                      TEXT PRIMARY KEY,

@@ -6,6 +6,7 @@ import {
   ChatIcon,
   CloudIcon,
   CubeIcon,
+  FolderIcon,
   PlusIcon,
   SearchIcon,
   SettingsIcon,
@@ -63,6 +64,10 @@ export function Sidebar() {
         <NavLink to="/" end className="nav-item">
           <ChatIcon size={15} />
           Chat
+        </NavLink>
+        <NavLink to="/projects" className="nav-item">
+          <FolderIcon size={15} />
+          Projects
         </NavLink>
         <NavLink to="/models" className="nav-item">
           <CubeIcon size={15} />

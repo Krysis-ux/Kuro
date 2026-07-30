@@ -60,6 +60,10 @@ Then open <http://127.0.0.1:8420>.
   beside the database, never in it.
 - **Hugging Face search** from inside the app, filtered to GGUF, with the
   quantizations each repository publishes and a fit estimate per result.
+- **Projects** — standing instructions plus a grouping of conversations. What you
+  write in a project is added to the model's brief for every chat in it, so "this is
+  a Rust workspace on the 2021 edition" is said once rather than at the top of every
+  conversation. Deleting a project releases its chats; it never deletes them.
 - **OpenAI-compatible API**, so existing tools work by changing a base URL:
   ```
   OPENAI_BASE_URL=http://127.0.0.1:8420/v1
@@ -79,7 +83,8 @@ hiding them:
 - **Images, audio, video and PDF attachments.** Text and code files are read into
   the prompt; the other modalities need engine work Kuro does not have yet. The
   `+` menu says which model capability each one would need.
-- **Projects** — a workspace grouping conversations, files and instructions.
+- **Files attached to a project.** Projects carry instructions today, not a
+  document set.
 - **Saved prompt templates.**
 - **Folder access** without going through the Filesystem MCP server.
 - **Multi-part GGUF weights.** Repositories that publish only shards are shown in
@@ -186,11 +191,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cd web && npm run typecheck
 ```
 
-319 tests, no network access required — the search parsers, the MCP protocol
+337 tests, no network access required — the search parsers, the MCP protocol
 handling and the tool loop are all tested against recorded payloads rather than
 against live services, so the suite does not break when someone else's site
 changes. What *does* need a live check is whether a provider's markup still parses;
 Tools → Web search has a Test button for that.
+
+Schema upgrades have their own tests that migrate a database with the *version 1*
+shape and assert nothing is lost. That path is worth testing separately: a fresh
+database gets every column from `CREATE TABLE`, so a mistake in the upgrade order
+passes every other test and then stops the daemon from starting for anyone who
+already had data.
 
 ## Licence
 
