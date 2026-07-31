@@ -19,6 +19,7 @@ pub mod settings;
 pub mod skills;
 pub mod sse;
 pub mod tools;
+pub mod workspace;
 
 pub use db::Db;
 pub use error::{KuroError, Result};

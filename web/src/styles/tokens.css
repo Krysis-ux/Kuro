@@ -42,6 +42,10 @@
   --solid-text: var(--n-0);
 
   --danger: #e5484d;
+  /* Not an error — a state that can change the user's files. Used by Agent mode
+     on the Code page, and deliberately distinct from `--danger` so "this can
+     write" never reads as "this went wrong". */
+  --warning: #d97706;
 
   /* Type. A single family, sized on a small scale — this is a tool, not a
      landing page. */

@@ -1,4 +1,4 @@
--- Kuro LLM schema, version 4.
+-- Kuro LLM schema, version 5.
 --
 -- Every statement is `IF NOT EXISTS`, so the whole file is safe to re-run
 -- against a database created by an earlier version. Columns added after a table
@@ -50,6 +50,46 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE INDEX IF NOT EXISTS idx_projects_updated
     ON projects (updated_at DESC);
 
+-- A coding workspace is a folder on this machine plus a mode saying how much a
+-- model may do inside it. It is the only thing in Kuro that grants file access:
+-- the chat surface has no file tools at all, whatever is enabled elsewhere.
+CREATE TABLE IF NOT EXISTS workspaces (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    root_path  TEXT NOT NULL,
+    model_id   TEXT,
+    -- ask | plan | agent. Defaults to plan, which cannot change anything.
+    mode       TEXT NOT NULL DEFAULT 'plan',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_updated
+    ON workspaces (updated_at DESC);
+
+-- Every file a model changed, with what was there before it. This is what makes
+-- agent mode reasonable to offer: a change that can be put back is one the user
+-- can afford to let happen without being asked first.
+--
+-- Deleting a workspace clears its history, because the history is only useful
+-- against the folder it was recorded for.
+CREATE TABLE IF NOT EXISTS workspace_changes (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
+    conversation_id TEXT REFERENCES conversations (id) ON DELETE SET NULL,
+    -- Relative to the workspace root.
+    path            TEXT NOT NULL,
+    kind            TEXT NOT NULL,                    -- edit | write
+    -- Null when the file did not exist, or when it was too large to snapshot.
+    before_content  TEXT,
+    after_content   TEXT,
+    undone          INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_changes
+    ON workspace_changes (workspace_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS conversations (
     id           TEXT PRIMARY KEY,
     title        TEXT NOT NULL DEFAULT 'New chat',
@@ -66,7 +106,11 @@ CREATE TABLE IF NOT EXISTS conversations (
     -- Set when this conversation was branched off another one. Deleting the
     -- original leaves the branch alone: a fork is a chat in its own right from
     -- the moment it is made.
-    forked_from_id TEXT REFERENCES conversations (id) ON DELETE SET NULL
+    forked_from_id TEXT REFERENCES conversations (id) ON DELETE SET NULL,
+    -- Set when the conversation belongs to a coding workspace, which is what
+    -- gives it access to files at all. Deleting the workspace releases the
+    -- chat rather than destroying it.
+    workspace_id   TEXT REFERENCES workspaces (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_updated

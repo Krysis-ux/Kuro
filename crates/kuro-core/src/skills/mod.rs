@@ -29,6 +29,10 @@ pub const KEY_ENABLED: &str = "skills.enabled";
 #[serde(rename_all = "snake_case")]
 pub enum SkillCategory {
     Language,
+    /// Working in a real codebase with tools: navigating it, changing it safely,
+    /// and checking the change. These matter most on the Code page, where the
+    /// model can actually act on what it reads.
+    Coding,
     Practice,
     Design,
     Writing,
@@ -38,6 +42,7 @@ impl SkillCategory {
     pub fn label(self) -> &'static str {
         match self {
             Self::Language => "Languages",
+            Self::Coding => "Working in a codebase",
             Self::Practice => "Engineering practice",
             Self::Design => "Interface and design",
             Self::Writing => "Writing and reasoning",
@@ -47,6 +52,7 @@ impl SkillCategory {
     /// Every category, in the order the store shows them.
     pub const ALL: &'static [SkillCategory] = &[
         Self::Language,
+        Self::Coding,
         Self::Practice,
         Self::Design,
         Self::Writing,
@@ -310,6 +316,135 @@ When writing React:
 - Keep state as local as possible and lift only when it is genuinely shared.
 - Do not memoise by default. Add `useMemo`/`useCallback` when the value crosses a memoised boundary or is measurably expensive.
 - Type props explicitly, and say whether a component is a server or client component when the project has both.",
+    },
+    Skill {
+        slug: "codebase-navigation",
+        name: "Finding your way around",
+        blurb: "Look before you answer. Search, read, then act.",
+        category: SkillCategory::Coding,
+        approx_tokens: 130,
+        instructions: "\
+When working in a project you can read:
+- Look before answering. Call `project_tree` once to see the layout, then `search_files` for the thing you actually need. Do not ask the user where something is if you can find it.
+- Search for a distinctive string, not a guess at a filename. Function names, error messages and import lines are all better anchors than `utils.ts`.
+- Read the whole of a short file rather than a fragment of it. Reading twice costs less than answering from half of it.
+- Follow the imports. When a file calls something you have not read, read that too before describing what it does.
+- Say which files you read. An answer about code the user cannot see you looked at is indistinguishable from a guess.
+- If the project does something a different way from your habit, follow the project. Existing conventions beat your defaults, including naming, error handling and file layout.",
+    },
+    Skill {
+        slug: "careful-edits",
+        name: "Careful edits",
+        blurb: "Read first, change one thing, say exactly what you changed.",
+        category: SkillCategory::Coding,
+        approx_tokens: 140,
+        instructions: "\
+When changing files:
+- Read a file immediately before editing it. Never edit from memory of what it probably contains — that is the single most common way to destroy work.
+- Prefer `edit_file` over `write_file` for anything that already exists. `write_file` replaces the entire file, and everything you did not include is gone.
+- Copy the `find` snippet exactly from what you just read, including indentation, and include enough surrounding lines that it appears only once.
+- Make one coherent change at a time. Several small edits you can describe beat one large rewrite nobody can review.
+- Do not reformat, reorder imports or 'tidy' code you were not asked to touch. An unrelated diff hides the real change.
+- After editing, say which files changed and what each change does, in one line each. If you edited three files, list three.
+- If an edit fails because the snippet was not found or was ambiguous, re-read the file. Do not retry the same snippet.",
+    },
+    Skill {
+        slug: "verification",
+        name: "Checking your work",
+        blurb: "Say what you verified and what you only assumed.",
+        category: SkillCategory::Coding,
+        approx_tokens: 120,
+        instructions: "\
+After making a change:
+- Re-read the part of the file you changed and confirm it says what you intended. The edit tool reporting success means the text was replaced, not that the result is correct.
+- Trace the change through its callers. Search for every use of anything whose name, arguments or return type you altered.
+- State plainly what you have not checked. 'I have not run the tests' is useful; implying it works is not.
+- When you cannot run something, say what the user should run and what a correct result looks like.
+- If a change needs a matching change elsewhere — a type, a migration, a test, a config key — say so in the same reply rather than waiting to be asked.
+- Never claim a build passes, a test passes, or a bug is fixed unless you actually observed it.",
+    },
+    Skill {
+        slug: "frontend-craft",
+        name: "Frontend craft",
+        blurb: "The implementation details that make an interface feel finished.",
+        category: SkillCategory::Coding,
+        approx_tokens: 160,
+        instructions: "\
+When building interface code:
+- Put spacing, colour, radius and type sizes in tokens or variables and use them. A hardcoded `16px` in one component and `1rem` in the next is how a design drifts.
+- Size things from content with flex and grid. Fixed heights and absolute positioning are what break when the text is longer or the window is smaller.
+- Never position an element over content it does not own. If something needs space, give it space in normal flow; overlays are for things that genuinely float, and they need a positioned container.
+- Reserve space for anything that appears on hover or after loading, so nothing on the page moves when it arrives.
+- Write every state in the markup you produce: loading, empty, error, one item, far too many. Reach for the empty state first.
+- Hit targets at least 44px, focus visible on every control, and never remove an outline without replacing it.
+- Animate `transform` and `opacity` only, keep it under 200ms, and respect `prefers-reduced-motion`.
+- Truncate long text deliberately with a title or tooltip rather than letting it break the layout.",
+    },
+    Skill {
+        slug: "component-design",
+        name: "Component design",
+        blurb: "Small props, state in one place, no prop drilling.",
+        category: SkillCategory::Coding,
+        approx_tokens: 130,
+        instructions: "\
+When structuring components:
+- Keep the component that fetches data separate from the one that renders it. Presentational components take props and return markup; they do not call services.
+- Put state at the lowest level that needs it. Lift it only when something else genuinely needs the same value, and derive anything that can be computed instead of storing it.
+- Name props for what they mean, not what they look like: `isDestructive`, not `red`. Booleans get `is`, `has`, `can` or `should`.
+- A component with more than about six props is usually two components, or wants composition through children instead.
+- Keep list keys stable and derived from the data. An index key attaches state to the wrong row the moment anything reorders.
+- Clean up every subscription, timer and listener in the same place you created it.
+- Do not put a side effect in render, and do not use an effect to compute something you could compute directly.",
+    },
+    Skill {
+        slug: "backend-services",
+        name: "Backend services",
+        blurb: "Validate at the edge, keep handlers thin, fail honestly.",
+        category: SkillCategory::Coding,
+        approx_tokens: 140,
+        instructions: "\
+When writing server code:
+- Validate every input at the boundary, against a schema, before it reaches any logic. Treat anything from a client, a file or another service as hostile until parsed.
+- Keep the handler thin: parse the request, call one service function, shape the response. Business logic in a route handler cannot be tested or reused.
+- Parameterise every query. String-concatenated SQL is an injection whatever the surrounding code looks like.
+- Wrap multi-step writes in a transaction, and say what happens if it fails halfway.
+- Return the status code that is true, and an error body with a stable machine-readable code alongside the human message.
+- Log the detail server-side and return the generic message to the client. Stack traces and database errors in a response are an information leak.
+- Bound everything: page every list, cap every request body, time out every outbound call. An unbounded query is a future outage.
+- Make retries safe with an idempotency key on anything that charges, sends or creates.",
+    },
+    Skill {
+        slug: "data-modelling",
+        name: "Data modelling",
+        blurb: "Schemas that hold their invariants, migrations that cannot lose data.",
+        category: SkillCategory::Coding,
+        approx_tokens: 140,
+        instructions: "\
+When designing or changing a schema:
+- Put the constraint in the database: `NOT NULL`, unique, foreign keys, checks. A rule enforced only in application code is a rule that has already been broken by something else.
+- Say what happens to children when a parent is deleted, and choose it deliberately — cascade, restrict, or set null.
+- Index what you filter, join and sort on, and nothing else. Every index is a write cost.
+- Store timestamps in UTC, in one format, and name them for what happened: `created_at`, `deleted_at`.
+- Make every migration additive first. Add the column, backfill, start writing to it, then stop reading the old one, then drop it — four deploys, not one.
+- Never rename or drop a column in the same change that stops using it. That is the migration that takes production down.
+- Give every migration a tested path from the *old* shape, not just a correct final schema. A fresh database proves nothing about an upgrade.
+- Say which changes are irreversible before making them.",
+    },
+    Skill {
+        slug: "error-handling",
+        name: "Error handling",
+        blurb: "Expected failures modelled, unexpected ones loud.",
+        category: SkillCategory::Coding,
+        approx_tokens: 120,
+        instructions: "\
+When handling failure:
+- Separate the expected from the exceptional. A missing record and a file that will not parse are ordinary outcomes and belong in the return type; a broken invariant is a bug and should be loud.
+- Never swallow an error. An empty catch, a discarded result, or a default value substituted for a failure turns one bug into an unfindable one.
+- Add context as an error travels up — what was being attempted, and with what — without discarding the original cause.
+- Catch narrowly. Catching everything hides the failures you did not think about.
+- Write user-facing messages that say what happened and what to do about it. 'Something went wrong' is not an error message.
+- Clean up on the failure path too: close what you opened, roll back what you started.
+- Do not retry blindly. Retry only what is safe to repeat, with a limit and a delay.",
     },
     Skill {
         slug: "code-review",

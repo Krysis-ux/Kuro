@@ -74,25 +74,39 @@ Then open <http://127.0.0.1:8420>.
 - **Memory.** `remember` and `recall` are real tools backed by SQLite, and saved
   facts are put in front of the model automatically so memory works without the
   model having to think to look.
-- **Files, with permission levels.** The model can read and write real files on
-  this machine, and the controls are built the other way round from everything
-  else: nothing is permitted until you say so, and each permission is a specific
-  folder rather than a capability. Three tiers — off, read only, read and write —
-  and a list of folders. There is no default folder, so a tier on its own grants
-  nothing. Paths are resolved before they are checked, so `..` and symlinks cannot
-  lead out of a granted folder, and credentials are refused wherever they appear
-  inside one: `.ssh`, `.aws`, `.env` files, private keys. At the read-only tier the
-  write tool is not offered to the model at all, which is a stronger guarantee than
-  refusing the call afterwards.
+- **Code — a folder a model can work in.** The only part of Kuro with access to
+  your files. Chat has none at all: there is no file switch, and no setting
+  anywhere that gives it one. A workspace is a folder you chose plus a mode, and
+  the mode is the permission:
 
-- **Skills** — 32 installable instruction packs. Languages (Rust, Python,
+  | Mode | What the model can do |
+  | --- | --- |
+  | Ask | Nothing. It cannot see the project. |
+  | Plan | Read and search it. It cannot change anything. |
+  | Agent | Read and change files, inside that folder only. |
+
+  The mode is picked before the turn rather than asked about in the middle of
+  one, because a dialog interrupting a reply — about a path you have not seen —
+  is how people learn to click Allow without reading. A model in Plan mode is
+  not *refused* the write tool; it is never shown one.
+
+  Every change is recorded with the file's previous contents, so the Changes
+  panel can put any of them back. Undo is refused if you have touched the file
+  since, so it can only ever remove something the model did, never something you
+  did afterwards. Paths are resolved before they are checked, so `..` and
+  symlinks cannot lead out of the folder, and credentials are refused wherever
+  they appear inside it: `.ssh`, `.aws`, `.env` files, private keys.
+
+- **Skills** — 40 installable instruction packs. Languages (Rust, Python,
   TypeScript, Go, Java, C#, C++, Swift, Kotlin, PHP, Ruby, SQL, shell, HTML/CSS,
-  React), engineering practice (code review, debugging, testing, security,
-  performance, architecture, refactoring, Git, API design), interface work (design,
-  accessibility) and writing (explaining, brainstorming, summarising, teaching,
-  editing, careful step-by-step reasoning). Prompt guidance only, which is what
-  makes them safe to toggle, and the single highest-leverage improvement available
-  on a small local model.
+  React), working in a codebase (finding your way around, careful edits, checking
+  your work, frontend craft, component design, backend services, data modelling,
+  error handling), engineering practice (code review, debugging, testing,
+  security, performance, architecture, refactoring, Git, API design), interface
+  work (design, accessibility) and writing (explaining, brainstorming,
+  summarising, teaching, editing, careful step-by-step reasoning). Prompt
+  guidance only, which is what makes them safe to toggle, and the single
+  highest-leverage improvement available on a small local model.
 - **A brief for the model.** Every turn starts with a system prompt stating where
   it is running, whether web, memory and file access are on *this turn*, which
   folders it may touch, which MCP servers are connected, which tools it may call,
@@ -155,10 +169,16 @@ and *your* key, and the request goes straight from this machine to the endpoint.
 The Cloud screen is bring-your-own-cloud, and it is not a step towards a hosted
 one — everything on it is an endpoint you own.
 
-Also not built: **per-call approval prompts for file writes.** Access is granted
-per folder ahead of time rather than confirmed per write. Every call is shown in
-the transcript as it happens, but nothing pauses to ask first, which is why the
-write tier says so plainly.
+Also not built: **per-call approval prompts for file writes.** Agent mode is
+granted for the workspace ahead of time rather than confirmed per edit. Every
+call appears in the transcript as it happens and every change can be undone, but
+nothing pauses to ask first — which is what the mode switch says plainly, and
+why Plan is the default.
+
+Also not built for the Code page: **a terminal, a test runner, and diagnostics.**
+The model can read and change files and nothing else; it cannot run your code, so
+it cannot tell you whether a change actually works. Ask it to say what it did not
+verify — the `Checking your work` skill makes it do that by default.
 
 ## Requirements
 

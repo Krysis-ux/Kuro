@@ -278,6 +278,283 @@
   min-width: 0;
 }
 
+/* ---------- Code page ---------- */
+
+/*
+ * Two columns: the project on the left, the conversation on the right. The
+ * project pane is fixed-width and the conversation takes the rest, because the
+ * conversation is what grows.
+ */
+.code {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.code-side {
+  flex: none;
+  width: 260px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.code-back {
+  align-self: flex-start;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.code-back:hover {
+  color: var(--text);
+}
+
+.code-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.code-root {
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.code-tabs {
+  display: flex;
+  gap: 2px;
+  margin-top: var(--space-2);
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+
+.code-tab {
+  flex: 1;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.code-tab.is-on {
+  color: var(--text);
+  background: var(--bg-active);
+}
+
+.code-panel-note {
+  font-size: var(--text-sm);
+  padding: var(--space-2) 0;
+}
+
+.code-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.code-tree li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  /* Paths are long and the interesting end is the right one, so they scroll
+     rather than wrap into an unreadable column. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.code-tree li.is-dir {
+  color: var(--text);
+}
+
+.code-changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.code-changes li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.code-changes li.is-undone {
+  opacity: 0.5;
+}
+
+.code-change-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.code-change-path {
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.code-change-note {
+  font-size: var(--text-xs);
+}
+
+.code-undo {
+  flex: none;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: var(--text-xs);
+}
+
+.code-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.code-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.code-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-5);
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.code-empty p {
+  max-width: 42ch;
+}
+
+.code-mode-note {
+  font-size: var(--text-xs);
+}
+
+/*
+ * The mode switch.
+ *
+ * Agent is marked because it is the one that can change the user's files, and
+ * "which mode am I in" should be answerable from across the room.
+ */
+.mode-switch {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+}
+
+.mode-step {
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.mode-step:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.mode-step.is-on {
+  color: var(--bg);
+  background: var(--text);
+}
+
+.mode-step.is-agent.is-on {
+  background: var(--warning);
+  color: #fff;
+}
+
+.mode-chip {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.mode-chip.is-agent {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+
+/* ---------- Workspaces ---------- */
+
+.workspace-new {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.workspace-new .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workspace-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  color: var(--text);
+  text-align: left;
+}
+
+.workspace-row:hover {
+  background: var(--bg-inset);
+}
+
+.workspace-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.workspace-row-path {
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag.is-warning {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
 /* ---------- Message actions ---------- */
 
 /*

@@ -21,6 +21,7 @@ mod memories;
 mod models;
 mod projects;
 mod runtimes;
+mod workspaces;
 
 pub use cloud::{CloudConnectorRecord, CloudStatus, NewCloudConnector};
 pub use conversations::{Conversation, Message, MessageCompletion, NewMessage};
@@ -30,6 +31,7 @@ pub use memories::MemoryRecord;
 pub use models::{ModelRecord, ModelSource, ModelStatus, NewModel};
 pub use projects::{NewProject, ProjectRecord, ProjectUpdate};
 pub use runtimes::EngineRuntimeRecord;
+pub use workspaces::{UndoPlan, WorkspaceChange, WorkspaceRecord};
 
 const SCHEMA: &str = include_str!("schema.sql");
 
@@ -38,8 +40,10 @@ const SCHEMA: &str = include_str!("schema.sql");
 const LATE_INDEXES: &str = "
     CREATE INDEX IF NOT EXISTS idx_conversations_project
         ON conversations (project_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_conversations_workspace
+        ON conversations (workspace_id, updated_at DESC);
 ";
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 #[derive(Clone)]
 pub struct Db {
@@ -103,6 +107,7 @@ impl Db {
             add_column_if_missing(conn, "cloud_connectors", "models", "TEXT NOT NULL DEFAULT '[]'")?;
             add_column_if_missing(conn, "conversations", "project_id", "TEXT")?;
             add_column_if_missing(conn, "conversations", "forked_from_id", "TEXT")?;
+            add_column_if_missing(conn, "conversations", "workspace_id", "TEXT")?;
 
             // 3. Indexes over columns phase 2 may have just added. These cannot
             //    live in the schema file: on a fresh database the column is part
