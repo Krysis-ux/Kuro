@@ -230,6 +230,14 @@ export const PencilIcon = (props: IconProps) => (
   </Svg>
 )
 
+/** Angle brackets, for the coding surface. */
+export const BracesIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M9 4H7.5A2.5 2.5 0 0 0 5 6.5v3A2.5 2.5 0 0 1 2.5 12 2.5 2.5 0 0 1 5 14.5v3A2.5 2.5 0 0 0 7.5 20H9" />
+    <path d="M15 4h1.5A2.5 2.5 0 0 1 19 6.5v3a2.5 2.5 0 0 0 2.5 2.5 2.5 2.5 0 0 0-2.5 2.5v3a2.5 2.5 0 0 1-2.5 2.5H15" />
+  </Svg>
+)
+
 /** Two paths diverging from one, for branching a conversation. */
 export const BranchIcon = (props: IconProps) => (
   <Svg {...props}>

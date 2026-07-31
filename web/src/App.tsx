@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { ChatPage } from './pages/Chat'
+import { CodePage } from './pages/Code'
 import { CloudPage } from './pages/Cloud'
 import { ModelsPage } from './pages/Models'
 import { ProjectPage, ProjectsPage } from './pages/Projects'
@@ -22,6 +23,8 @@ export function App() {
         <Routes>
           <Route path="/" element={<ChatPage />} />
           <Route path="/chat/:id" element={<ChatPage />} />
+          <Route path="/code" element={<CodePage />} />
+          <Route path="/code/:id" element={<CodePage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectPage />} />
           <Route path="/models" element={<ModelsPage />} />

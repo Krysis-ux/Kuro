@@ -36,8 +36,8 @@ use kuro_core::cloud::ChatTarget;
 use kuro_core::db::{MessageCompletion, NewMessage};
 use kuro_core::settings::{default_tool_groups, memory_preload_enabled, Effort};
 use kuro_core::sse::{drain_events, is_done};
-use kuro_core::tools::files::FilePermissions;
 use kuro_core::tools::{fetch, intent, memory, web_search, ToolGroup, WebSource};
+use kuro_core::workspace::{Workspace, WorkspaceMode};
 use kuro_core::{prompt, skills};
 use kuro_core::KuroError;
 use serde::Deserialize;
@@ -146,6 +146,8 @@ pub async fn send_message(
         },
     )?;
 
+    let workspace = resolve_workspace(&state, &conversation);
+
     let (sender, receiver) = mpsc::channel::<Result<Event, Infallible>>(64);
 
     let task_state = state.clone();
@@ -164,6 +166,7 @@ pub async fn send_message(
                 search_first,
                 memory_count,
                 query: &request.content,
+                workspace,
             },
             messages,
             &sender,
@@ -228,6 +231,38 @@ struct Turn<'a> {
     memory_count: i64,
     /// The user's message, used as the up-front search query.
     query: &'a str,
+    /// The coding workspace this conversation belongs to. `None` for an ordinary
+    /// chat, which is what makes a chat unable to reach a file.
+    workspace: Option<TurnWorkspace>,
+}
+
+/// A workspace as one turn needs it: the enforcement object, plus the two
+/// strings the model's brief names it by.
+struct TurnWorkspace {
+    workspace: Workspace,
+    name: String,
+    root_display: String,
+}
+
+/// Look up the workspace a conversation belongs to.
+///
+/// A conversation with no workspace, or one whose workspace has been deleted,
+/// gets `None` — and therefore no file tools. That is the safe direction, and
+/// the only one: the alternative would be a turn holding file access with
+/// nothing left to scope it to.
+fn resolve_workspace(state: &SharedState, conversation: &kuro_core::db::Conversation) -> Option<TurnWorkspace> {
+    let workspace_id = conversation.workspace_id.as_deref()?;
+    let record = state.db.get_workspace(workspace_id).ok().flatten()?;
+
+    Some(TurnWorkspace {
+        workspace: Workspace {
+            id: record.id,
+            root: std::path::PathBuf::from(&record.root_path),
+            mode: WorkspaceMode::parse(&record.mode).unwrap_or_default(),
+        },
+        name: record.name,
+        root_display: record.root_path,
+    })
 }
 
 /// Run one turn to completion, including any tool rounds.
@@ -238,7 +273,12 @@ async fn run_turn(
     sender: &mpsc::Sender<Result<Event, Infallible>>,
 ) -> Result<(), KuroError> {
     let started = Instant::now();
-    let tool_set = ToolSet::assemble(state, &turn.groups).await;
+    let tool_set = ToolSet::assemble(
+        state,
+        &turn.groups,
+        turn.workspace.as_ref().map(|held| &held.workspace),
+    )
+    .await;
     let base_url = base_url_for(state, &turn.target).await?;
 
     if !tool_set.is_empty() {
@@ -299,16 +339,14 @@ async fn run_turn(
     let mcp_servers = tool_set.mcp_server_names();
     let active_skills = skills::enabled(&state.db).unwrap_or_default();
 
-    // Only described to the model when the group is on for this message *and*
-    // the permissions actually grant something, so the brief never claims an
-    // access the tools would refuse.
-    let file_permissions = FilePermissions::resolve(&state.db).unwrap_or_default();
-    let file_roots = file_permissions.root_descriptions();
-    let files_brief = (turn.groups.contains(&ToolGroup::Files) && file_permissions.is_usable())
-        .then(|| prompt::FileBrief {
-            can_write: file_permissions.access.allows_write(),
-            roots: &file_roots,
-        });
+    // The workspace, if this conversation belongs to one. Described to the model
+    // exactly as it is enforced, so the brief never claims an access the tools
+    // would refuse — or withholds one they would allow.
+    let workspace_brief = turn.workspace.as_ref().map(|held| prompt::WorkspaceBrief {
+        name: &held.name,
+        root: &held.root_display,
+        mode: held.workspace.mode,
+    });
     // A project's standing instructions apply to every conversation in it.
     let project = state
         .db
@@ -326,7 +364,7 @@ async fn run_turn(
         memory_count: turn.memory_count,
         tool_names: &tool_names,
         mcp_servers: &mcp_servers,
-        files: files_brief,
+        workspace: workspace_brief,
         skills: &active_skills,
         project: project.as_ref().map(|held| prompt::ProjectBrief {
             name: &held.name,
@@ -378,7 +416,14 @@ async fn run_turn(
             )
             .await;
 
-            let outcome = runtime::dispatch(state, &tool_set, turn.conversation_id, call).await;
+            let outcome = runtime::dispatch(
+                state,
+                &tool_set,
+                turn.conversation_id,
+                turn.workspace.as_ref().map(|held| &held.workspace),
+                call,
+            )
+            .await;
 
             if call.name == "web_search" || !outcome.sources.is_empty() {
                 used_web_search = used_web_search || call.name == "web_search";

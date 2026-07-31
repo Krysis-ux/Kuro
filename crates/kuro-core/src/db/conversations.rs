@@ -17,6 +17,10 @@ pub struct Conversation {
     pub updated_at: String,
     /// The conversation this one was branched from, when it was.
     pub forked_from_id: Option<String>,
+    /// The coding workspace this conversation belongs to, when it is one of the
+    /// Code page's rather than an ordinary chat. This is the only thing that
+    /// gives a turn access to files.
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,7 +98,7 @@ pub struct MessageCompletion {
     pub web_sources: Option<Value>,
 }
 
-fn conversation_from_row(row: &Row<'_>) -> rusqlite::Result<Conversation> {
+pub(super) fn conversation_from_row(row: &Row<'_>) -> rusqlite::Result<Conversation> {
     Ok(Conversation {
         id: row.get("id")?,
         title: row.get("title")?,
@@ -105,6 +109,7 @@ fn conversation_from_row(row: &Row<'_>) -> rusqlite::Result<Conversation> {
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         forked_from_id: row.get("forked_from_id")?,
+        workspace_id: row.get("workspace_id")?,
     })
 }
 

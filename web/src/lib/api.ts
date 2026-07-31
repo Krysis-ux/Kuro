@@ -76,7 +76,7 @@ export interface HubModel {
 
 /* ---------- Tools ---------- */
 
-export type ToolGroup = 'web' | 'memory' | 'files'
+export type ToolGroup = 'web' | 'memory'
 
 export interface BuiltinTool {
   name: string
@@ -93,7 +93,7 @@ export interface SearchProviderOption {
   credentialsUrl: string | null
 }
 
-export type SkillCategory = 'language' | 'practice' | 'design' | 'writing'
+export type SkillCategory = 'language' | 'coding' | 'practice' | 'design' | 'writing'
 
 /** An instruction pack appended to the system prompt when switched on. */
 export interface Skill {
@@ -115,7 +115,6 @@ export interface ToolsOverview {
     approxTokens: number
   }
   memory: { preload: boolean; count: number }
-  files: FileSettings
   search: {
     provider: string
     baseUrl: string | null
@@ -125,25 +124,6 @@ export interface ToolsOverview {
     needsBaseUrl: boolean
     providers: SearchProviderOption[]
   }
-}
-
-/** How much of the filesystem the model may touch, and where. */
-export type FileAccess = 'off' | 'read' | 'write'
-
-export interface FileTier {
-  id: FileAccess
-  name: string
-  /** Plain words for what this tier allows, shown next to the control. */
-  description: string
-}
-
-export interface FileSettings {
-  access: FileAccess
-  /** Folders granted, as the user entered them. */
-  roots: string[]
-  /** Whether the tools would actually be offered: a tier with no folders is not. */
-  usable: boolean
-  tiers: FileTier[]
 }
 
 export interface SearchResult {
@@ -276,6 +256,67 @@ export interface Project {
   created_at: string
   updated_at: string
   conversation_count: number
+}
+
+/* ---------- Coding workspaces ---------- */
+
+/**
+ * How much a model may do inside a workspace.
+ *
+ * The mode *is* the permission. It is chosen before the turn rather than asked
+ * about mid-generation, and it is what decides which tools the model is even
+ * shown.
+ */
+export type WorkspaceMode = 'ask' | 'plan' | 'agent'
+
+export interface Workspace {
+  id: string
+  name: string
+  root_path: string
+  model_id: string | null
+  mode: WorkspaceMode
+  created_at: string
+  updated_at: string
+  /** Whether the folder is still on disk. Checked on every read. */
+  root_exists: boolean
+  conversation_count: number
+}
+
+export interface WorkspaceModeInfo {
+  id: WorkspaceMode
+  label: string
+  blurb: string
+  /** Tool names this mode offers, so the UI can show what changes. */
+  tools: string[]
+}
+
+export type ToolRisk = 'read' | 'write'
+
+export interface CodingTool {
+  name: string
+  description: string
+  risk: ToolRisk
+  risk_label: string
+}
+
+/**
+ * One file change a model made.
+ *
+ * The contents themselves stay on the server — they are whole files — so this
+ * carries only the shape of the change and whether it can still be put back.
+ */
+export interface WorkspaceChange {
+  id: string
+  path: string
+  kind: 'edit' | 'write'
+  conversationId: string | null
+  createdAt: string
+  undone: boolean
+  undoable: boolean
+  /** True when the model created this file, so undoing removes it. */
+  created: boolean
+  beforeLines: number | null
+  afterLines: number | null
 }
 
 export interface RecommendedModel {
@@ -512,6 +553,38 @@ export const api = {
       post<Conversation>(`/api/conversations/${id}/fork`, { up_to_message_id: upToMessageId }),
   },
 
+  workspaces: {
+    list: () =>
+      request<{
+        workspaces: Workspace[]
+        modes: WorkspaceModeInfo[]
+        tools: CodingTool[]
+      }>('/api/workspaces'),
+    create: (name: string, rootPath: string) =>
+      post<Workspace>('/api/workspaces', { name, root_path: rootPath }),
+    get: (id: string) =>
+      request<{ workspace: Workspace; conversations: Conversation[] }>(`/api/workspaces/${id}`),
+    update: (id: string, patch: { name?: string; mode?: WorkspaceMode; model_id?: string | null }) =>
+      request<Workspace>(`/api/workspaces/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    remove: (id: string) => request<void>(`/api/workspaces/${id}`, { method: 'DELETE' }),
+    tree: (id: string) => request<{ entries: string[] }>(`/api/workspaces/${id}/tree`),
+    file: (id: string, path: string) =>
+      request<{ path: string; content: string }>(
+        `/api/workspaces/${id}/file?path=${encodeURIComponent(path)}`,
+      ),
+    changes: (id: string) =>
+      request<{ changes: WorkspaceChange[] }>(`/api/workspaces/${id}/changes`),
+    undo: (id: string, changeId: string) =>
+      post<{ undone: boolean; path: string; removed: boolean }>(
+        `/api/workspaces/${id}/changes/${changeId}/undo`,
+      ),
+    newConversation: (id: string) =>
+      post<Conversation>(`/api/workspaces/${id}/conversations`),
+  },
+
   settings: {
     get: () => request<Record<string, unknown>>('/api/settings'),
     patch: (patch: Record<string, unknown>) =>
@@ -568,9 +641,6 @@ export const api = {
         '/api/tools/search/test',
         { query },
       ),
-    /** Folders are sent whole, not as a diff, and checked to exist server-side. */
-    configureFiles: (patch: { access?: FileAccess; roots?: string[] }) =>
-      post<ToolsOverview>('/api/tools/files', patch),
   },
 
   memories: {

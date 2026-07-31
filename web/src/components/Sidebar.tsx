@@ -3,6 +3,7 @@ import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, relativeTime } from '../lib/api'
 import {
+  BracesIcon,
   ChatIcon,
   CloudIcon,
   CubeIcon,
@@ -65,6 +66,10 @@ export function Sidebar() {
         <NavLink to="/" end className="nav-item">
           <ChatIcon size={15} />
           Chat
+        </NavLink>
+        <NavLink to="/code" className="nav-item">
+          <BracesIcon size={15} />
+          Code
         </NavLink>
         <NavLink to="/projects" className="nav-item">
           <FolderIcon size={15} />
