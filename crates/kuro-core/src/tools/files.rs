@@ -1,21 +1,18 @@
 //! Reading and writing files on this machine.
 //!
-//! This is the one tool group that can change something outside Kuro, so it is
-//! built the other way round from the rest: nothing is permitted until the user
-//! says so, and every permission is a specific folder rather than a capability.
+//! The containment layer under [`crate::workspace`], and its only caller. Kuro's
+//! chat surface has no file tools at all; everything that touches disk goes
+//! through a coding workspace, and a workspace is a folder plus a mode.
 //!
 //! ## The model
 //!
-//! Three tiers, in [`FileAccess`]. Off is the default and means the tools are not
-//! offered at all — a model cannot ask for what it has not been shown. Read only
-//! allows listing and reading. Read and write additionally allows creating and
-//! overwriting files. The tier is chosen once, in Tools → Files, next to a plain
-//! statement of what it allows.
+//! Three tiers, in [`FileAccess`], which the workspace mode maps onto: Ask is
+//! Off, Plan is Read, Agent is Write. Off means the tools are not offered at all
+//! — a model cannot ask for what it has not been shown.
 //!
-//! On top of the tier, a list of **roots**. A root is a folder the user picked;
-//! everything outside every root is refused, and there is no default root. Access
-//! with no roots is access to nothing, which is the correct behaviour for a
-//! setting somebody switched on without finishing.
+//! On top of the tier, a list of **roots**. For a workspace that is exactly one
+//! folder: its own. Everything outside it is refused, and there is no default,
+//! so a permission object built from nothing grants nothing.
 //!
 //! ## Why paths are resolved rather than compared
 //!
@@ -33,20 +30,14 @@
 //! hand over SSH keys, cloud credentials, browser cookies and Kuro's own
 //! credential file. Those are refused wherever they appear, so a broad grant is
 //! merely broad rather than catastrophic. This is a safety net for a careless
-//! grant, not a security boundary: anyone who can change these settings can
-//! already read their own files.
+//! choice of folder, not a security boundary: anyone who can pick a workspace
+//! root can already read their own files.
 
 use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::db::Db;
 use crate::{KuroError, Result};
-
-/// Settings key holding the access tier.
-pub const KEY_ACCESS: &str = "files.access";
-/// Settings key holding the granted folders.
-pub const KEY_ROOTS: &str = "files.roots";
 
 /// Largest file that will be read into a reply. Bigger than most source files,
 /// small enough that one read cannot fill a context window on its own.
@@ -110,49 +101,18 @@ impl FileAccess {
 }
 
 /// The tier plus the folders it applies to.
+///
+/// Built by [`crate::workspace::Workspace::permissions`] from a root and a mode.
+/// There is deliberately no way to load one from settings: a stored grant that
+/// outlived whatever asked for it is exactly the thing this design removes.
 #[derive(Debug, Clone, Default)]
 pub struct FilePermissions {
     pub access: FileAccess,
-    /// Folders the user granted, as they typed them.
+    /// Folders that may be reached. For a workspace, its own root and nothing else.
     pub roots: Vec<PathBuf>,
 }
 
 impl FilePermissions {
-    pub fn resolve(db: &Db) -> Result<Self> {
-        let access = db
-            .get_setting(KEY_ACCESS)?
-            .and_then(|value| value.as_str().and_then(FileAccess::parse))
-            .unwrap_or_default();
-
-        let roots = db
-            .get_setting(KEY_ROOTS)?
-            .and_then(|value| {
-                value.as_array().map(|entries| {
-                    entries
-                        .iter()
-                        .filter_map(|entry| entry.as_str())
-                        .map(expand_home)
-                        .collect::<Vec<PathBuf>>()
-                })
-            })
-            .unwrap_or_default();
-
-        Ok(Self { access, roots })
-    }
-
-    pub fn store(db: &Db, access: FileAccess, roots: &[String]) -> Result<Self> {
-        let kept: Vec<String> = roots
-            .iter()
-            .map(|root| root.trim())
-            .filter(|root| !root.is_empty())
-            .map(str::to_string)
-            .collect();
-
-        db.set_setting(KEY_ACCESS, &serde_json::json!(access.as_str()))?;
-        db.set_setting(KEY_ROOTS, &serde_json::json!(kept))?;
-        Self::resolve(db)
-    }
-
     /// Whether the file tools should be offered at all this turn.
     ///
     /// A tier with no folders grants nothing, so offering the tools would only
@@ -188,19 +148,21 @@ impl FilePermissions {
         if for_write {
             if !self.access.allows_write() {
                 return Err(KuroError::bad_request(
-                    "file writing is off. Turn on \"Read and write\" in Tools → Files to allow it.",
+                    "this workspace is not in Agent mode, so nothing can be changed. \
+                     Switch it to Agent to allow edits.",
                 ));
             }
         } else if !self.access.allows_read() {
             return Err(KuroError::bad_request(
-                "file access is off. Turn it on in Tools → Files, and choose a folder.",
+                "this workspace is in Ask mode, so its files cannot be read. \
+                 Switch it to Plan or Agent.",
             ));
         }
 
         let roots = self.resolved_roots();
         if roots.is_empty() {
             return Err(KuroError::bad_request(
-                "no folder has been granted. Add one in Tools → Files.",
+                "this workspace has no folder to work in.",
             ));
         }
 
@@ -579,13 +541,14 @@ mod tests {
     }
 
     #[test]
-    fn access_is_off_until_it_is_turned_on() {
-        let db = Db::open_in_memory().expect("open");
-        let permissions = FilePermissions::resolve(&db).expect("resolve");
+    fn a_default_permission_object_grants_nothing() {
+        // What anything that fails to build one properly ends up holding.
+        let permissions = FilePermissions::default();
 
         assert_eq!(permissions.access, FileAccess::Off);
         assert!(permissions.roots.is_empty());
-        assert!(!permissions.is_usable(), "no file tools on a fresh install");
+        assert!(!permissions.is_usable());
+        assert!(permissions.resolve_path("/etc/hosts", false).is_err());
     }
 
     #[test]
@@ -598,22 +561,6 @@ mod tests {
         assert!(!permissions.is_usable());
         let error = permissions.resolve_path("/etc/hosts", false).unwrap_err().to_string();
         assert!(error.contains("no folder"), "got: {error}");
-    }
-
-    #[test]
-    fn settings_round_trip_through_storage() {
-        let db = Db::open_in_memory().expect("open");
-
-        let stored = FilePermissions::store(
-            &db,
-            FileAccess::Read,
-            &["/tmp/one".to_string(), "  ".to_string(), "/tmp/two".to_string()],
-        )
-        .expect("store");
-
-        assert_eq!(stored.access, FileAccess::Read);
-        assert_eq!(stored.roots.len(), 2, "blank entries are dropped");
-        assert_eq!(FilePermissions::resolve(&db).expect("resolve").access, FileAccess::Read);
     }
 
     #[test]
@@ -702,7 +649,7 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains("writing is off"), "got: {error}");
+        assert!(error.contains("not in Agent mode"), "got: {error}");
     }
 
     #[test]
