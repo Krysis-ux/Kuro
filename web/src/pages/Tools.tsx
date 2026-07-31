@@ -2,18 +2,15 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   api,
-  type FileAccess,
   type McpRegistryEntry,
   type McpServer,
   type SearchResult,
-  type ToolsOverview,
 } from '../lib/api'
 import { AddServerDialog } from '../components/AddServerDialog'
 import {
   BrainIcon,
   CheckIcon,
   ExternalIcon,
-  FolderIcon,
   GlobeIcon,
   KeyIcon,
   PlugIcon,
@@ -356,7 +353,6 @@ function BuiltinSection({
         <MemoryList />
       </section>
 
-      <FilesSection overview={overview} />
 
       <section className="panel">
         <h2 className="panel-title">
@@ -478,170 +474,6 @@ function SkillsSection({
           </div>
         </div>
       ))}
-    </section>
-  )
-}
-
-/**
- * File access.
- *
- * The only control in Kuro that can change something outside it, so it is the one
- * screen written to slow the reader down rather than speed them up. Three things
- * do that work: the tier is off until deliberately changed, each tier states what
- * it allows in plain words rather than in a name, and the folders are listed
- * back so "what did I actually grant" is answerable at a glance instead of
- * remembered.
- *
- * The warning above the write tier is deliberately specific — "it can change your
- * files without asking first" — because a generic caution is read as boilerplate
- * and skipped.
- */
-function FilesSection({ overview }: { overview: ToolsOverview }) {
-  const queryClient = useQueryClient()
-  const [draft, setDraft] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const configure = useMutation({
-    mutationFn: (patch: { access?: FileAccess; roots?: string[] }) =>
-      api.tools.configureFiles(patch),
-    onSuccess: (data) => {
-      queryClient.setQueryData(['tools'], data)
-      setError(null)
-    },
-    onError: (caught: Error) => setError(caught.message),
-  })
-
-  const { files } = overview
-  const current = files.tiers.find((tier) => tier.id === files.access)
-
-  const addRoot = () => {
-    const trimmed = draft.trim()
-    if (!trimmed) return
-    if (files.roots.includes(trimmed)) {
-      setDraft('')
-      return
-    }
-    configure.mutate({ roots: [...files.roots, trimmed] })
-    setDraft('')
-  }
-
-  return (
-    <section className="panel">
-      <h2 className="panel-title">
-        <FolderIcon size={15} />
-        Files
-      </h2>
-      <p className="faint panel-note">
-        Let the model read and write files on this computer, in folders you choose. Off by default,
-        and the tools are not offered to the model at all until you turn it on.
-      </p>
-
-      <div className="provider-choices">
-        {files.tiers.map((tier) => (
-          <button
-            key={tier.id}
-            className={`provider-choice ${tier.id === files.access ? 'is-on' : ''}`}
-            onClick={() => configure.mutate({ access: tier.id })}
-            disabled={configure.isPending}
-          >
-            {/* Name first, then the tick: `.provider-choice-head svg` carries a
-                `margin-left: auto`, so an icon placed first drags the label
-                right with it. */}
-            <span className="provider-choice-head">
-              {tier.name}
-              {tier.id === files.access && <CheckIcon size={13} />}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {current && <p className="faint panel-note">{current.description}</p>}
-
-      {files.access === 'write' && (
-        <div className="test-result is-error">
-          <strong>The model can change your files.</strong> It writes without asking first, and a
-          write replaces the whole file. Grant a project folder rather than your home folder, and
-          keep anything you care about in version control.
-        </div>
-      )}
-
-      {files.access !== 'off' && (
-        <>
-          <div className="row">
-            <span className="faint">Folders it may use</span>
-            <span>
-              {files.roots.length === 0
-                ? 'None yet'
-                : `${files.roots.length} ${files.roots.length === 1 ? 'folder' : 'folders'}`}
-            </span>
-          </div>
-
-          {files.roots.length === 0 && (
-            <p className="form-error">
-              Access is on but no folder has been granted, so the model still cannot reach anything.
-              Add one below.
-            </p>
-          )}
-
-          <div className="file-roots">
-            {files.roots.map((root) => (
-              <div key={root} className="file-root-row">
-                <code className="mono" title={root}>
-                  {root}
-                </code>
-                <button
-                  className="btn btn-ghost btn-icon"
-                  aria-label={`Stop granting ${root}`}
-                  title="Remove this folder"
-                  onClick={() =>
-                    configure.mutate({ roots: files.roots.filter((held) => held !== root) })
-                  }
-                >
-                  <TrashIcon size={13} />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div className="inline-form">
-            <input
-              className="input mono"
-              placeholder="~/Projects/my-app"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') addRoot()
-              }}
-            />
-            <button
-              className="btn btn-sm"
-              disabled={!draft.trim() || configure.isPending}
-              onClick={addRoot}
-            >
-              <PlusIcon size={13} />
-              Grant folder
-            </button>
-          </div>
-
-          {error && <p className="form-error">{error}</p>}
-
-          <ul className="prose-list muted file-notes">
-            <li>
-              Paths are resolved before they are checked, so <code className="mono">..</code> and
-              symlinks cannot lead out of a granted folder.
-            </li>
-            <li>
-              Keys and secrets are refused even inside a granted folder:{' '}
-              <code className="mono">.ssh</code>, <code className="mono">.aws</code>,{' '}
-              <code className="mono">.env</code> files, private keys and the like.
-            </li>
-            <li>
-              Every call the model makes appears in the transcript, so you can see what it read or
-              wrote.
-            </li>
-          </ul>
-        </>
-      )}
     </section>
   )
 }

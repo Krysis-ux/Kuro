@@ -19,6 +19,7 @@
 //! "if the user has enabled X then you may Y".
 
 use crate::skills::Skill;
+use crate::workspace::WorkspaceMode;
 
 /// What the model needs to know about this turn.
 #[derive(Debug, Clone)]
@@ -42,20 +43,22 @@ pub struct PromptContext<'a> {
     /// names has to guess which server each came from. Naming them is a dozen
     /// tokens and turns a wrong answer into a right one.
     pub mcp_servers: &'a [String],
-    /// File access, when the user has granted any.
-    pub files: Option<FileBrief<'a>>,
+    /// The coding workspace this turn is running in, when there is one. Absent
+    /// in an ordinary chat, which has no access to files at all.
+    pub workspace: Option<WorkspaceBrief<'a>>,
     /// Skills the user switched on.
     pub skills: &'a [&'a Skill],
     /// Standing instructions from the project this conversation belongs to.
     pub project: Option<ProjectBrief<'a>>,
 }
 
-/// What the model may do with files this turn.
+/// The folder this turn is working in, and how much it may do there.
 #[derive(Debug, Clone, Copy)]
-pub struct FileBrief<'a> {
-    pub can_write: bool,
-    /// The folders granted, exactly as the user entered them.
-    pub roots: &'a [String],
+pub struct WorkspaceBrief<'a> {
+    pub name: &'a str,
+    /// The workspace root, as the user chose it.
+    pub root: &'a str,
+    pub mode: WorkspaceMode,
 }
 
 /// A project's name and standing instructions.
@@ -187,27 +190,39 @@ fn capabilities(context: &PromptContext<'_>) -> String {
 ///
 /// Vagueness here is the failure. Told only "you have file tools", a model either
 /// claims access to the whole machine or refuses a folder it was given; naming the
-/// granted folders and the tier means both questions have a factual answer.
+/// folder and the mode means both questions have a factual answer.
 fn files_line(context: &PromptContext<'_>) -> String {
-    let Some(files) = &context.files else {
+    let Some(workspace) = &context.workspace else {
         return "- You have NO access to the user's files. You cannot read, list or write \
-                anything on this computer. If they ask, say file access is off and that \
-                Tools → Files turns it on for folders they choose.\n"
+                anything on this computer, and no setting in this conversation changes that. \
+                If they ask, say that file access lives in a coding workspace on the Code \
+                page, where they choose the folder.\n"
             .to_string();
     };
 
-    let verb = if files.can_write {
-        "read, list, create and overwrite files"
-    } else {
-        "read and list files, but not change them"
-    };
+    let root = workspace.root;
+    let name = workspace.name;
 
-    format!(
-        "- You can {verb}, and only inside these folders: {}. \
-         Anything outside them is refused. Use `read_file` before describing a file's \
-         contents; never guess at them.\n",
-        files.roots.join(", ")
-    )
+    match workspace.mode {
+        WorkspaceMode::Ask => format!(
+            "- You are in the `{name}` workspace ({root}), but it is in Ask mode, so you \
+             have NO file tools this turn. Discuss the code from what the user shows you. \
+             If you need to see the project, say that Plan mode would let you read it.\n"
+        ),
+        WorkspaceMode::Plan => format!(
+            "- You are in the `{name}` workspace, and can READ it: {root}. You may list, \
+             read and search files there, and nothing outside it. You CANNOT change \
+             anything this turn — propose the edit and say which file and line it goes in. \
+             Read a file before describing it; never guess at its contents.\n"
+        ),
+        WorkspaceMode::Agent => format!(
+            "- You are in the `{name}` workspace and can READ AND CHANGE it: {root}. \
+             Anything outside that folder is refused. Always read a file before editing it. \
+             Prefer `edit_file` over `write_file` for a file that already exists — \
+             `write_file` replaces the whole thing. Every change you make is recorded and \
+             the user can undo it, so say plainly what you changed.\n"
+        ),
+    }
 }
 
 fn tools(context: &PromptContext<'_>) -> String {
@@ -294,7 +309,7 @@ mod tests {
             memory_count: 0,
             tool_names: &[],
             mcp_servers: &[],
-            files: None,
+            workspace: None,
             skills: &[],
             project: None,
         }
@@ -460,31 +475,41 @@ mod tests {
     }
 
     #[test]
-    fn file_access_off_is_stated_as_plainly_as_web_access_off() {
+    fn a_chat_is_told_plainly_that_it_cannot_reach_any_file() {
         let prompt = build(&context());
 
         assert!(prompt.contains("NO access to the user's files"));
-        assert!(prompt.contains("Tools → Files"), "it should say how to turn it on");
+        assert!(
+            prompt.contains("coding workspace"),
+            "it should say where file access does live"
+        );
     }
 
     #[test]
-    fn granted_folders_are_named_and_the_tier_is_stated() {
-        let roots = vec!["/Users/me/Projects".to_string()];
+    fn the_workspace_root_is_named_and_the_mode_is_stated() {
+        let brief = |mode| WorkspaceBrief { name: "Kuro", root: "/Users/me/Projects", mode };
 
-        let read_only = build(&PromptContext {
-            files: Some(FileBrief { can_write: false, roots: &roots }),
+        let planning = build(&PromptContext {
+            workspace: Some(brief(WorkspaceMode::Plan)),
             ..context()
         });
-        assert!(read_only.contains("/Users/me/Projects"));
-        assert!(read_only.contains("not change them"));
+        assert!(planning.contains("/Users/me/Projects"));
+        assert!(planning.contains("CANNOT change"));
 
         let writable = build(&PromptContext {
-            files: Some(FileBrief { can_write: true, roots: &roots }),
+            workspace: Some(brief(WorkspaceMode::Agent)),
             ..context()
         });
-        assert!(writable.contains("create and overwrite"));
+        assert!(writable.contains("READ AND CHANGE"));
+        assert!(writable.contains("edit_file"));
+
+        let asking = build(&PromptContext {
+            workspace: Some(brief(WorkspaceMode::Ask)),
+            ..context()
+        });
+        assert!(asking.contains("NO file tools"));
         assert!(
-            writable.contains("only inside these folders"),
+            writable.contains("Anything outside that folder is refused"),
             "the boundary matters more than the capability"
         );
     }
@@ -541,8 +566,7 @@ mod tests {
     #[test]
     fn the_prompt_stays_short_enough_for_a_small_model() {
         let names: Vec<String> = (0..6).map(|i| format!("tool_{i}")).collect();
-        let servers = vec!["Filesystem".to_string()];
-        let roots = vec!["/Users/me/Projects".to_string()];
+        let servers = vec!["Documentation".to_string()];
         let prompt = build(&PromptContext {
             web_enabled: true,
             search_ran: true,
@@ -550,7 +574,11 @@ mod tests {
             memory_count: 3,
             tool_names: &names,
             mcp_servers: &servers,
-            files: Some(FileBrief { can_write: true, roots: &roots }),
+            workspace: Some(WorkspaceBrief {
+                name: "Kuro",
+                root: "/Users/me/Projects",
+                mode: WorkspaceMode::Agent,
+            }),
             ..context()
         });
 
@@ -580,7 +608,7 @@ mod project_tests {
             memory_count: 0,
             tool_names: &[],
             mcp_servers: &[],
-            files: None,
+            workspace: None,
             skills: &[],
             project: None,
         }

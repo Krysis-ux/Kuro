@@ -33,18 +33,6 @@ interface UiState {
   memory: boolean
   setMemory: (enabled: boolean) => void
 
-  /**
-   * Let the model read and write files on this machine.
-   *
-   * Off by default, and the switch alone grants nothing: the tools are only
-   * offered when Tools → Files also has a tier and at least one folder. Two
-   * controls rather than one because they answer different questions — this is
-   * "should it look at my files for this message", and the settings screen is
-   * "which files, ever".
-   */
-  files: boolean
-  setFiles: (enabled: boolean) => void
-
   sidebarOpen: boolean
   toggleSidebar: () => void
 }
@@ -67,9 +55,6 @@ export const useUi = create<UiState>()(
       memory: true,
       setMemory: (memory) => set({ memory }),
 
-      files: false,
-      setFiles: (files) => set({ files }),
-
       sidebarOpen: true,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
     }),
@@ -77,14 +62,17 @@ export const useUi = create<UiState>()(
   ),
 )
 
-/** The tool groups the current switches add up to. */
-export function activeToolGroups(
-  state: Pick<UiState, 'webSearch' | 'memory' | 'files'>,
-): ToolGroup[] {
+/**
+ * The tool groups the current switches add up to.
+ *
+ * There is no file switch here, and there is deliberately no way to add one. A
+ * chat has no folder to scope file access to, so file tools live on the Code
+ * page, inside a workspace.
+ */
+export function activeToolGroups(state: Pick<UiState, 'webSearch' | 'memory'>): ToolGroup[] {
   const groups: ToolGroup[] = []
   if (state.webSearch) groups.push('web')
   if (state.memory) groups.push('memory')
-  if (state.files) groups.push('files')
   return groups
 }
 
