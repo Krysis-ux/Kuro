@@ -72,8 +72,6 @@ export function Composer({
     setWebSearch,
     memory,
     setMemory,
-    files,
-    setFiles,
     selectedModel,
     setSelectedModel,
   } = useUi()
@@ -267,20 +265,6 @@ export function Composer({
               Memory
             </button>
 
-            <button
-              className={`btn btn-ghost composer-toggle ${files ? 'is-on' : ''}`}
-              onClick={() => setFiles(!files)}
-              title={
-                files
-                  ? 'On: the model can use the folders granted in Tools → Files.'
-                  : 'Off: the model cannot read or write any file. Grant folders in Tools → Files.'
-              }
-              aria-pressed={files}
-            >
-              <FolderIcon />
-              Files
-            </button>
-
             <EffortPicker value={effort} onChange={setEffort} />
           </div>
 
@@ -431,7 +415,8 @@ function AddMenu({
         icon={<FolderIcon />}
         label="A folder"
         enabled={false}
-        hint="Add the Filesystem MCP server to give the model a folder"
+        hint="Chat cannot reach your files. Open a workspace on the Code page to work in a folder."
+        onClick={() => navigate('/code')}
       />
     </div>
   )

@@ -27,6 +27,7 @@ pub mod settings;
 pub mod system;
 pub mod tools;
 pub mod tools_runtime;
+pub mod workspaces;
 
 pub fn router(state: SharedState) -> Router {
     // The API is bound to loopback, and the browser UI is served from the same
@@ -105,12 +106,29 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/tools", get(tools::overview))
         .route("/api/tools/defaults", post(tools::configure_defaults))
         .route("/api/tools/skills", post(tools::set_skills))
-        .route("/api/tools/files", post(tools::configure_files))
         .route("/api/tools/search", post(tools::configure_search))
         .route("/api/tools/search/test", post(tools::test_search))
         .route("/api/memories", get(tools::list_memories))
         .route("/api/memories", post(tools::create_memory))
         .route("/api/memories/{id}", delete(tools::delete_memory))
+        // Coding workspaces: the only surface in Kuro with file access. Literal
+        // segments come before `{id}` for the same reason `/models/loaded` does.
+        .route("/api/workspaces", get(workspaces::list_workspaces))
+        .route("/api/workspaces", post(workspaces::create_workspace))
+        .route("/api/workspaces/{id}", get(workspaces::get_workspace))
+        .route("/api/workspaces/{id}", patch(workspaces::update_workspace))
+        .route("/api/workspaces/{id}", delete(workspaces::delete_workspace))
+        .route("/api/workspaces/{id}/tree", get(workspaces::workspace_tree))
+        .route("/api/workspaces/{id}/file", get(workspaces::read_workspace_file))
+        .route("/api/workspaces/{id}/changes", get(workspaces::list_changes))
+        .route(
+            "/api/workspaces/{id}/changes/{change_id}/undo",
+            post(workspaces::undo_change),
+        )
+        .route(
+            "/api/workspaces/{id}/conversations",
+            post(workspaces::create_conversation),
+        )
         // Remote model providers.
         .route("/api/providers", get(providers::list_providers))
         .route("/api/providers", post(providers::add_provider))

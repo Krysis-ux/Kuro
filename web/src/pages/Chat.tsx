@@ -17,7 +17,7 @@ export function ChatPage() {
   const params = useParams<{ id?: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { selectedModel, effort, webSearch, memory, files } = useUi()
+  const { selectedModel, effort, webSearch, memory } = useUi()
 
   const [streaming, setStreaming] = useState<StreamingState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -87,7 +87,7 @@ export function ChatPage() {
         content,
         model: selectedModel ?? undefined,
         effort,
-        tools: activeToolGroups({ webSearch, memory, files }),
+        tools: activeToolGroups({ webSearch, memory }),
         web_search: webSearch,
       }
       const events = editing
