@@ -4,10 +4,10 @@
 //! "stream a reply and also manage a tool registry". Everything here is about
 //! producing a [`ToolSet`] and then dispatching against it.
 
-use kuro_core::tools::files::FilePermissions;
 use kuro_core::tools::{
     self, Builtin, BuiltinContext, ToolGroup, ToolOrigin, ToolOutcome, ToolSpec, WebSource,
 };
+use kuro_core::workspace::{self, CodingTool, Workspace, WorkspaceContext};
 use serde_json::Value;
 
 use crate::state::SharedState;
@@ -26,20 +26,32 @@ pub struct ToolSet {
 }
 
 impl ToolSet {
-    /// Build the set from the groups the user enabled plus every connected MCP
-    /// server.
+    /// Build the set from the groups the user enabled, the workspace this turn
+    /// is running in if there is one, and every connected MCP server.
     ///
     /// Built-ins are added first so that an MCP server cannot take the name
-    /// `web_search` and quietly replace it.
-    pub async fn assemble(state: &SharedState, groups: &[ToolGroup]) -> Self {
-        // A failure to read the permissions is treated as no permission, which is
-        // the only safe direction for a setting that governs writing to disk.
-        let files = FilePermissions::resolve(&state.db).unwrap_or_default();
-
-        let mut specs: Vec<ToolSpec> = tools::builtins_for_groups(groups, &files)
+    /// `web_search` and quietly replace it. Workspace tools come next, for the
+    /// same reason: a server offering `edit_file` must not be able to become the
+    /// thing the model reaches for when it wants to change the user's code.
+    pub async fn assemble(
+        state: &SharedState,
+        groups: &[ToolGroup],
+        workspace: Option<&Workspace>,
+    ) -> Self {
+        let mut specs: Vec<ToolSpec> = tools::builtins_for_groups(groups)
             .into_iter()
             .map(Builtin::spec)
             .collect();
+
+        // Only a workspace grants file access, and only up to what its mode
+        // allows. An ordinary chat passes `None` and gets nothing.
+        if let Some(workspace) = workspace {
+            specs.extend(
+                workspace::tools::tools_for_mode(workspace.mode)
+                    .into_iter()
+                    .map(CodingTool::spec),
+            );
+        }
 
         let mut taken: Vec<String> = specs.iter().map(|spec| spec.name.clone()).collect();
 
@@ -116,6 +128,7 @@ pub async fn dispatch(
     state: &SharedState,
     set: &ToolSet,
     conversation_id: &str,
+    workspace: Option<&Workspace>,
     call: &RequestedCall,
 ) -> ToolOutcome {
     let Some(spec) = set.find(&call.name) else {
@@ -130,6 +143,24 @@ pub async fn dispatch(
 
     match &spec.origin {
         ToolOrigin::Builtin => {
+            // A workspace tool and a chat built-in are both `Builtin` origin, so
+            // the coding set is checked first — and only reachable at all when
+            // this turn actually has a workspace.
+            if let Some(tool) = CodingTool::parse(&spec.name) {
+                let Some(workspace) = workspace else {
+                    return ToolOutcome::failed(format!(
+                        "`{}` only works inside a coding workspace",
+                        spec.name
+                    ));
+                };
+                let context = WorkspaceContext {
+                    db: &state.db,
+                    workspace,
+                    conversation_id: Some(conversation_id),
+                };
+                return workspace::tools::run(tool, &call.arguments, &context);
+            }
+
             let Some(builtin) = Builtin::parse(&spec.name) else {
                 return ToolOutcome::failed(format!("`{}` is not wired up", spec.name));
             };
@@ -143,9 +174,6 @@ pub async fn dispatch(
                 db: &state.db,
                 client: &state.outbound,
                 search,
-                // Re-read per call rather than captured at turn start, so revoking
-                // access takes effect on the next call instead of the next message.
-                files: FilePermissions::resolve(&state.db).unwrap_or_default(),
                 conversation_id: Some(conversation_id),
             };
             tools::run_builtin(builtin, &call.arguments, &context).await

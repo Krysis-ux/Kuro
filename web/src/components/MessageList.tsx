@@ -2,23 +2,14 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { isOptimistic, type Message } from '../lib/api'
+import type { StreamingState } from '../lib/useTurn'
 import { CheckIcon, ChevronIcon, ExternalIcon, GlobeIcon, InfoIcon, ToolIcon } from './icons'
 import { Logo } from './Logo'
 import { MessageActions } from './MessageActions'
 
-/** One tool call, as the composer watches it happen. */
-export interface StreamingTool {
-  name: string
-  arguments: Record<string, unknown>
-  state: 'running' | 'done' | 'failed'
-  preview?: string
-}
-
-export interface StreamingState {
-  content: string
-  reasoning: string
-  tools: StreamingTool[]
-}
+// Defined with the streaming loop that produces them, and re-exported here
+// because this is where callers already import the transcript from.
+export type { StreamingState, StreamingTool } from '../lib/useTurn'
 
 interface MessageListProps {
   messages: Message[]

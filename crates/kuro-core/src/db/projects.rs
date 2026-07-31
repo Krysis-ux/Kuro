@@ -224,7 +224,7 @@ impl Db {
         self.with(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, title, title_mode, model_id, pinned, archived, created_at,
-                        updated_at, forked_from_id
+                        updated_at, forked_from_id, workspace_id
                    FROM conversations
                   WHERE project_id = ?1 AND archived = 0
                   ORDER BY updated_at DESC",
@@ -241,6 +241,7 @@ impl Db {
                         created_at: row.get(6)?,
                         updated_at: row.get(7)?,
                         forked_from_id: row.get(8)?,
+                        workspace_id: row.get(9)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
