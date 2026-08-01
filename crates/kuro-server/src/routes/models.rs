@@ -1,6 +1,7 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use kuro_core::catalog::{self, search, CURATED_MODELS};
+use kuro_core::free;
 use kuro_core::hardware::estimate_fit;
 use kuro_core::KuroError;
 use serde::Deserialize;
@@ -81,10 +82,48 @@ pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Val
 
     // Provider models ride along in the same response so the composer needs one
     // request to render a picker containing everything the user can talk to.
+    let mut remote = state.providers.remote_models()?;
+    remote.extend(free_models(&state));
+
     Ok(Json(json!({
         "models": described,
-        "remote": state.providers.remote_models()?,
+        "remote": remote,
     })))
+}
+
+/// The free pool's entries for the model picker.
+///
+/// Only flavours that can actually be served appear. A picker offering
+/// "Kuro Free · coding" to somebody with nothing behind it is offering a model
+/// that answers every message with an error, and the place to explain that is
+/// the free-models screen rather than four dead rows in a dropdown.
+///
+/// "Can be served" is asked of the pool rather than of the key list, because
+/// those stopped being the same question when shared endpoints arrived: with
+/// them switched on there are no keys and the pool can still answer, and an
+/// early return on an empty key list would have made the whole tier invisible.
+fn free_models(state: &SharedState) -> Vec<kuro_core::cloud::RemoteModel> {
+    let keys = crate::routes::free::stored_keys(state);
+
+    free::FreeFlavour::ALL
+        .iter()
+        .filter(|flavour| state.free.choose(**flavour, &keys).is_some())
+        .map(|flavour| kuro_core::cloud::RemoteModel {
+            id: flavour.model_id(),
+            name: flavour.label().to_string(),
+            // One group in the picker, whichever provider happens to answer.
+            // Grouping by the provider would make the same model appear to move
+            // between headings as allowances ran out.
+            connector_id: "kuro-free".to_string(),
+            connector_label: "Kuro Free".to_string(),
+            provider: "free".to_string(),
+            // Every one of these routes across providers, so marking one as
+            // pooled and the rest not would be a distinction without a
+            // difference. The group heading already says what they are.
+            pooled: false,
+            pool_size: 0,
+        })
+        .collect()
 }
 
 /// Kuro's built-in suggestions, with a fit estimate and whether each is already
@@ -108,6 +147,9 @@ pub async fn recommended_models(State(state): State<SharedState>) -> AppResult<J
                 "paramCount": curated.param_count,
                 "family": curated.family,
                 "capabilities": curated.capabilities,
+                "purposes": curated.purposes,
+                // The heading this model is filed under when it is shown once.
+                "primaryPurpose": catalog::curated::primary_purpose(curated).as_str(),
                 "contextLength": curated.context_length,
                 "approxSizeBytes": curated.approx_size_bytes,
                 "blurb": curated.blurb,
@@ -118,7 +160,19 @@ pub async fn recommended_models(State(state): State<SharedState>) -> AppResult<J
         })
         .collect();
 
-    Ok(Json(json!({ "models": described })))
+    Ok(Json(json!({
+        "models": described,
+        // The headings travel with the list, so the screen does not keep its own
+        // copy of what the purposes are or what order they belong in.
+        "purposes": catalog::curated::Purpose::ALL
+            .iter()
+            .map(|purpose| json!({
+                "id": purpose.as_str(),
+                "label": purpose.label(),
+                "blurb": purpose.blurb(),
+            }))
+            .collect::<Vec<_>>(),
+    })))
 }
 
 pub async fn get_model(

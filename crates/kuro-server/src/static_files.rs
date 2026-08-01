@@ -89,7 +89,7 @@ async fn missing_frontend() -> Response {
     <p>The API is up, but the web interface has not been built yet. From the project directory:</p>
     <code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code>
     <p>Then reload this page. The API is available now at
-       <a href="/api/status">/api/status</a> and <a href="/v1/models">/v1/models</a>.</p>
+       <a href="/api/status">/api/status</a> and <a href="/api/models">/api/models</a>.</p>
   </main>
 </body>
 </html>"#;

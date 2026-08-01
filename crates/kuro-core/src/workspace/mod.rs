@@ -16,7 +16,10 @@
 //!   the project at all.
 //! * [`WorkspaceMode::Plan`] — reading only. It can look at the project, search
 //!   it, and propose changes it is not able to make.
-//! * [`WorkspaceMode::Agent`] — reading and writing, inside the workspace root.
+//! * [`WorkspaceMode::Agent`] — reading, writing, and running the ordinary
+//!   development commands, inside the workspace root.
+//! * [`WorkspaceMode::Bypass`] — the same, with no command allowlist. The mode
+//!   for someone who has decided to stop being asked.
 //!
 //! The mode is chosen before the turn, shown while it runs, and every change it
 //! makes is recorded with the previous contents so it can be undone. That is a
@@ -28,6 +31,8 @@
 //! the root, and credentials are refused wherever they appear inside it. See
 //! [`crate::tools::files`].
 
+pub mod exec;
+pub mod process;
 pub mod search;
 pub mod tools;
 
@@ -37,6 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::tools::files::{FileAccess, FilePermissions};
 
+pub use process::{ProcessRegistry, RunningProcess};
 pub use tools::{CodingTool, WorkspaceContext};
 
 /// How much a model may do in a workspace this turn.
@@ -48,18 +54,22 @@ pub enum WorkspaceMode {
     /// Read and search the project. Propose changes without making them.
     #[default]
     Plan,
-    /// Read, search, and change files inside the workspace root.
+    /// Read, search, change files, and run ordinary development commands.
     Agent,
+    /// Agent without the command allowlist.
+    Bypass,
 }
 
 impl WorkspaceMode {
-    pub const ALL: &'static [WorkspaceMode] = &[Self::Ask, Self::Plan, Self::Agent];
+    pub const ALL: &'static [WorkspaceMode] =
+        &[Self::Ask, Self::Plan, Self::Agent, Self::Bypass];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ask => "ask",
             Self::Plan => "plan",
             Self::Agent => "agent",
+            Self::Bypass => "bypass",
         }
     }
 
@@ -67,7 +77,8 @@ impl WorkspaceMode {
         match raw.trim().to_ascii_lowercase().as_str() {
             "ask" => Some(Self::Ask),
             "plan" => Some(Self::Plan),
-            "agent" => Some(Self::Agent),
+            "agent" | "auto" => Some(Self::Agent),
+            "bypass" | "yolo" => Some(Self::Bypass),
             _ => None,
         }
     }
@@ -77,16 +88,24 @@ impl WorkspaceMode {
             Self::Ask => "Ask",
             Self::Plan => "Plan",
             Self::Agent => "Agent",
+            Self::Bypass => "Bypass",
         }
     }
 
     /// One line, shown next to the switch. Written so the difference between the
-    /// three is legible without reading documentation.
+    /// modes is legible without reading documentation.
     pub fn blurb(self) -> &'static str {
         match self {
             Self::Ask => "Discuss code. The model cannot see your project.",
             Self::Plan => "Read and search the project. It cannot change anything.",
-            Self::Agent => "Read and change files in this folder. Every edit can be undone.",
+            Self::Agent => {
+                "Read and change files, and run build, test and dev commands. Every edit can \
+                 be undone."
+            }
+            Self::Bypass => {
+                "Everything Agent does, with no command allowlist. Only use this on a project \
+                 you could throw away."
+            }
         }
     }
 
@@ -95,8 +114,17 @@ impl WorkspaceMode {
         match self {
             Self::Ask => false,
             Self::Plan => risk == ToolRisk::Read,
-            Self::Agent => matches!(risk, ToolRisk::Read | ToolRisk::Write),
+            Self::Agent | Self::Bypass => true,
         }
+    }
+
+    /// Whether a command has to be on the allowlist before it will run.
+    ///
+    /// The one thing Bypass actually changes. Everything else — the working
+    /// directory, the containment of file paths, the always-refused commands —
+    /// is identical, because those are not permissions the user is turning off.
+    pub fn restricts_commands(self) -> bool {
+        self != Self::Bypass
     }
 
     /// The file access tier this mode maps onto.
@@ -104,17 +132,12 @@ impl WorkspaceMode {
         match self {
             Self::Ask => FileAccess::Off,
             Self::Plan => FileAccess::Read,
-            Self::Agent => FileAccess::Write,
+            Self::Agent | Self::Bypass => FileAccess::Write,
         }
     }
 }
 
 /// What a tool does to the machine.
-///
-/// Only the classes Kuro can actually produce today are listed. Running commands
-/// and reaching the network from a workspace are both real risks and neither is
-/// implemented, so neither is named here — a taxonomy with unreachable entries
-/// invites treating the whole thing as decorative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolRisk {
@@ -123,6 +146,10 @@ pub enum ToolRisk {
     /// Creates or modifies a file inside the workspace root. Recorded, and
     /// reversible from the changes panel.
     Write,
+    /// Runs a program. The working directory is the workspace root, but a
+    /// command is not confined the way a path is: anything it does afterwards is
+    /// the program's own business. This is the one tier that cannot be undone.
+    Execute,
 }
 
 impl ToolRisk {
@@ -130,6 +157,7 @@ impl ToolRisk {
         match self {
             Self::Read => "Reads",
             Self::Write => "Changes files",
+            Self::Execute => "Runs commands",
         }
     }
 }
@@ -178,27 +206,55 @@ mod tests {
 
     #[test]
     fn ask_mode_allows_nothing_at_all() {
-        for risk in [ToolRisk::Read, ToolRisk::Write] {
+        for risk in [ToolRisk::Read, ToolRisk::Write, ToolRisk::Execute] {
             assert!(!WorkspaceMode::Ask.allows(risk));
         }
         assert_eq!(WorkspaceMode::Ask.file_access(), FileAccess::Off);
     }
 
     #[test]
-    fn plan_mode_can_read_but_never_write() {
+    fn plan_mode_can_read_but_never_write_or_run() {
         assert!(WorkspaceMode::Plan.allows(ToolRisk::Read));
         assert!(
             !WorkspaceMode::Plan.allows(ToolRisk::Write),
             "the whole point of planning is that it cannot change anything"
         );
+        assert!(
+            !WorkspaceMode::Plan.allows(ToolRisk::Execute),
+            "a command can change the project without going through a file tool"
+        );
         assert!(!WorkspaceMode::Plan.file_access().allows_write());
     }
 
     #[test]
-    fn agent_mode_can_write() {
+    fn agent_mode_can_write_and_run() {
         assert!(WorkspaceMode::Agent.allows(ToolRisk::Read));
         assert!(WorkspaceMode::Agent.allows(ToolRisk::Write));
+        assert!(WorkspaceMode::Agent.allows(ToolRisk::Execute));
         assert!(WorkspaceMode::Agent.file_access().allows_write());
+    }
+
+    #[test]
+    fn bypass_differs_from_agent_only_in_the_command_allowlist() {
+        for risk in [ToolRisk::Read, ToolRisk::Write, ToolRisk::Execute] {
+            assert_eq!(
+                WorkspaceMode::Agent.allows(risk),
+                WorkspaceMode::Bypass.allows(risk)
+            );
+        }
+        assert_eq!(
+            WorkspaceMode::Agent.file_access(),
+            WorkspaceMode::Bypass.file_access()
+        );
+        assert!(WorkspaceMode::Agent.restricts_commands());
+        assert!(!WorkspaceMode::Bypass.restricts_commands());
+    }
+
+    #[test]
+    fn the_names_other_tools_use_for_these_modes_are_accepted() {
+        // People coming from Claude Code and Codex type these.
+        assert_eq!(WorkspaceMode::parse("auto"), Some(WorkspaceMode::Agent));
+        assert_eq!(WorkspaceMode::parse("yolo"), Some(WorkspaceMode::Bypass));
     }
 
     #[test]

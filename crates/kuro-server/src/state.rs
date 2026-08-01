@@ -9,6 +9,8 @@ use kuro_core::hardware::HardwareInfo;
 use kuro_core::mcp::McpManager;
 use kuro_core::settings::SearchSettings;
 use kuro_core::tools::web_search::SearchConfig;
+use kuro_core::free::FreePool;
+use kuro_core::workspace::ProcessRegistry;
 use kuro_core::{Paths, SecretStore};
 use tokio::sync::Mutex;
 
@@ -27,6 +29,14 @@ pub struct AppState {
     pub mcp: Arc<McpManager>,
     /// Remote model providers the user holds the key for.
     pub providers: Arc<ProviderRegistry>,
+    /// Providers with free tiers, pooled behind one model id. Holds only the
+    /// short-lived record of which ones are currently refusing; the keys
+    /// themselves live in the credential store.
+    pub free: FreePool,
+    /// Dev servers and other long-running commands started from a workspace.
+    /// Held by the daemon rather than by a conversation, so a server started in
+    /// one turn is still serving in the next.
+    pub processes: ProcessRegistry,
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub port: u16,
     /// Cancellation flags for in-flight downloads, keyed by download id.

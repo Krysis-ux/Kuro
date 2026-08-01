@@ -309,6 +309,16 @@ const DENIED_NAMES: &[&str] = &[
 /// Extensions that hold keys rather than content.
 const DENIED_EXTENSIONS: &[&str] = &["pem", "key", "p12", "pfx", "keychain", "jks", "kdbx"];
 
+/// Whether a path is on the deny list, whatever folder it sits in.
+///
+/// Exposed so that surfaces which are not the file tools — the folder picker,
+/// for one — can apply the same list. A picker that happily lists somebody's
+/// `.ssh` folder is not a leak on its own, but it makes the deny list look like
+/// a per-tool detail rather than a property of the application.
+pub fn is_denied(path: &Path) -> bool {
+    denied_reason(path).is_some()
+}
+
 /// Why a path inside a granted folder is still refused, if it is.
 fn denied_reason(path: &Path) -> Option<&'static str> {
     let lowered = path.to_string_lossy().to_ascii_lowercase();

@@ -13,9 +13,16 @@
 //! zero inference cost, and it is exactly the gain a hosted frontier model gets
 //! from a system prompt somebody spent a month on.
 //!
-//! Skills are deliberately not auto-selected. Guessing which expertise a message
-//! needs is a classification problem that would be wrong often enough to be
-//! annoying, and being wrong here means silently changing how the model answers.
+//! Skills are deliberately not auto-selected *per message*. Guessing which
+//! expertise a given question needs is a classification problem that would be
+//! wrong often enough to be annoying, and being wrong here means silently
+//! changing how the model answers.
+//!
+//! A fresh install does start with the coding category switched on — see
+//! [`default_slugs`]. That is a starting position, not a guess about any
+//! particular message: it is visible in the store, costed in the same token
+//! count as everything else, and overwritten the moment the user touches a
+//! switch.
 
 use serde::Serialize;
 
@@ -71,6 +78,16 @@ pub struct Skill {
     pub instructions: &'static str,
     /// Roughly how much context this costs, so the UI can warn when several are on.
     pub approx_tokens: usize,
+    /// Always on inside a coding workspace, and not shown in the store.
+    ///
+    /// A short list, and each entry earns it by describing something that is not
+    /// a preference. "Read a file before you edit it" is not a style anybody
+    /// might reasonably switch off; it is the difference between an assistant
+    /// that edits code and one that destroys it. Putting such a rule on a toggle
+    /// implies there is a sensible reason to turn it off, and there is not — so
+    /// they are hidden rather than merely defaulted on, because a default-on
+    /// switch is a switch somebody eventually flips while tidying.
+    pub essential: bool,
 }
 
 /// The catalogue.
@@ -85,6 +102,7 @@ pub const SKILLS: &[Skill] = &[
         blurb: "Compiling code, real error handling, no stray unwraps.",
         category: SkillCategory::Language,
         approx_tokens: 130,
+        essential: false,
         instructions: "\
 When writing Rust:
 - Include every `use` statement the snippet needs. A snippet that does not compile is not an answer.
@@ -101,6 +119,7 @@ When writing Rust:
         blurb: "Type hints, real error handling, stdlib before dependencies.",
         category: SkillCategory::Language,
         approx_tokens: 120,
+        essential: false,
         instructions: "\
 When writing Python:
 - Target 3.11+ unless told otherwise. Use `list[str]`, `dict[str, int]`, `X | None` — not `typing.List` or `Optional`.
@@ -117,6 +136,7 @@ When writing Python:
         blurb: "No `any`, narrow unknown, correct async.",
         category: SkillCategory::Language,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When writing TypeScript:
 - Never use `any`. Use `unknown` for untrusted input and narrow it before use.
@@ -133,6 +153,7 @@ When writing TypeScript:
         blurb: "Idiomatic error wrapping, no goroutine leaks.",
         category: SkillCategory::Language,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When writing Go:
 - Handle every error. Wrap with context: `fmt.Errorf(\"doing X: %w\", err)`.
@@ -149,6 +170,7 @@ When writing Go:
         blurb: "Parameterised queries, indexes, no accidental table scans.",
         category: SkillCategory::Language,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 When writing SQL:
 - Always use bound parameters. Never concatenate a value into a query string, not even in an example.
@@ -164,6 +186,7 @@ When writing SQL:
         blurb: "Safe scripts that fail loudly instead of half-working.",
         category: SkillCategory::Language,
         approx_tokens: 90,
+        essential: false,
         instructions: "\
 When writing shell scripts:
 - Start with `set -euo pipefail`. A script that continues after a failed step is a hazard.
@@ -179,6 +202,7 @@ When writing shell scripts:
         blurb: "Modern Java, closed resources, no null surprises.",
         category: SkillCategory::Language,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When writing Java:
 - Target 17+ unless told otherwise. Use `var` for obvious locals, records for data carriers, and switch expressions over fall-through.
@@ -195,6 +219,7 @@ When writing Java:
         blurb: "Nullable reference types, correct async, disposal.",
         category: SkillCategory::Language,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When writing C#:
 - Target .NET 8+ with nullable reference types on. Annotate `?` deliberately rather than suppressing with `!`.
@@ -211,6 +236,7 @@ When writing C#:
         blurb: "RAII, no raw owning pointers, no undefined behaviour.",
         category: SkillCategory::Language,
         approx_tokens: 120,
+        essential: false,
         instructions: "\
 When writing C++:
 - Target C++17 or later and say which. Use RAII for every resource; no naked `new` or `delete`.
@@ -227,6 +253,7 @@ When writing C++:
         blurb: "Value types, no force unwrapping, correct concurrency.",
         category: SkillCategory::Language,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When writing Swift:
 - Never force unwrap with `!` in code you suggest. Use `guard let`, `if let`, or `??` with a stated default.
@@ -243,6 +270,7 @@ When writing Swift:
         blurb: "Null safety, structured concurrency, idiomatic scope.",
         category: SkillCategory::Language,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When writing Kotlin:
 - Never use `!!`. Handle nullability with `?.`, `?:`, or a `require`/`checkNotNull` that says what was expected.
@@ -259,6 +287,7 @@ When writing Kotlin:
         blurb: "Strict types, prepared statements, no silent coercion.",
         category: SkillCategory::Language,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 When writing PHP:
 - Start files with `declare(strict_types=1);` and type every parameter, property and return.
@@ -275,6 +304,7 @@ When writing PHP:
         blurb: "Readable idioms, safe navigation, no monkey patches.",
         category: SkillCategory::Language,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 When writing Ruby:
 - Target 3.x and say so. Use keyword arguments for anything with more than two parameters.
@@ -291,6 +321,7 @@ When writing Ruby:
         blurb: "Semantic markup, modern layout, no magic numbers.",
         category: SkillCategory::Language,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When writing HTML and CSS:
 - Use the semantic element before a `div`: `button`, `nav`, `main`, `header`, `label`, `dialog`. A `div` with a click handler is not a button.
@@ -307,6 +338,7 @@ When writing HTML and CSS:
         blurb: "Correct hooks, no effect abuse, stable keys.",
         category: SkillCategory::Language,
         approx_tokens: 120,
+        essential: false,
         instructions: "\
 When writing React:
 - Derive during render. Do not use an effect to compute state from props — that is an extra render and a source of stale data.
@@ -323,6 +355,7 @@ When writing React:
         blurb: "Look before you answer. Search, read, then act.",
         category: SkillCategory::Coding,
         approx_tokens: 130,
+        essential: true,
         instructions: "\
 When working in a project you can read:
 - Look before answering. Call `project_tree` once to see the layout, then `search_files` for the thing you actually need. Do not ask the user where something is if you can find it.
@@ -338,6 +371,7 @@ When working in a project you can read:
         blurb: "Read first, change one thing, say exactly what you changed.",
         category: SkillCategory::Coding,
         approx_tokens: 140,
+        essential: true,
         instructions: "\
 When changing files:
 - Read a file immediately before editing it. Never edit from memory of what it probably contains — that is the single most common way to destroy work.
@@ -354,6 +388,7 @@ When changing files:
         blurb: "Say what you verified and what you only assumed.",
         category: SkillCategory::Coding,
         approx_tokens: 120,
+        essential: true,
         instructions: "\
 After making a change:
 - Re-read the part of the file you changed and confirm it says what you intended. The edit tool reporting success means the text was replaced, not that the result is correct.
@@ -364,11 +399,117 @@ After making a change:
 - Never claim a build passes, a test passes, or a bug is fixed unless you actually observed it.",
     },
     Skill {
+        slug: "running-code",
+        name: "Running what you wrote",
+        blurb: "Run the build and the tests. Do not describe running them.",
+        category: SkillCategory::Coding,
+        approx_tokens: 150,
+        // The single most expensive failure a coding assistant has: a model that
+        // could have run `npm test` in two seconds writing "you should now run
+        // `npm test`" instead, and being wrong.
+        essential: true,
+        instructions: "\
+When you can run commands:
+- Run the thing. You have `run_command` and it works. Never write \"you can now run X to check\" when running X yourself is one call away — a change you have not run is a change you are guessing about.
+- After any edit, run whatever the project uses to check itself, in this order: the type checker or compiler, then the tests, then the linter. Stop at the first one that fails and fix that.
+- Find the real command before inventing one. Read `package.json` scripts, `Makefile`, `Cargo.toml`, `pyproject.toml`, or the README. `npm test` is a guess; the script in the file is the answer.
+- Run the narrowest thing that proves your change: one test file, not the whole suite, until it passes.
+- When a command fails, read its output before changing anything. The error names the file and the line.
+- Never claim something builds or passes unless you ran it and saw that. If you could not run it, say which command the user should run and what a correct result looks like.
+- A command that needs input fails immediately rather than waiting, so use the project's non-interactive flag.",
+    },
+    Skill {
+        slug: "using-the-terminal",
+        name: "Using the terminal",
+        blurb: "Portable commands, one thing at a time, nothing destructive.",
+        category: SkillCategory::Coding,
+        approx_tokens: 140,
+        essential: false,
+        instructions: "\
+When running shell commands:
+- Say what a command does before running it if that is not obvious from its name.
+- Commands run in the project root. Use relative paths, and `cd sub && ...` when you need another directory — each call starts back at the root.
+- One logical step per call. Chaining five commands with `&&` gives you one wall of output and no idea which part failed.
+- Prefer the project's own tooling over the system's: `npm run build` over a hand-written `tsc` invocation, `cargo test` over `rustc`.
+- Never run anything that deletes outside the project, changes machine settings, or installs software globally. Add a dependency to the project's manifest instead of installing it system-wide.
+- Assume nothing about the shell. Do not rely on aliases, on a `.zshrc`, or on a tool being installed — check with `which` first if it matters.
+- Long output is truncated from the front, so the end is what you see. If you need something from the start of a build log, re-run it piped through `head`.",
+    },
+    Skill {
+        slug: "checking-it-visually",
+        name: "Checking it visually",
+        blurb: "Start the dev server and actually look at the page.",
+        category: SkillCategory::Coding,
+        approx_tokens: 140,
+        essential: false,
+        instructions: "\
+When the change is something a person looks at:
+- Start the dev server with `start_server` and tell the user it is in the preview panel. A UI change nobody has looked at is not finished.
+- Use the project's own dev script — read `package.json` before guessing at `npm run dev`.
+- Start one server and keep it. It rebuilds on save, so after an edit call `check_server` for the rebuild result rather than starting a second one on a port that is already taken.
+- When `check_server` shows a compile error, fix it and check again before saying anything about how the page looks.
+- Say plainly what you can and cannot tell. You can see the server's output, not the rendered pixels — so report that it compiled and is serving, and ask the user what they see rather than asserting it looks right.
+- Stop the server with `stop_server` when the work is done, and say you have.
+- Check the states that break: empty data, long text, a narrow window. Describe which ones you exercised.",
+    },
+    Skill {
+        slug: "planning-the-work",
+        name: "Planning the work",
+        blurb: "Say the plan in three lines, then do it in order.",
+        category: SkillCategory::Coding,
+        approx_tokens: 130,
+        essential: false,
+        instructions: "\
+Before a change that touches more than one file:
+- Say the plan first, as a short numbered list of the actual files and what changes in each. Three lines, not three paragraphs.
+- Read before planning. A plan written from a guess about the codebase is a plan that gets abandoned at step two.
+- Do the steps in an order where the project is never broken for long: add the new thing, switch callers to it, then remove the old thing.
+- Do one step at a time and check it before the next. Six edits then one build gives you six suspects.
+- When you discover the plan was wrong, say so and give the corrected one rather than quietly doing something else.
+- Say what you are deliberately not doing, so the user can ask for it if they wanted it.
+- Stop when the request is done. An unasked-for refactor bundled into a bug fix is how a small change becomes unreviewable.",
+    },
+    Skill {
+        slug: "reading-errors",
+        name: "Reading errors",
+        blurb: "The error already says what is wrong. Read it first.",
+        category: SkillCategory::Coding,
+        approx_tokens: 130,
+        essential: false,
+        instructions: "\
+When something fails:
+- Read the whole error before changing anything, and quote the line that matters back to the user. Most errors name the file, the line and the expected type.
+- Fix the first error, not the last. Compilers cascade — one missing import produces twenty messages, nineteen of which vanish on their own.
+- Distinguish a compile error from a test failure from a runtime crash. They have different causes and the fix for one is rarely the fix for another.
+- If the message mentions a file you have not read this turn, read it. Do not infer its contents from the error.
+- `command not found` means the tool is not installed or not in this project — check the manifest before assuming the command was wrong.
+- A test that fails after your change is your change until proven otherwise. Check `git diff` before blaming the test.
+- If you cannot tell what an error means, say so and quote it, rather than making a plausible change and hoping.",
+    },
+    Skill {
+        slug: "dependencies",
+        name: "Dependencies",
+        blurb: "Use what is installed. Justify anything new.",
+        category: SkillCategory::Coding,
+        approx_tokens: 120,
+        essential: false,
+        instructions: "\
+Before adding a dependency:
+- Read the project's manifest first and use what is already there. A second date library, a second HTTP client, or a second state store is a bug in itself.
+- Prefer the standard library, then an existing dependency, then a new one. Say why the first two do not work before reaching for the third.
+- Name the package and say what it costs: what it is for, roughly how big, and how actively it is maintained.
+- Add it to the manifest through the package manager (`npm install`, `cargo add`, `uv add`) so the lockfile is updated. Never hand-edit a version into a manifest.
+- Match the project's existing conventions — the same package manager, the same dependency-versus-devDependency split.
+- Never install anything globally, and never upgrade an unrelated package while doing something else.
+- If a dependency is only needed for one small function, write the function.",
+    },
+    Skill {
         slug: "frontend-craft",
         name: "Frontend craft",
         blurb: "The implementation details that make an interface feel finished.",
         category: SkillCategory::Coding,
         approx_tokens: 160,
+        essential: false,
         instructions: "\
 When building interface code:
 - Put spacing, colour, radius and type sizes in tokens or variables and use them. A hardcoded `16px` in one component and `1rem` in the next is how a design drifts.
@@ -386,6 +527,7 @@ When building interface code:
         blurb: "Small props, state in one place, no prop drilling.",
         category: SkillCategory::Coding,
         approx_tokens: 130,
+        essential: false,
         instructions: "\
 When structuring components:
 - Keep the component that fetches data separate from the one that renders it. Presentational components take props and return markup; they do not call services.
@@ -402,6 +544,7 @@ When structuring components:
         blurb: "Validate at the edge, keep handlers thin, fail honestly.",
         category: SkillCategory::Coding,
         approx_tokens: 140,
+        essential: false,
         instructions: "\
 When writing server code:
 - Validate every input at the boundary, against a schema, before it reaches any logic. Treat anything from a client, a file or another service as hostile until parsed.
@@ -419,6 +562,7 @@ When writing server code:
         blurb: "Schemas that hold their invariants, migrations that cannot lose data.",
         category: SkillCategory::Coding,
         approx_tokens: 140,
+        essential: false,
         instructions: "\
 When designing or changing a schema:
 - Put the constraint in the database: `NOT NULL`, unique, foreign keys, checks. A rule enforced only in application code is a rule that has already been broken by something else.
@@ -436,6 +580,7 @@ When designing or changing a schema:
         blurb: "Expected failures modelled, unexpected ones loud.",
         category: SkillCategory::Coding,
         approx_tokens: 120,
+        essential: false,
         instructions: "\
 When handling failure:
 - Separate the expected from the exceptional. A missing record and a file that will not parse are ordinary outcomes and belong in the return type; a broken invariant is a bug and should be loud.
@@ -452,6 +597,7 @@ When handling failure:
         blurb: "Severity-ordered findings with the fix, not vibes.",
         category: SkillCategory::Practice,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When reviewing code:
 - Order findings by severity: correctness and security first, then maintainability, then style.
@@ -467,6 +613,7 @@ When reviewing code:
         blurb: "Form a hypothesis, then test it — no shotgun fixes.",
         category: SkillCategory::Practice,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When debugging:
 - Restate the symptom precisely: what was expected, what happened, and how reproducibly.
@@ -482,6 +629,7 @@ When debugging:
         blurb: "Tests that fail for one reason and name it.",
         category: SkillCategory::Practice,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When writing tests:
 - Name the test after the behaviour it protects, not the function it calls: `rejects_an_order_with_no_items`, not `test_order`.
@@ -498,6 +646,7 @@ When writing tests:
         blurb: "Untrusted input, real threats, no security theatre.",
         category: SkillCategory::Practice,
         approx_tokens: 120,
+        essential: false,
         instructions: "\
 When security matters:
 - Treat every input from outside the process as hostile: request bodies, file contents, environment, and anything a model produced.
@@ -514,6 +663,7 @@ When security matters:
         blurb: "Measure first, fix the biggest thing, prove it moved.",
         category: SkillCategory::Practice,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When optimising:
 - Ask what was measured before suggesting anything. Never optimise from a guess, and say so plainly if no measurement exists.
@@ -529,6 +679,7 @@ When optimising:
         blurb: "Boundaries, trade-offs, and the simplest thing that works.",
         category: SkillCategory::Practice,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When designing a system:
 - Start from the constraints: scale, team size, latency, budget, and what already exists. A design without them is a preference.
@@ -545,6 +696,7 @@ When designing a system:
         blurb: "Behaviour-preserving steps, each one verifiable.",
         category: SkillCategory::Practice,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 When refactoring:
 - Establish first how behaviour is currently verified. Without tests, say that the first step is characterising the existing behaviour.
@@ -560,6 +712,7 @@ When refactoring:
         blurb: "Reversible operations, honest history, safe recovery.",
         category: SkillCategory::Practice,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 When working with Git:
 - Before any command that discards work — `reset --hard`, `checkout --`, `clean -fd`, a force push — say exactly what is lost and give the safe alternative first.
@@ -575,6 +728,7 @@ When working with Git:
         blurb: "Predictable resources, honest status codes, versioning.",
         category: SkillCategory::Practice,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When designing an HTTP API:
 - Name resources as plural nouns and use the verb the method already gives you. No `/getUser` or `/createOrder`.
@@ -591,6 +745,7 @@ When designing an HTTP API:
         blurb: "Hierarchy, spacing, states — not a wall of default cards.",
         category: SkillCategory::Design,
         approx_tokens: 120,
+        essential: false,
         instructions: "\
 When designing an interface:
 - Decide what the one important thing on the screen is, and make it visibly first through size and weight before reaching for colour.
@@ -602,11 +757,60 @@ When designing an interface:
 - Say what happens when the text is twice as long or the screen is half as wide.",
     },
     Skill {
+        slug: "design-intent",
+        name: "Design intent",
+        blurb: "Decide what the screen is for before deciding how it looks.",
+        category: SkillCategory::Design,
+        approx_tokens: 170,
+        essential: false,
+        instructions: "\
+Before designing a surface, name what success on it looks like, and let that decide the rest:
+- Persuade — the visitor decides and acts. Landing pages, pricing. Design is the product.
+- Operate — the visitor completes a task. Dashboards, editors, settings. Scanability and familiar behaviour outrank expression.
+- Read — the visitor understands something. Docs, guides. Structure for comprehension first.
+- Experience — the visitor is inside the work. Portfolios. Let the artifact lead.
+Choose from the surface, not the product: a developer tool's landing page is still Persuade.
+
+Then:
+- The brief wins. Honour a stated aesthetic, palette or typeface even when it cuts against your taste. Redirecting a clear brief toward what you would have preferred is a failure.
+- Refining preserves; redesigning replaces. Refining keeps the existing identity, behaviour and copy, and touches nothing outside the request. Redesigning treats the old look as evidence, not a starting point. Never polish a look you have decided to discard.
+- Ask before rewriting factual copy or adding a claim; you cannot tell whether it is true.
+- Verify in bounded passes, not a loop. Build it, inspect once, fix what that found in one batch, confirm at most once more, stop.",
+    },
+    Skill {
+        slug: "design-refusals",
+        name: "Saturated patterns",
+        blurb: "The defaults that make an interface look generated.",
+        category: SkillCategory::Design,
+        approx_tokens: 190,
+        essential: false,
+        instructions: "\
+These are the shapes an interface falls into when nobody decided. Not banned — a brief that asks for one earns it — but reaching for one because it was nearest means you were not designing. Rewrite the element rather than soften it.
+
+Structure:
+- A grid of same-size cards, each an icon over a heading over two lines, as the page's structure. Cards are the lazy container; nested cards are always wrong.
+- The metric hero: enormous number, small label, three stats, one accent.
+- Section numbers (01 / 02 / 03) when the order carries no information.
+- A modal for something needing neither interruption nor focus.
+- A kicker or eyebrow above a heading. Delete it; the heading carries its weight.
+
+Surface:
+- Gradient text. Emphasis comes from weight and size.
+- Glass and blur as decoration rather than deliberate effect.
+- A coloured left border thicker than a hairline on cards or callouts.
+- Hard offset shadows with no blur, outside a genuinely neobrutalist design.
+- Sparklines and progress rings standing in for absent content.
+- Monospace as costume for 'technical' rather than for code.
+- Emoji standing in for icons. Icons come from one set, at one stroke weight.
+- Light or dark by category habit rather than by where it will be used.",
+    },
+    Skill {
         slug: "accessibility",
         name: "Accessibility",
         blurb: "Keyboard, screen reader, contrast — checked, not assumed.",
         category: SkillCategory::Design,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When accessibility matters:
 - Use the native element first. A real `button`, `a`, `input` or `dialog` brings keyboard and screen reader behaviour that ARIA only imitates.
@@ -623,6 +827,7 @@ When accessibility matters:
         blurb: "Many real options, then an honest recommendation.",
         category: SkillCategory::Writing,
         approx_tokens: 110,
+        essential: false,
         instructions: "\
 When asked to generate ideas:
 - Give a range of genuinely different options, not one idea restated. If two share the same underlying approach, they are one option.
@@ -639,6 +844,7 @@ When asked to generate ideas:
         blurb: "The point first, faithful, and actually shorter.",
         category: SkillCategory::Writing,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 When summarising:
 - Lead with the single most important point. If someone reads one sentence, it should be that one.
@@ -654,6 +860,7 @@ When summarising:
         blurb: "Build on what they know, one idea at a time.",
         category: SkillCategory::Writing,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 When teaching something:
 - Work out what the person already knows from how they asked, and start one step above it rather than from the beginning.
@@ -670,6 +877,7 @@ When teaching something:
         blurb: "Tighter, clearer, and still in the writer's voice.",
         category: SkillCategory::Writing,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 When editing someone's writing:
 - Preserve their voice. Your job is to make their argument land, not to rewrite it as yours.
@@ -686,6 +894,7 @@ When editing someone's writing:
         blurb: "Plain answers first, detail after, no lecture.",
         category: SkillCategory::Writing,
         approx_tokens: 90,
+        essential: false,
         instructions: "\
 When explaining something:
 - Answer in the first sentence. Put the conclusion before the reasoning.
@@ -701,6 +910,7 @@ When explaining something:
         blurb: "Think before answering. Helps small models most.",
         category: SkillCategory::Writing,
         approx_tokens: 100,
+        essential: false,
         instructions: "\
 For any question involving arithmetic, logic, dates, counting, or several constraints at once:
 - Work it through in short numbered steps before giving the answer.
@@ -715,10 +925,46 @@ pub fn find(slug: &str) -> Option<&'static Skill> {
     SKILLS.iter().find(|skill| skill.slug == slug)
 }
 
+/// The skills a coding workspace always gets, whatever the user has switched on.
+///
+/// Not shown in the store and not stored in settings, so there is nothing to
+/// accidentally turn off and nothing to migrate when the list changes.
+pub fn essentials() -> Vec<&'static Skill> {
+    SKILLS.iter().filter(|skill| skill.essential).collect()
+}
+
+/// The skills the store offers, which is everything that is a real choice.
+pub fn selectable() -> Vec<&'static Skill> {
+    SKILLS.iter().filter(|skill| !skill.essential).collect()
+}
+
 /// Slugs the user has switched on.
+/// What a fresh install starts with switched on.
+///
+/// Everything in the coding category, because somebody who opens the Code page
+/// on the first day wants an assistant that already knows how to work in a
+/// codebase — not forty-four switches and no idea which of them matter. These
+/// stay ordinary preferences: they appear in the store with the rest, and
+/// turning one off keeps it off, because the choice is recorded as soon as it
+/// is made.
+///
+/// Deliberately not "everything". The token count beside the heading is real,
+/// and a default that spent the whole context window before the first message
+/// would be a worse first day than a short list.
+pub fn default_slugs() -> Vec<String> {
+    SKILLS
+        .iter()
+        .filter(|skill| skill.category == SkillCategory::Coding && !skill.essential)
+        .map(|skill| skill.slug.to_string())
+        .collect()
+}
+
 pub fn enabled_slugs(db: &Db) -> Result<Vec<String>> {
+    // Absent means never chosen, which is not the same as chosen-to-be-empty:
+    // storing the selection happens the moment a switch is touched, so an empty
+    // array is a real answer and `None` is a first run.
     let Some(stored) = db.get_setting(KEY_ENABLED)? else {
-        return Ok(Vec::new());
+        return Ok(default_slugs());
     };
 
     Ok(stored
@@ -747,7 +993,9 @@ pub fn enabled(db: &Db) -> Result<Vec<&'static Skill>> {
 pub fn set_enabled(db: &Db, slugs: &[String]) -> Result<Vec<String>> {
     let kept: Vec<&str> = slugs
         .iter()
-        .filter(|slug| find(slug).is_some())
+        // An essential skill is not a stored preference — it is added at the
+        // point of use. Storing one would make it look removable.
+        .filter(|slug| find(slug).is_some_and(|skill| !skill.essential))
         .map(String::as_str)
         .collect();
 
@@ -794,6 +1042,17 @@ mod tests {
     }
 
     #[test]
+    fn turning_everything_off_is_remembered_rather_than_reset_to_the_defaults() {
+        // The bug a naive default would cause: an empty stored list reads as
+        // "never chosen", so the next request quietly turns the defaults back on
+        // and the user's deliberate choice is undone on every message.
+        let db = Db::open_in_memory().expect("open");
+        set_enabled(&db, &[]).expect("store an empty selection");
+
+        assert!(enabled_slugs(&db).expect("read").is_empty());
+    }
+
+    #[test]
     fn instructions_stay_small_enough_to_combine() {
         for skill in SKILLS {
             let words = skill.instructions.split_whitespace().count();
@@ -806,10 +1065,24 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_enabled_on_a_fresh_install() {
+    fn a_fresh_install_starts_with_the_coding_skills_and_nothing_else() {
+        // This used to assert that nothing was on. The rule changed
+        // deliberately: opening the Code page on the first day and finding
+        // forty-four switches, none of them on, is a worse introduction than
+        // an assistant that already knows how to work in a codebase.
+        //
+        // Only the coding category, and only the switchable ones. Turning
+        // everything on would spend most of a small model's context before the
+        // first message.
         let db = Db::open_in_memory().expect("open");
-        assert!(enabled_slugs(&db).expect("slugs").is_empty());
-        assert!(enabled(&db).expect("skills").is_empty());
+        let slugs = enabled_slugs(&db).expect("slugs");
+
+        assert!(!slugs.is_empty());
+        for slug in &slugs {
+            let skill = find(slug).expect("a real skill");
+            assert_eq!(skill.category, SkillCategory::Coding, "`{slug}` is not a coding skill");
+            assert!(!skill.essential, "an essential is already always on");
+        }
     }
 
     #[test]
@@ -862,6 +1135,68 @@ mod tests {
             rust.approx_tokens + go.approx_tokens
         );
         assert_eq!(approx_tokens(&[]), 0);
+    }
+
+    #[test]
+    fn the_essential_skills_are_the_ones_nobody_should_be_able_to_switch_off() {
+        let essential = essentials();
+
+        for expected in ["codebase-navigation", "careful-edits", "verification", "running-code"] {
+            assert!(
+                essential.iter().any(|skill| skill.slug == expected),
+                "`{expected}` describes something that is not a preference"
+            );
+        }
+        // The list has to stay short, or "essential" becomes "everything" and the
+        // store becomes a lie about what is actually in the prompt.
+        assert!(essential.len() <= 6, "got {} essential skills", essential.len());
+
+        for skill in &essential {
+            assert_eq!(
+                skill.category,
+                SkillCategory::Coding,
+                "`{}` is always-on for coding, so it must be a coding skill",
+                skill.slug
+            );
+        }
+    }
+
+    #[test]
+    fn the_store_shows_everything_that_is_a_real_choice_and_nothing_else() {
+        assert_eq!(selectable().len() + essentials().len(), SKILLS.len());
+        assert!(selectable().iter().all(|skill| !skill.essential));
+    }
+
+    #[test]
+    fn an_essential_skill_cannot_be_stored_as_a_preference() {
+        // Otherwise it appears in the enabled list, the store renders it with a
+        // switch, and somebody turns off "read the file before editing it".
+        let db = Db::open_in_memory().expect("open");
+
+        let kept = set_enabled(
+            &db,
+            &["careful-edits".to_string(), "rust".to_string()],
+        )
+        .expect("set");
+
+        assert_eq!(kept, vec!["rust".to_string()]);
+    }
+
+    #[test]
+    fn the_agentic_coding_skills_cover_running_looking_and_recovering() {
+        // The four things that separate an assistant which edits text from one
+        // that works in a project.
+        for expected in [
+            "running-code",
+            "using-the-terminal",
+            "checking-it-visually",
+            "reading-errors",
+            "planning-the-work",
+            "dependencies",
+        ] {
+            let skill = find(expected).unwrap_or_else(|| panic!("missing `{expected}`"));
+            assert_eq!(skill.category, SkillCategory::Coding, "`{expected}`");
+        }
     }
 
     #[test]

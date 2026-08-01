@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   api,
   formatBytes,
@@ -23,6 +24,11 @@ export function ModelsPage() {
   const [reference, setReference] = useState('')
   const [pullError, setPullError] = useState<string | null>(null)
   const [source, setSource] = useState<Source>('recommended')
+  // Which model the user has asked to delete, pending confirmation. Deleting
+  // weights is one of the few things in Kuro with nothing behind it.
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; bytes: number } | null>(
+    null,
+  )
 
   const installed = useQuery({ queryKey: ['models'], queryFn: api.models.list })
   const recommended = useQuery({ queryKey: ['recommended'], queryFn: api.models.recommended })
@@ -58,7 +64,10 @@ export function ModelsPage() {
 
   const remove = useMutation({
     mutationFn: (id: string) => api.models.remove(id),
-    onSuccess: refreshAll,
+    onSuccess: () => {
+      setPendingDelete(null)
+      refreshAll()
+    },
   })
 
   const activeDownloads =
@@ -89,7 +98,7 @@ export function ModelsPage() {
         >
           <input
             className="input"
-            placeholder="unsloth/Qwen3-4B-Instruct-2507-GGUF  ·  or a Hugging Face URL"
+            placeholder="owner/repository  ·  or a Hugging Face URL"
             value={reference}
             onChange={(event) => setReference(event.target.value)}
           />
@@ -161,7 +170,7 @@ export function ModelsPage() {
               <button
                 className="btn btn-ghost btn-icon"
                 aria-label={`Delete ${model.id}`}
-                onClick={() => remove.mutate(model.id)}
+                onClick={() => setPendingDelete({ id: model.id, bytes: model.file_size_bytes ?? 0 })}
               >
                 <TrashIcon size={15} />
               </button>
@@ -194,11 +203,26 @@ export function ModelsPage() {
         {source === 'recommended' ? (
           <>
             <p className="faint panel-note">
-              A short curated list. Fit is estimated from this machine's memory and the model's
-              size — a guide, not a benchmark.
+              Grouped by what each one is <em>for</em>, because that is the question somebody
+              actually has. Fit is estimated from this machine's memory and the model's size —
+              a guide, not a benchmark, and it says nothing about whether a model is any good
+              at the thing you want.
             </p>
-            <div className="model-cards">
-              {recommended.data?.models.map((model) => (
+
+            {(recommended.data?.purposes ?? []).map((purpose) => {
+              const forThis = (recommended.data?.models ?? []).filter((model) =>
+                model.purposes.includes(purpose.id),
+              )
+              if (forThis.length === 0) return null
+
+              return (
+                <div key={purpose.id} className="purpose-group">
+                  <div className="purpose-head">
+                    <h3 className="purpose-title">{purpose.label}</h3>
+                    <p className="faint purpose-blurb">{purpose.blurb}</p>
+                  </div>
+                  <div className="model-cards">
+                    {forThis.map((model) => (
                 <div key={model.slug} className="model-card">
                   <div className="model-card-head">
                     <span className="model-card-name">{model.displayName}</span>
@@ -227,13 +251,37 @@ export function ModelsPage() {
                     {model.installed ? 'Installed' : 'Download'}
                   </button>
                 </div>
-              ))}
-            </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
           </>
         ) : (
           <HubSearch onPull={(reference) => pull.mutate(reference)} pulling={pull.isPending} />
         )}
       </section>
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete this model?"
+          confirmLabel="Delete"
+          busy={remove.isPending}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => remove.mutate(pendingDelete.id)}
+          body={
+            <>
+              <p>
+                <code className="mono">{pendingDelete.id}</code> will be removed from this
+                computer, freeing {formatBytes(pendingDelete.bytes)}.
+              </p>
+              <p className="faint">
+                The weights are deleted from disk. Getting it back means downloading it again.
+              </p>
+            </>
+          }
+        />
+      )}
     </div>
   )
 }
@@ -272,7 +320,7 @@ function HubSearch({
       >
         <input
           className="input"
-          placeholder="qwen, llama, coding, small…"
+          placeholder="Search Hugging Face…"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />

@@ -49,9 +49,27 @@ Then open <http://127.0.0.1:8420>.
 - **Chat interface** that starts centred and moves to the bottom once you begin,
   with markdown, streaming, and a per-message inspector showing token counts,
   tokens/second and time to first token.
-- **An effort control** (low / balanced / high / max) instead of a wall of
-  sampling sliders. The raw knobs live in Settings, on sliders that also accept an
-  exact typed value.
+- **An effort control** — one word and a chevron beside the message box:
+  Instant, Balanced, Thinking, Extended. It is not only a token budget. With
+  auto-orchestration on (the default, per surface) the level also decides how
+  many rounds of tool use a turn may spend, and — in a coding workspace — pulls
+  in the skills that match what the project is actually written in, read from its
+  own `Cargo.toml`, `package.json` or `pyproject.toml` rather than guessed. The
+  raw sampling knobs still live in Settings.
+- **Running code, not just writing it.** A workspace in Agent mode can run
+  commands in its folder: build it, run the tests, run the type checker. `npm run
+  dev` and the like run in the background, and the address the server prints is
+  read out of its own output and shown in a preview panel beside the
+  conversation — so a change to a page can be looked at rather than assumed. The
+  panel also carries the process's output, which is where a failed start explains
+  itself.
+- **Free models.** Most inference providers have a free tier, and individually
+  each one is a toy. Paste in the keys you hold — Groq, Cerebras, Google AI
+  Studio, OpenRouter's `:free` models, Mistral, GitHub Models and others — and
+  they become a single model in the picker called **Kuro Free**, which sends each
+  request to whichever provider currently has allowance and moves on when one
+  runs out. Kuro supplies no keys; every one is yours, on a free tier, in your own
+  name.
 - **Web search that works on install.** DuckDuckGo needs no key; Brave, Tavily and
   a SearXNG instance are supported when you want a stable API. Turning the switch
   on searches *before* the model answers and puts the results in its context, so it
@@ -97,7 +115,9 @@ Then open <http://127.0.0.1:8420>.
   symlinks cannot lead out of the folder, and credentials are refused wherever
   they appear inside it: `.ssh`, `.aws`, `.env` files, private keys.
 
-- **Skills** — 40 installable instruction packs. Languages (Rust, Python,
+- **Skills** — 46 instruction packs, six of which are always on when coding and
+  have no switch: reading a file before editing it, and running the tests rather
+  than describing them, are not preferences. The rest are Languages (Rust, Python,
   TypeScript, Go, Java, C#, C++, Swift, Kotlin, PHP, Ruby, SQL, shell, HTML/CSS,
   React), working in a codebase (finding your way around, careful edits, checking
   your work, frontend craft, component design, backend services, data modelling,
@@ -138,7 +158,14 @@ Then open <http://127.0.0.1:8420>.
   OPENAI_API_KEY=not-needed
   ```
 - **A real CLI** — `serve`, `pull`, `list`, `run`, `ps`, `status`, `stop`, `rm`,
-  `preview`, `recommended`.
+  `preview`, `recommended`. `recommended` groups by what each model is *for* —
+  coding, images, audio, writing, or good at everything — because "which one
+  should I use" and "what will run here" are different questions.
+- **Chat can read your code, and can never change it.** The folders opened on the
+  Code page are readable from an ordinary conversation, so asking about a project
+  no longer means pasting files in. That path constructs its permissions at the
+  read tier whatever the workspace is set to, so there is no code path from a chat
+  to a write.
 - **Automatic hardware defaults.** Context size, GPU layers and thread count are
   derived from the machine and overridable in Settings.
 - **Idle unloading** so a model you have stopped using gives its memory back.

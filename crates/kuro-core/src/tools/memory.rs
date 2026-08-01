@@ -38,17 +38,44 @@ pub fn format_for_model(query: &str, memories: &[MemoryRecord]) -> String {
 /// small models frequently do not. Preloading a short list makes the feature
 /// behave the way a user expects it to.
 pub fn preamble(memories: &[MemoryRecord]) -> Option<String> {
-    if memories.is_empty() {
+    preamble_with(None, memories)
+}
+
+/// The memory preamble, including anything the user wrote about themselves.
+///
+/// The two are kept visibly apart in the text. What somebody typed on purpose is
+/// a standing instruction and should win; what a model saved during a
+/// conversation is a recollection and might be stale or half-right. Merging them
+/// into one list would give a note the model wrote itself the same weight as one
+/// the user did.
+pub fn preamble_with(about_you: Option<&str>, memories: &[MemoryRecord]) -> Option<String> {
+    let about_you = about_you.map(str::trim).filter(|text| !text.is_empty());
+    if about_you.is_none() && memories.is_empty() {
         return None;
     }
 
-    let mut out = String::from(
-        "Things you have been asked to remember about this user. \
-         Use them when relevant; do not recite them back unprompted.\n",
-    );
-    for memory in memories.iter().take(MAX_PRELOADED) {
-        out.push_str(&format!("- {}\n", memory.content));
+    let mut out = String::new();
+
+    if let Some(about) = about_you {
+        out.push_str(
+            "What the user has told you about themselves and how they want you to work. \
+             This is their own standing description, so prefer it over anything you \
+             inferred:\n\n",
+        );
+        out.push_str(about);
+        out.push_str("\n\n");
     }
+
+    if !memories.is_empty() {
+        out.push_str(
+            "Things you have been asked to remember about this user. \
+             Use them when relevant; do not recite them back unprompted.\n",
+        );
+        for memory in memories.iter().take(MAX_PRELOADED) {
+            out.push_str(&format!("- {}\n", memory.content));
+        }
+    }
+
     Some(out)
 }
 
