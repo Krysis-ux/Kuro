@@ -55,6 +55,14 @@ export interface RemoteModel {
   connector_id: string
   connector_label: string
   provider: string
+  /**
+   * Whether this row stands for every free model on its provider rather than
+   * one named model. OpenRouter lists hundreds; the free ones are scattered
+   * through them alphabetically, and this is the row that finds them for you.
+   */
+  pooled: boolean
+  /** How many models the pool covers. Zero on an ordinary row. */
+  pool_size: number
 }
 
 /** A GGUF repository found on Hugging Face. */
@@ -76,7 +84,13 @@ export interface HubModel {
 
 /* ---------- Tools ---------- */
 
-export type ToolGroup = 'web' | 'memory'
+export type ToolGroup = 'web' | 'memory' | 'projects'
+
+export interface ToolGroupInfo {
+  id: ToolGroup
+  label: string
+  blurb: string
+}
 
 export interface BuiltinTool {
   name: string
@@ -105,15 +119,34 @@ export interface Skill {
   approx_tokens: number
 }
 
+/** A skill that is always on in a coding workspace and has no switch. */
+export interface EssentialSkill {
+  slug: string
+  name: string
+  blurb: string
+}
+
+/** Per-surface preferences. Chat and coding are configured separately. */
+export interface SurfaceSettings {
+  autoOrchestrate: boolean
+  defaultEffort: Effort
+  /** Coding only: the mode a newly opened workspace starts in. */
+  defaultMode?: WorkspaceMode
+}
+
 export interface ToolsOverview {
   builtins: BuiltinTool[]
   defaultGroups: ToolGroup[]
+  groups: ToolGroupInfo[]
   skills: {
     catalogue: Skill[]
     enabled: string[]
     /** Rough context cost of what is on, so a user can see it adding up. */
     approxTokens: number
+    /** Shown as a note, not as switches — these cannot be turned off. */
+    essentials: EssentialSkill[]
   }
+  surfaces: { chat: SurfaceSettings; code: SurfaceSettings }
   memory: { preload: boolean; count: number }
   search: {
     provider: string
@@ -267,7 +300,7 @@ export interface Project {
  * about mid-generation, and it is what decides which tools the model is even
  * shown.
  */
-export type WorkspaceMode = 'ask' | 'plan' | 'agent'
+export type WorkspaceMode = 'ask' | 'plan' | 'agent' | 'bypass'
 
 export interface Workspace {
   id: string
@@ -290,13 +323,136 @@ export interface WorkspaceModeInfo {
   tools: string[]
 }
 
-export type ToolRisk = 'read' | 'write'
+export type ToolRisk = 'read' | 'write' | 'execute'
 
 export interface CodingTool {
   name: string
   description: string
   risk: ToolRisk
   risk_label: string
+}
+
+/* ---------- Long-running processes ---------- */
+
+/**
+ * A dev server or other command a workspace left running.
+ *
+ * `url` is what the preview panel points at. It is read out of the process's own
+ * output rather than guessed, so it is absent until the server has said where it
+ * is listening.
+ */
+export interface RunningProcess {
+  id: string
+  workspace_id: string
+  command: string
+  pid: number | null
+  started_at: string
+  url: string | null
+  running: boolean
+  exit_code: number | null
+}
+
+/* ---------- Browsing this machine's folders ---------- */
+
+export interface FolderEntry {
+  name: string
+  path: string
+  has_children: boolean
+}
+
+export interface FolderListing {
+  path: string
+  name: string
+  parent: string | null
+  entries: FolderEntry[]
+  truncated: boolean
+  shortcuts: { label: string; path: string }[]
+}
+
+/* ---------- Free-tier pool ---------- */
+
+/** A provider with a free tier, and whether a key for it is stored. */
+export interface FreeProvider {
+  slug: string
+  name: string
+  baseUrl: string
+  credentialsUrl: string
+  allowance: string
+  keyHint: string | null
+  models: string[]
+  hasKey: boolean
+  /**
+   * Set while the provider is being skipped after refusing.
+   *
+   * `model_gone` was missing here while the server was already sending it, so
+   * that tag silently never rendered.
+   */
+  trouble: 'rate_limited' | 'rejected' | 'model_gone' | null
+  /** Whether the allowance renews, runs out, or is a shared endpoint. */
+  tier: 'recurring' | 'keyless' | 'starter_credit' | 'expiring_trial'
+  /** A shared endpoint: no account, no key, and rate limited by address. */
+  keyless: boolean
+  privacy: { logged: boolean; trains: boolean }
+  /** A trial that has passed its date. Its key is no longer used. */
+  expired: boolean
+  /** What the user said this provider's allowance is, if they said. */
+  limit: FreeLimit | null
+}
+
+/** A ceiling the user typed in. Kuro cannot discover these. */
+export interface FreeLimit {
+  tokensPerDay?: number
+  tokensPerMonth?: number
+}
+
+/** One provider's spend inside a window. */
+export interface FreeProviderUsage {
+  providerSlug: string
+  name: string
+  turns: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  /** Turns whose provider sent no counts, so the totals are a floor. */
+  unreportedTurns: number
+  limit: FreeLimit | null
+}
+
+export interface FreeWindow {
+  from: string
+  to: string
+  providers: FreeProviderUsage[]
+  turns: number
+  unreportedTurns: number
+  totalTokens: number
+}
+
+export interface FreeUsage {
+  day: FreeWindow
+  month: FreeWindow
+  averages: {
+    /** Null when nothing reported, rather than a division by zero. */
+    tokensPerTurn: number | null
+    tokensPerDayThisMonth: number | null
+  }
+}
+
+export interface FreeFlavour {
+  /** The model id to select in the picker. */
+  id: string
+  flavour: string
+  label: string
+  blurb: string
+  available: boolean
+}
+
+export interface FreeOverview {
+  providers: FreeProvider[]
+  flavours: FreeFlavour[]
+  keyCount: number
+  availableCount: number
+  /** Whether the shared, unauthenticated endpoints may answer. */
+  allowKeyless: boolean
 }
 
 /**
@@ -319,6 +475,15 @@ export interface WorkspaceChange {
   afterLines: number | null
 }
 
+/** What a model is worth choosing *for*, as opposed to whether it will run. */
+export type Purpose = 'coding' | 'vision' | 'audio' | 'text' | 'all_round'
+
+export interface PurposeInfo {
+  id: Purpose
+  label: string
+  blurb: string
+}
+
 export interface RecommendedModel {
   id: string
   slug: string
@@ -329,6 +494,9 @@ export interface RecommendedModel {
   paramCount: string
   family: string
   capabilities: string[]
+  purposes: Purpose[]
+  /** The heading this model is filed under when shown once. */
+  primaryPurpose: Purpose
   contextLength: number
   approxSizeBytes: number
   blurb: string
@@ -439,7 +607,13 @@ export interface PullPreview {
   fit: FitEstimate
 }
 
-export type Effort = 'low' | 'balanced' | 'high' | 'max'
+/**
+ * How hard to think.
+ *
+ * `ultra` is offered only in a coding workspace: a chat has no project to read
+ * and no build to run, so the extra rounds it buys have nothing to buy.
+ */
+export type Effort = 'low' | 'balanced' | 'high' | 'max' | 'ultra'
 
 /** Error carrying the server's own message, so the UI never invents wording. */
 export class ApiError extends Error {
@@ -510,7 +684,10 @@ export const api = {
   models: {
     list: () =>
       request<{ models: InstalledModel[]; remote: RemoteModel[] }>('/api/models'),
-    recommended: () => request<{ models: RecommendedModel[] }>('/api/models/recommended'),
+    recommended: () =>
+      request<{ models: RecommendedModel[]; purposes: PurposeInfo[] }>(
+        '/api/models/recommended',
+      ),
     /** Search Hugging Face. An empty query returns the most-downloaded. */
     searchHub: (query: string, limit?: number) => {
       const params = new URLSearchParams()
@@ -583,6 +760,66 @@ export const api = {
       ),
     newConversation: (id: string) =>
       post<Conversation>(`/api/workspaces/${id}/conversations`),
+
+    processes: (id: string) =>
+      request<{ processes: RunningProcess[] }>(`/api/workspaces/${id}/processes`),
+    startProcess: (id: string, command: string) =>
+      post<{ process: RunningProcess }>(`/api/workspaces/${id}/processes`, { command }),
+    processLog: (id: string, processId: string) =>
+      request<{ process: RunningProcess; lines: string[] }>(
+        `/api/workspaces/${id}/processes/${processId}/log`,
+      ),
+    stopProcess: (id: string, processId: string) =>
+      post<{ stopped: boolean; command: string }>(
+        `/api/workspaces/${id}/processes/${processId}/stop`,
+      ),
+  },
+
+  /** Walking this machine's folders, so nothing has to be typed as a path. */
+  fs: {
+    browse: (path?: string, showHidden = false) => {
+      const params = new URLSearchParams()
+      if (path) params.set('path', path)
+      if (showHidden) params.set('show_hidden', 'true')
+      const suffix = params.toString()
+      return request<FolderListing>(`/api/fs/browse${suffix ? `?${suffix}` : ''}`)
+    },
+    /**
+     * Open the operating system's own folder dialog.
+     *
+     * `available: false` means this platform has none wired up; `cancelled`
+     * means the dialog opened and was dismissed. Both are ordinary outcomes,
+     * not errors, so the caller falls back to the built-in list rather than
+     * showing a failure.
+     */
+    choose: () =>
+      post<{
+        available: boolean
+        cancelled?: boolean
+        path: string | null
+        reason?: string | null
+      }>('/api/fs/choose'),
+  },
+
+  free: {
+    overview: () => request<FreeOverview>('/api/free'),
+    setKey: (slug: string, apiKey: string) =>
+      post<{ slug: string; hasKey: boolean }>(`/api/free/${slug}/key`, { apiKey }),
+    removeKey: (slug: string) =>
+      request<{ slug: string; hasKey: boolean }>(`/api/free/${slug}/key`, { method: 'DELETE' }),
+    test: (slug: string) =>
+      post<{ ok: boolean; error?: string }>(`/api/free/${slug}/test`),
+    usage: () => request<FreeUsage>('/api/free/usage'),
+    setKeyless: (enabled: boolean) =>
+      post<{ allowKeyless: boolean }>('/api/free/keyless', { enabled }),
+    setLimit: (slug: string, limit: FreeLimit) =>
+      request<{ slug: string; limit: FreeLimit }>(`/api/free/${slug}/allowance`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(limit),
+      }),
+    clearLimit: (slug: string) =>
+      request<{ slug: string }>(`/api/free/${slug}/allowance`, { method: 'DELETE' }),
   },
 
   settings: {
@@ -855,13 +1092,28 @@ export function formatBytes(bytes: number | null | undefined): string {
 
 /** Prefix marking a model as belonging to a provider rather than this machine. */
 const REMOTE_PREFIX = 'cloud:'
+/** Prefix marking a model as the pooled free tiers rather than one provider. */
+const FREE_PREFIX = 'free:'
 
+const FREE_FLAVOURS = ['auto', 'coding', 'reasoning', 'fast']
+
+export function isFreeModel(id: string): boolean {
+  const rest = id.startsWith(FREE_PREFIX) ? id.slice(FREE_PREFIX.length) : null
+  return rest !== null && FREE_FLAVOURS.includes(rest)
+}
+
+/** Whether picking this model sends the conversation off the machine. */
 export function isRemoteModel(id: string): boolean {
+  if (isFreeModel(id)) return true
   return id.startsWith(REMOTE_PREFIX) && id.slice(REMOTE_PREFIX.length).includes('/')
 }
 
 /** Strip the quantization suffix so lists stay readable. */
 export function friendlyModelName(id: string): string {
+  if (isFreeModel(id)) {
+    const flavour = id.slice(FREE_PREFIX.length)
+    return flavour === 'auto' ? 'Kuro Free' : `Kuro Free · ${flavour}`
+  }
   if (isRemoteModel(id)) {
     // Everything after the connector id is the provider's own name for it,
     // which may itself contain slashes.

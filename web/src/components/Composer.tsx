@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { api, isRemoteModel, type Effort, type InstalledModel, type RemoteModel } from '../lib/api'
+import {
+  api,
+  isRemoteModel,
+  type Effort,
+  type InstalledModel,
+  type RemoteModel,
+} from '../lib/api'
 import { useUi } from '../store/ui'
 import { ModelPicker } from './ModelPicker'
+import { ThinkingPicker } from './ThinkingPicker'
 import {
-  BrainIcon,
   FileIcon,
   FolderIcon,
   GlobeIcon,
@@ -20,24 +26,25 @@ import {
   VideoIcon,
 } from './icons'
 
-const EFFORTS: Effort[] = ['low', 'balanced', 'high', 'max']
-
 /** Tallest the input grows before it starts scrolling. Matches `max-height`
  *  on `.composer-input`; the two have to agree or the box scrolls early. */
 const MAX_INPUT_HEIGHT = 320
-
-const EFFORT_HINT: Record<Effort, string> = {
-  low: 'Short answers, least compute',
-  balanced: 'The default',
-  high: 'Longer, more thorough answers',
-  max: 'Maximum thinking and output',
-}
 
 /** Extensions the text path can read. Anything else needs a capable model. */
 const TEXT_ACCEPT =
   '.txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.log,.xml,.yml,.yaml,.toml,.ini,.env,' +
   '.ts,.tsx,.js,.jsx,.py,.rs,.go,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.rb,.php,.sh,' +
   '.sql,.css,.scss,.html,.vue,.svelte'
+
+/** A switch shown to the left of the model picker. */
+export interface ComposerToggle {
+  id: string
+  label: string
+  icon: React.ReactNode
+  on: boolean
+  title: string
+  onChange: (on: boolean) => void
+}
 
 interface ComposerProps {
   models: InstalledModel[]
@@ -46,35 +53,88 @@ interface ComposerProps {
   onStop: () => void
   isStreaming: boolean
   /** Centred on an empty chat, docked once the conversation starts. */
-  centred: boolean
+  centred?: boolean
+
+  selectedModel: string | null
+  onSelectModel: (model: string) => void
+  effort: Effort
+  onEffortChange: (effort: Effort) => void
+  /** What raising the effort buys on this surface. */
+  effortNote?: string
+  /** Unlocks the coding-only effort level and its wording. */
+  coding?: boolean
+
+  /** Web, memory and so on. The Code page passes none of these. */
+  toggles?: ComposerToggle[]
+  /** Rendered before the toggles — the Code page's mode switch goes here. */
+  leading?: React.ReactNode
+  /** Rendered between the toggles and the model picker. */
+  trailing?: React.ReactNode
+
+  /**
+   * Where this composer's half-written message is kept.
+   *
+   * One key per conversation or workspace, so switching between two chats does
+   * not carry one's draft into the other.
+   */
+  draftKey: string
+
+  placeholder?: string
+  hint?: React.ReactNode
+  /** Set when sending is impossible, with the reason. Shown on the button. */
+  disabledReason?: string | null
 }
 
+/**
+ * The message box, shared by chat and by a coding workspace.
+ *
+ * It was two components, and the Code page's copy was a bare textarea with a
+ * send button — no attachments, no tools menu, no effort control, and a model
+ * picker bolted onto the header several inches away from it. Somebody who had
+ * learned the chat composer arrived at the Code page and found that half of what
+ * they knew was missing, for no reason they could see.
+ *
+ * What actually differs between the two surfaces is which switches sit on the
+ * left, so that is the prop. Everything else — growing with the content,
+ * attachments, the model picker, how hard to think — is the same control in both
+ * places because it is the same decision in both places.
+ */
 export function Composer({
   models,
   remote,
   onSend,
   onStop,
   isStreaming,
-  centred,
+  centred = false,
+  selectedModel,
+  onSelectModel,
+  effort,
+  onEffortChange,
+  effortNote,
+  coding = false,
+  toggles = [],
+  leading,
+  trailing,
+  draftKey,
+  placeholder,
+  hint,
+  disabledReason,
 }: ComposerProps) {
-  const [text, setText] = useState('')
+  // Read from the store rather than from local state, so that unmounting this
+  // component — which navigating anywhere does — no longer discards what was
+  // being typed.
+  const text = useUi((state) => state.drafts[draftKey] ?? '')
+  const setDraftText = useUi((state) => state.setDraft)
+  const setText = useCallback(
+    (value: string) => setDraftText(draftKey, value),
+    [draftKey, setDraftText],
+  )
   const [menuOpen, setMenuOpen] = useState(false)
   const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-
-  const {
-    effort,
-    setEffort,
-    webSearch,
-    setWebSearch,
-    memory,
-    setMemory,
-    selectedModel,
-    setSelectedModel,
-  } = useUi()
 
   // Grow with the content instead of scrolling inside a fixed box.
   //
@@ -136,7 +196,7 @@ export function Composer({
 
   const submit = () => {
     const trimmed = text.trim()
-    if (!trimmed || isStreaming) return
+    if (!trimmed || isStreaming || disabledReason) return
 
     // Attached text is prepended so the model sees the file before the question.
     const preamble = attachments
@@ -183,6 +243,10 @@ export function Composer({
     setMenuOpen(false)
   }
 
+  const defaultPlaceholder = active.isRemote
+    ? 'Message — this one goes to your provider…'
+    : 'Message Kuro…'
+
   return (
     <div className={`composer-shell ${centred ? 'is-centred' : ''}`}>
       <div className="composer">
@@ -210,7 +274,7 @@ export function Composer({
         <textarea
           ref={textareaRef}
           className="composer-input"
-          placeholder={active.isRemote ? 'Message — this one goes to your provider…' : 'Message Kuro…'}
+          placeholder={placeholder ?? defaultPlaceholder}
           rows={1}
           value={text}
           onChange={(event) => setText(event.target.value)}
@@ -237,43 +301,38 @@ export function Composer({
               )}
             </div>
 
-            <button
-              className={`btn btn-ghost composer-toggle ${webSearch ? 'is-on' : ''}`}
-              onClick={() => setWebSearch(!webSearch)}
-              title={
-                webSearch
-                  ? 'On: your question is searched for before the model answers. Queries leave this machine.'
-                  : 'Off: search the web before answering. Queries leave this machine.'
-              }
-              aria-pressed={webSearch}
-            >
-              <GlobeIcon />
-              Web
-            </button>
+            {leading}
 
-            <button
-              className={`btn btn-ghost composer-toggle ${memory ? 'is-on' : ''}`}
-              onClick={() => setMemory(!memory)}
-              title={
-                memory
-                  ? 'On: the model can read and save durable facts about you.'
-                  : 'Off: memory is not read or written this turn.'
-              }
-              aria-pressed={memory}
-            >
-              <BrainIcon />
-              Memory
-            </button>
+            {toggles.map((toggle) => (
+              <button
+                key={toggle.id}
+                className={`btn btn-ghost composer-toggle ${toggle.on ? 'is-on' : ''}`}
+                onClick={() => toggle.onChange(!toggle.on)}
+                title={toggle.title}
+                aria-pressed={toggle.on}
+              >
+                {toggle.icon}
+                {/* Wrapped so the composer can collapse it to the icon when
+                    the row runs out of room. */}
+                <span className="composer-toggle-label">{toggle.label}</span>
+              </button>
+            ))}
 
-            <EffortPicker value={effort} onChange={setEffort} />
+            <ThinkingPicker
+              value={effort}
+              onChange={onEffortChange}
+              note={effortNote}
+              coding={coding}
+            />
           </div>
 
           <div className="composer-right">
+            {trailing}
             <ModelPicker
               installed={models}
               remote={remote}
               selected={selectedModel}
-              onSelect={setSelectedModel}
+              onSelect={onSelectModel}
             />
             {isStreaming ? (
               <button className="btn btn-solid btn-icon" onClick={onStop} aria-label="Stop">
@@ -283,7 +342,8 @@ export function Composer({
               <button
                 className="btn btn-solid btn-icon"
                 onClick={submit}
-                disabled={!text.trim()}
+                disabled={!text.trim() || Boolean(disabledReason)}
+                title={disabledReason ?? undefined}
                 aria-label="Send"
               >
                 <SendIcon />
@@ -306,9 +366,11 @@ export function Composer({
       </div>
 
       <p className="composer-hint faint">
-        {active.isRemote
-          ? 'Enter to send, Shift+Enter for a new line. This model runs on your provider, not here.'
-          : 'Enter to send, Shift+Enter for a new line. Models run entirely on this machine.'}
+        {disabledReason ??
+          hint ??
+          (active.isRemote
+            ? 'Enter to send, Shift+Enter for a new line. This model runs on your provider, not here.'
+            : 'Enter to send, Shift+Enter for a new line. Models run entirely on this machine.')}
       </p>
     </div>
   )
@@ -333,6 +395,12 @@ function AddMenu({
   onAttach: () => void
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Where this menu was opened from, carried along so the destination can
+  // offer a way back. Without it, following "Tools" out of a half-written
+  // message is a one-way trip through the sidebar.
+  const leaving = { state: { from: location.pathname + location.search } }
 
   // A provider's models are not described by the local capability list, so assume
   // the common case rather than disabling everything.
@@ -397,7 +465,7 @@ function AddMenu({
         enabled
         hint="Manage built-in tools, skills and MCP servers"
         badge={toolCount > 0 ? String(toolCount) : undefined}
-        onClick={() => navigate('/tools')}
+        onClick={() => navigate('/tools', leaving)}
       />
 
       {connected.slice(0, 4).map((server) => (
@@ -407,16 +475,16 @@ function AddMenu({
           label={server.name}
           enabled
           hint={`${server.tool_count ?? server.tools.length} tools from this server`}
-          onClick={() => navigate('/tools')}
+          onClick={() => navigate('/tools', leaving)}
         />
       ))}
 
       <MenuItem
         icon={<FolderIcon />}
         label="A folder"
-        enabled={false}
-        hint="Chat cannot reach your files. Open a workspace on the Code page to work in a folder."
-        onClick={() => navigate('/code')}
+        enabled
+        hint="Open a workspace on the Code page. Chat can read one, but only the Code page can change files."
+        onClick={() => navigate('/code', leaving)}
       />
     </div>
   )
@@ -458,22 +526,43 @@ function MenuItem({
   )
 }
 
-function EffortPicker({ value, onChange }: { value: Effort; onChange: (effort: Effort) => void }) {
-  return (
-    <div className="effort" role="group" aria-label="Effort">
-      {EFFORTS.map((option) => (
-        <button
-          key={option}
-          className={`effort-step ${value === option ? 'is-on' : ''}`}
-          onClick={() => onChange(option)}
-          title={EFFORT_HINT[option]}
-          aria-pressed={value === option}
-        >
-          {option}
-        </button>
-      ))}
-    </div>
-  )
+/**
+ * The switches a chat shows.
+ *
+ * Two, and memory is deliberately not one of them. It is on, it stays on, and it
+ * only ever touches things the user asked to be saved — so a switch for it was
+ * a control nobody used occupying space under every message. It lives in
+ * Settings now, next to the box for writing what you want models to know about
+ * you, which is where somebody goes when they actually have an opinion about it.
+ */
+export function chatToggles(state: {
+  webSearch: boolean
+  setWebSearch: (on: boolean) => void
+  projects: boolean
+  setProjects: (on: boolean) => void
+}): ComposerToggle[] {
+  return [
+    {
+      id: 'web',
+      label: 'Web',
+      icon: <GlobeIcon />,
+      on: state.webSearch,
+      title: state.webSearch
+        ? 'On: your question is searched for before the model answers. Queries leave this machine.'
+        : 'Off: search the web before answering. Queries leave this machine.',
+      onChange: state.setWebSearch,
+    },
+    {
+      id: 'projects',
+      label: 'Projects',
+      icon: <FolderIcon />,
+      on: state.projects,
+      title: state.projects
+        ? 'On: the model can read the folders you opened on the Code page. Reading only — chat can never change a file.'
+        : 'Off: the model cannot see your coding workspaces this turn.',
+      onChange: state.setProjects,
+    },
+  ]
 }
 
 /**

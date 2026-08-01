@@ -16,7 +16,10 @@ use client::KuroClient;
     name = "kuro",
     version,
     about = "Kuro LLM — run language models on your own machine",
-    disable_help_subcommand = true
+    // `kuro help` used to be turned off, so the most obvious thing anyone types
+    // first answered with an error telling them the subcommand did not exist.
+    // `--help` worked, which is not what a person reaches for.
+    disable_help_subcommand = false
 )]
 struct Cli {
     #[command(subcommand)]
@@ -78,6 +81,18 @@ enum Command {
 
     /// Delete a model's weights from disk.
     Rm { model: String },
+
+    /// Show everything known about one model.
+    Show {
+        /// Model to describe. Optional when only one is installed.
+        model: Option<String>,
+    },
+
+    /// Show the free-tier pool: which keys work, and what they have cost.
+    Free,
+
+    /// Print the version and exit.
+    Version,
 }
 
 #[tokio::main]
@@ -98,10 +113,17 @@ async fn dispatch() -> Result<()> {
         return commands::serve::serve(port);
     }
 
+    // Neither does `version` need a daemon. Asking what Kuro is should not
+    // require Kuro to be running.
+    if matches!(cli.command, Command::Version) {
+        println!("kuro {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let client = KuroClient::new()?;
 
     match cli.command {
-        Command::Serve { .. } => unreachable!("handled above"),
+        Command::Serve { .. } | Command::Version => unreachable!("handled above"),
         Command::Pull { model } => commands::pull::pull(&client, &model).await,
         Command::Preview { model } => commands::pull::preview(&client, &model).await,
         Command::List => commands::models::list(&client).await,
@@ -115,5 +137,7 @@ async fn dispatch() -> Result<()> {
         Command::Status => commands::status::status(&client).await,
         Command::Stop { model } => commands::models::stop(&client, model.as_deref()).await,
         Command::Rm { model } => commands::models::remove(&client, &model).await,
+        Command::Show { model } => commands::models::show(&client, model).await,
+        Command::Free => commands::free::free(&client).await,
     }
 }

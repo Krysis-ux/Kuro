@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Composer } from '../components/Composer'
+import { Composer, chatToggles } from '../components/Composer'
 import { MessageList, type StreamingState } from '../components/MessageList'
 import { Logo } from '../components/Logo'
 import {
@@ -17,7 +17,17 @@ export function ChatPage() {
   const params = useParams<{ id?: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { selectedModel, effort, webSearch, memory } = useUi()
+  const {
+    selectedModel,
+    setSelectedModel,
+    effort,
+    setEffort,
+    webSearch,
+    setWebSearch,
+    memory,
+    projects,
+    setProjects,
+  } = useUi()
 
   const [streaming, setStreaming] = useState<StreamingState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -87,7 +97,7 @@ export function ChatPage() {
         content,
         model: selectedModel ?? undefined,
         effort,
-        tools: activeToolGroups({ webSearch, memory }),
+        tools: activeToolGroups({ webSearch, memory, projects }),
         web_search: webSearch,
       }
       const events = editing
@@ -163,10 +173,17 @@ export function ChatPage() {
     <Composer
       models={models.data?.models ?? []}
       remote={models.data?.remote ?? []}
+      draftKey={`chat:${conversationId ?? 'new'}`}
       onSend={(content) => void send(content)}
       onStop={stop}
       isStreaming={streaming !== null}
       centred={centred}
+      selectedModel={selectedModel}
+      onSelectModel={setSelectedModel}
+      effort={effort}
+      onEffortChange={setEffort}
+      effortNote="More effort means longer answers and more room to search before replying."
+      toggles={chatToggles({ webSearch, setWebSearch, projects, setProjects })}
     />
   )
 

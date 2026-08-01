@@ -21,6 +21,7 @@ mod memories;
 mod models;
 mod projects;
 mod runtimes;
+mod usage;
 mod workspaces;
 
 pub use cloud::{CloudConnectorRecord, CloudStatus, NewCloudConnector};
@@ -31,6 +32,7 @@ pub use memories::MemoryRecord;
 pub use models::{ModelRecord, ModelSource, ModelStatus, NewModel};
 pub use projects::{NewProject, ProjectRecord, ProjectUpdate};
 pub use runtimes::EngineRuntimeRecord;
+pub use usage::ProviderUsage;
 pub use workspaces::{UndoPlan, WorkspaceChange, WorkspaceRecord};
 
 const SCHEMA: &str = include_str!("schema.sql");
@@ -42,8 +44,13 @@ const LATE_INDEXES: &str = "
         ON conversations (project_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_conversations_workspace
         ON conversations (workspace_id, updated_at DESC);
+    -- Partial, so it covers only the turns that went to a provider. A machine
+    -- full of local chats pays almost nothing for it.
+    CREATE INDEX IF NOT EXISTS idx_messages_usage
+        ON messages (provider_slug, created_at)
+        WHERE provider_slug IS NOT NULL;
 ";
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 #[derive(Clone)]
 pub struct Db {
@@ -108,6 +115,12 @@ impl Db {
             add_column_if_missing(conn, "conversations", "project_id", "TEXT")?;
             add_column_if_missing(conn, "conversations", "forked_from_id", "TEXT")?;
             add_column_if_missing(conn, "conversations", "workspace_id", "TEXT")?;
+            // Which provider's allowance a turn spent. Distinct from
+            // `model_id`, which on a pooled turn records the pool.
+            add_column_if_missing(conn, "messages", "provider_slug", "TEXT")?;
+            // Prompt tokens summed across every tool round, rather than the
+            // last round only. See `Aggregate::absorb`.
+            add_column_if_missing(conn, "messages", "usage_prompt_tokens_total", "INTEGER")?;
 
             // 3. Indexes over columns phase 2 may have just added. These cannot
             //    live in the schema file: on a fresh database the column is part

@@ -1,15 +1,28 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   formatBytes,
   friendlyModelName,
+  isFreeModel,
   isRemoteModel,
   publisherOf,
   quantOf,
   type InstalledModel,
   type RemoteModel,
 } from '../lib/api'
-import { CheckIcon, ChevronIcon, CloudIcon, CubeIcon, SearchIcon } from './icons'
+import { CheckIcon, ChevronIcon, CloudIcon, CubeIcon, GiftIcon, SearchIcon } from './icons'
+
+/** Tallest the menu gets. Matches the `max-height` budget used in the CSS. */
+const MENU_HEIGHT = 420
+/** Kept clear of the window edge so the menu never sits flush against it. */
+const VIEWPORT_MARGIN = 12
+
+interface Placement {
+  side: 'above' | 'below'
+  align: 'left' | 'right'
+  /** How tall the menu may be here, so a tight fit scrolls instead of clipping. */
+  maxHeight: number
+}
 
 interface ModelPickerProps {
   installed: InstalledModel[]
@@ -37,6 +50,7 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
   const anchorRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
+  const placement = usePlacement(anchorRef, open)
 
   const ready = useMemo(
     () => installed.filter((entry) => entry.model.status === 'ready'),
@@ -84,6 +98,7 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
 
   const activeQuant = active ? quantOf(active) : null
   const activeIsRemote = active ? isRemoteModel(active) : false
+  const activeIsFree = active ? isFreeModel(active) : false
 
   return (
     <div className="menu-anchor" ref={anchorRef}>
@@ -97,7 +112,13 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
         aria-expanded={open}
         title={active ?? 'Choose a model'}
       >
-        {activeIsRemote ? <CloudIcon size={13} /> : <CubeIcon size={13} />}
+        {activeIsFree ? (
+          <GiftIcon size={13} />
+        ) : activeIsRemote ? (
+          <CloudIcon size={13} />
+        ) : (
+          <CubeIcon size={13} />
+        )}
         <span className="model-trigger-name">
           {active ? friendlyModelName(active) : 'Choose a model'}
         </span>
@@ -106,7 +127,11 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
       </button>
 
       {open && (
-        <div className="model-menu fade-in" role="listbox">
+        <div
+          className={`model-menu fade-in is-${placement.side} is-${placement.align}`}
+          role="listbox"
+          style={{ maxHeight: `${placement.maxHeight}px` }}
+        >
           <div className="model-menu-search">
             <SearchIcon size={13} className="search-icon" />
             <input
@@ -124,7 +149,13 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
             {groups.map((group) => (
               <div key={group.key} className="model-group">
                 <div className="model-group-head">
-                  {group.remote ? <CloudIcon size={11} /> : <CubeIcon size={11} />}
+                  {group.free ? (
+                    <GiftIcon size={11} />
+                  ) : group.remote ? (
+                    <CloudIcon size={11} />
+                  ) : (
+                    <CubeIcon size={11} />
+                  )}
                   <span>{group.label}</span>
                   {group.remote && <span className="tag tag-warn">leaves this machine</span>}
                 </div>
@@ -132,7 +163,9 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
                 {group.options.map((option) => (
                   <button
                     key={option.id}
-                    className={`model-option ${option.id === active ? 'is-on' : ''}`}
+                    className={`model-option ${option.id === active ? 'is-on' : ''} ${
+                      option.pooled ? 'is-pooled' : ''
+                    }`}
                     role="option"
                     aria-selected={option.id === active}
                     onClick={() => {
@@ -144,9 +177,13 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
                       {option.id === active && <CheckIcon size={13} />}
                     </span>
 
-                    <span className="model-option-name">{option.name}</span>
+                    <span className="model-option-name">
+                      {option.pooled && <GiftIcon size={12} />}
+                      {option.name}
+                    </span>
 
                     <span className="model-option-tags">
+                      {option.note && <span className="faint">{option.note}</span>}
                       {option.quant && <span className="quant">{option.quant}</span>}
                       {option.size && <span className="faint mono">{option.size}</span>}
                       {option.loaded && <span className="tag tag-live">loaded</span>}
@@ -166,18 +203,73 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
   )
 }
 
+/**
+ * Which way the menu opens.
+ *
+ * It used to open upward unconditionally, which is right in the composer — the
+ * trigger is a few pixels off the bottom of the window — and wrong everywhere
+ * else. The Code page puts the same picker in a header, where opening upward
+ * meant the list rendered off the top of the screen with only its last row
+ * visible, overlapping the toolbar.
+ *
+ * Measured on open rather than on every render: the trigger does not move while
+ * the menu is up, and a resize observer here would recompute during the fade-in
+ * and make the menu jump.
+ */
+function usePlacement(anchor: React.RefObject<HTMLElement | null>, open: boolean): Placement {
+  const [placement, setPlacement] = useState<Placement>({
+    side: 'above',
+    align: 'right',
+    maxHeight: MENU_HEIGHT,
+  })
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const trigger = anchor.current?.getBoundingClientRect()
+    if (!trigger) return
+
+    const below = window.innerHeight - trigger.bottom - VIEWPORT_MARGIN
+    const above = trigger.top - VIEWPORT_MARGIN
+
+    // Below when it fits there, and otherwise whichever side has more room.
+    // Preferring below on a tie is what makes a header-mounted picker behave
+    // like every other dropdown a person has used.
+    const side = below >= MENU_HEIGHT || below >= above ? 'below' : 'above'
+
+    // The menu is right-aligned by default, which pushes it off-screen when the
+    // trigger sits near the left edge — a narrow window, or a picker in a
+    // sidebar.
+    const menuWidth = Math.min(340, window.innerWidth - VIEWPORT_MARGIN * 2)
+    const align = trigger.right - menuWidth < VIEWPORT_MARGIN ? 'left' : 'right'
+
+    setPlacement({
+      side,
+      align,
+      maxHeight: Math.max(200, Math.min(MENU_HEIGHT, side === 'below' ? below : above)),
+    })
+  }, [anchor, open])
+
+  return placement
+}
+
 interface Option {
   id: string
   name: string
   quant: string | null
   size: string | null
   loaded: boolean
+  /** A pool of every free model on this provider, rather than one model. */
+  pooled?: boolean
+  /** Shown beside a pooled row, so "free models" is a number and not a claim. */
+  note?: string
 }
 
 interface Group {
   key: string
   label: string
   remote: boolean
+  /** The pooled free tiers, which are remote but not a provider you pay. */
+  free: boolean
   options: Option[]
 }
 
@@ -236,6 +328,8 @@ function buildGroups(
       quant: null,
       size: null,
       loaded: false,
+      pooled: model.pooled,
+      note: model.pooled ? `${model.pool_size} free models` : undefined,
     })
     byProvider.set(model.connector_id, held)
   }
@@ -243,11 +337,27 @@ function buildGroups(
   const groups: Group[] = []
 
   for (const [publisher, options] of [...local].sort(compareByKey)) {
-    groups.push({ key: `local:${publisher}`, label: publisher, remote: false, options })
+    groups.push({
+      key: `local:${publisher}`,
+      label: publisher,
+      remote: false,
+      free: false,
+      options,
+    })
   }
-  for (const [id, { label, options }] of byProvider) {
-    groups.push({ key: `remote:${id}`, label, remote: true, options })
-  }
+
+  // The free pool goes directly after the local models and ahead of the paid
+  // providers, because it is the closest thing to "free" that is not local, and
+  // somebody scanning this list is usually scanning in that order.
+  const remoteGroups: Group[] = [...byProvider].map(([id, { label, options }]) => ({
+    key: `remote:${id}`,
+    label,
+    remote: true,
+    free: id === 'kuro-free',
+    options,
+  }))
+  remoteGroups.sort((left, right) => Number(right.free) - Number(left.free))
+  groups.push(...remoteGroups)
 
   return groups
 }

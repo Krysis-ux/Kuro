@@ -289,11 +289,25 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  /* The running panel becomes an overlay on a narrow window, and needs
+     something to be positioned against. */
+  position: relative;
 }
 
+/*
+ * Width comes from the drag handle beside it, via an inline style, so there is
+ * one source of truth for it and it survives a reload.
+ *
+ * `flex: 0 1 auto` rather than `flex: none`: the inline width is a *preference*
+ * that may be shrunk, down to `min-width`. With `flex: none` the panel was
+ * honoured to the pixel and the deficit went to the conversation, which has its
+ * own floor — so the row could not fit, and `.main`'s `overflow: hidden`
+ * silently clipped the composer's right-hand edge off the window. A panel
+ * giving up fifty pixels is better than a send button nobody can reach.
+ */
 .code-side {
-  flex: none;
-  width: 260px;
+  flex: 0 1 auto;
+  min-width: 180px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -416,9 +430,15 @@
   font-size: var(--text-xs);
 }
 
+/*
+ * The conversation is what the other two panels are beside, so it is the one
+ * that never gets squeezed out. Without a floor, opening both panels on a
+ * laptop-width window left it about ninety pixels wide and rendering one
+ * letter per line.
+ */
 .code-main {
   flex: 1;
-  min-width: 0;
+  min-width: 340px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -857,11 +877,137 @@
   color: var(--text-faint);
 }
 
+/*
+ * The row that used to collide with itself.
+ *
+ * `.composer-left` and `.composer-right` are `flex: 0 1 auto` with
+ * `min-width: 0`, which removes the content-based minimum that normally stops a
+ * flex item shrinking past its own contents. Their children could not shrink —
+ * the mode switch is four words, the thinking label is a nowrap text node, the
+ * icon buttons are a literal 32px — so the boxes shrank and the contents were
+ * painted outside them, underneath an opaque model picker.
+ *
+ * Three things fix it, in order of which acts first:
+ *
+ * 1. The container queries below drop labels to icons before space runs out.
+ * 2. `flex-wrap` here is the floor: if it ever does run out anyway, the row
+ *    wraps onto a second line. Wrapping is always better than overlapping.
+ * 3. `overflow` is deliberately NOT set. Both pickers open their menus from
+ *    inside this row, and clipping the row would clip the menus.
+ */
 .composer-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-2);
+  row-gap: var(--space-2);
+}
+
+/*
+ * Measured against the composer, not the window.
+ *
+ * The existing `@media (max-width: 720px)` cannot help here: on the Code page
+ * the composer is narrow because two panels are open, while the window is
+ * wide — so a viewport query never fires in exactly the case that breaks. A
+ * container query asks the only question that matters, which is how much room
+ * this row actually has.
+ */
+.composer {
+  container-type: inline-size;
+  container-name: composer;
+}
+
+.mode-switch,
+.thinking-trigger,
+.model-trigger {
+  flex: none;
+}
+
+/* The collapsing labels. Width rather than display, so it can be animated. */
+.mode-step-label,
+.thinking-trigger-label,
+.composer-toggle-label {
+  display: inline-block;
+  max-width: 12ch;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width var(--duration) var(--ease), opacity var(--duration) var(--ease),
+    margin var(--duration) var(--ease);
+}
+
+/*
+ * The thresholds are below the composer's *own* maximum, which is the mistake
+ * that made this ship with the labels permanently collapsed.
+ *
+ * `.composer-shell` is capped at `--content-max` (720px) and spends 48px of that
+ * on padding, so `.composer` is never wider than 672. A container query written
+ * at 720px is a condition that is always true: every composer, at every window
+ * size, was below it. The first threshold now has to leave room at 672 for the
+ * widest case — the Code page, whose row carries a four-word mode switch that a
+ * chat does not.
+ *
+ * Collapsing in stages, least useful label first. The mode switch says which
+ * permission the next turn runs under, so it keeps its words longest.
+ */
+@container composer (max-width: 665px) {
+  .thinking-trigger-label {
+    max-width: 0;
+    opacity: 0;
+    margin-left: calc(var(--space-1) * -1);
+  }
+}
+
+/*
+ * The icon is the label's replacement, not its companion.
+ *
+ * Showing both made the mode switch about seventy pixels wider than it was
+ * before it could collapse at all — so the row stopped fitting at full width
+ * and wrapped, which is the second half of what went wrong. Hidden by default,
+ * revealed exactly when the words go.
+ */
+.mode-step svg {
+  display: none;
+}
+
+@container composer (max-width: 640px) {
+  .mode-step-label {
+    max-width: 0;
+    opacity: 0;
+    margin-left: calc(var(--space-1) * -1);
+  }
+
+  .mode-step svg {
+    display: block;
+  }
+
+  .mode-step {
+    padding: 4px 8px;
+  }
+}
+
+@container composer (max-width: 400px) {
+  .composer-toggle-label {
+    max-width: 0;
+    opacity: 0;
+  }
+
+  .composer-toggle {
+    padding: 0 8px;
+  }
+
+  .model-trigger {
+    max-width: 140px;
+  }
+}
+
+/* A label that collapses instantly is a label that vanished. */
+@media (prefers-reduced-motion: reduce) {
+  .mode-step-label,
+  .thinking-trigger-label,
+  .composer-toggle-label {
+    transition: none;
+  }
 }
 
 .composer-left,
@@ -898,32 +1044,65 @@
 
 /* Effort */
 
-.effort {
+/* One word and a chevron, rather than four words permanently on screen. The
+   four-across control asked for a decision on every turn that most people do
+   not have an opinion about; this asks only when somebody wants to answer. */
+
+.thinking-trigger {
+  gap: 5px;
+}
+
+.thinking-menu {
+  min-width: 300px;
+}
+
+.thinking-option {
   display: flex;
-  gap: 1px;
-  padding: 2px;
-  border-radius: var(--radius-full);
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
 }
 
-.effort-step {
-  height: 22px;
-  padding: 0 9px;
-  border-radius: var(--radius-full);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  color: var(--text-faint);
-  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
-}
-
-.effort-step:hover {
-  color: var(--text-muted);
-}
-
-.effort-step.is-on {
+.thinking-option:hover {
   background: var(--bg-active);
+}
+
+.thinking-option-check {
+  flex: none;
+  width: 14px;
+  padding-top: 2px;
   color: var(--text);
+}
+
+.thinking-option-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.thinking-option-label {
+  font-size: var(--text-sm);
+}
+
+.thinking-option.is-on .thinking-option-label {
+  color: var(--text);
+}
+
+.thinking-option-detail {
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.thinking-note {
+  padding: var(--space-2);
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  line-height: 1.45;
 }
 
 /* Menu */
@@ -1381,7 +1560,10 @@
   align-items: center;
   gap: 6px;
   height: 30px;
-  max-width: 260px;
+  /* Capped tighter than the 260 it used to be. The name ellipsizes; the
+     alternative was a long model id pushing the send button onto a second
+     line. */
+  max-width: 200px;
   padding: 0 8px 0 10px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
@@ -1412,10 +1594,12 @@
 
 /* The listbox is wider than the trigger and right-aligned to it, because model
    names are long and the composer's right edge is the stable one. */
+/* Placement is decided in JS, because it depends on where the trigger happens
+   to be on screen: the composer sits at the bottom of the window and wants an
+   upward menu, the Code page header sits at the top and wants a downward one.
+   The class only says which of the four resulting positions to use. */
 .model-menu {
   position: absolute;
-  bottom: calc(100% + 8px);
-  right: 0;
   z-index: 30;
   width: 340px;
   max-width: calc(100vw - var(--space-6));
@@ -1425,6 +1609,22 @@
   background: var(--bg-hover);
   box-shadow: var(--shadow-pop);
   overflow: hidden;
+}
+
+.model-menu.is-above {
+  bottom: calc(100% + 8px);
+}
+
+.model-menu.is-below {
+  top: calc(100% + 8px);
+}
+
+.model-menu.is-right {
+  right: 0;
+}
+
+.model-menu.is-left {
+  left: 0;
 }
 
 .model-menu-search {
@@ -1446,8 +1646,12 @@
   pointer-events: none;
 }
 
+/* No fixed height: the menu's own `max-height` is set from the space actually
+   available, and the list takes whatever is left after the search box and the
+   footer. A fixed 340px here would overflow the menu on a short window. */
 .model-menu-list {
-  max-height: 340px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: var(--space-1);
 }
@@ -2769,4 +2973,1113 @@
 .chat-project-badge:hover {
   color: var(--text);
   border-color: var(--border-strong);
+}
+
+/* ---------- Bypass mode ---------- */
+
+/* Louder than Agent, because it is the one mode that turns a protection off
+   rather than on. The colour is the same danger red used for destructive
+   buttons, so it reads the same way everywhere. */
+.mode-step.is-bypass.is-on {
+  background: var(--danger);
+  color: #fff;
+}
+
+.mode-chip.is-bypass {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+/* ---------- Folder picker ---------- */
+
+.folder-field .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-picker {
+  width: min(720px, calc(100vw - var(--space-6)));
+  max-height: min(640px, calc(100vh - var(--space-6)));
+  display: flex;
+  flex-direction: column;
+}
+
+.folder-picker-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.folder-shortcuts {
+  flex: none;
+  width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-2);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.folder-shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.folder-shortcut:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.folder-shortcut.is-on {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.folder-list-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+  overflow-y: auto;
+}
+
+.folder-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.folder-crumb-path {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  /* The end of a path is the part that identifies it, so it scrolls from the
+     right rather than truncating the folder name. */
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rotate-up {
+  transform: rotate(180deg);
+}
+
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: var(--space-2);
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.folder-row:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* An empty folder is still choosable — it just cannot be navigated into, and
+   dimming it says which of the two it is. */
+.folder-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.folder-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-picker-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.folder-hidden-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.folder-picker-choose .input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+}
+
+/* ---------- Running processes and preview ---------- */
+
+.preview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.preview-start .input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+}
+
+.process-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.process-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.process-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.process-row:hover {
+  background: var(--bg-hover);
+}
+
+.process-row.is-on {
+  background: var(--bg-active);
+}
+
+.process-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.process-row-command,
+.process-row-note {
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-frame-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.preview-frame-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+}
+
+.preview-frame-url {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tall rather than square: the side panel is narrow, and a page rendered in it
+   is mostly useful for checking vertical rhythm and whether anything is
+   obviously broken. */
+.preview-frame {
+  width: 100%;
+  height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.preview-frame-note {
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.process-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.process-log-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.process-log-body {
+  max-height: 320px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+  overflow: auto;
+  /* Build output is column-aligned, so it must not be re-wrapped — but it
+     also must not stretch the panel, hence the scroll. */
+  white-space: pre;
+}
+
+/* ---------- Settings tabs ---------- */
+
+.settings-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-tab {
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  transition: color var(--duration) var(--ease), border-color var(--duration) var(--ease);
+}
+
+.settings-tab:hover {
+  color: var(--text-muted);
+}
+
+.settings-tab.is-on {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+
+/* ---------- Choosing a default permission ---------- */
+
+.mode-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.mode-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: left;
+  transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease);
+}
+
+.mode-choice:hover {
+  background: var(--bg-hover);
+}
+
+.mode-choice.is-on {
+  border-color: var(--text);
+  background: var(--bg-active);
+}
+
+.mode-choice-label {
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+/* Bypass is the only choice that removes a protection, so it is the only one
+   that gets a colour when selected. */
+.mode-choice.is-bypass.is-on {
+  border-color: var(--danger);
+}
+
+.mode-choice.is-bypass.is-on .mode-choice-label {
+  color: var(--danger);
+}
+
+/* ---------- Skills that are always on ---------- */
+
+.skill-essentials {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.skill-essential-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.skill-essential-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  font-size: var(--text-sm);
+}
+
+/* ---------- Marketplace search ---------- */
+
+.store-search {
+  position: relative;
+  width: min(260px, 45vw);
+}
+
+.store-search .input {
+  height: 30px;
+  padding-left: 29px;
+  font-size: var(--text-sm);
+}
+
+/* ---------- Models by purpose ---------- */
+
+.purpose-group + .purpose-group {
+  margin-top: var(--space-6);
+}
+
+.purpose-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-3);
+}
+
+.purpose-title {
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+
+.purpose-blurb {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  max-width: 62ch;
+}
+
+/* ---------- Free-tier pool ---------- */
+
+.free-flavours {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.free-flavour {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+}
+
+/* Dimmed rather than hidden: a flavour with no provider behind it is a fact
+   about which keys have been added, and hiding it would make the set of models
+   appear to change shape for no visible reason. */
+.free-flavour.is-off {
+  opacity: 0.5;
+}
+
+.free-flavour-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* ---------- Collapsing the sidebar ---------- */
+
+/*
+ * Collapsed is collapsed.
+ *
+ * The old version kept a 52px icon rail, on the reasoning that a fully hidden
+ * sidebar has nowhere to put the button that brings it back. That reasoning was
+ * sound and the conclusion was wrong: the button does not have to live in the
+ * sidebar. It lives here — a fixed corner control that is present in both
+ * states, so the page gets the whole width and the way back is never more than
+ * one click and always in the same place.
+ */
+.sidebar-rail {
+  position: fixed;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 40;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sidebar-toggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+}
+
+.sidebar-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* Floating over the page, it needs its own ground to sit on — inside the
+   sidebar it has the sidebar's. */
+.sidebar-rail .sidebar-toggle {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
+}
+
+.sidebar-rail .sidebar-toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+/*
+ * The reopen button sits over the top-left of whatever is showing, so pages
+ * whose own content starts up there get out of its way. Applied to the shell
+ * rather than to each page, so a page added later inherits it.
+ */
+.app:has(.sidebar-rail) .page,
+.app:has(.sidebar-rail) .chat-scroll,
+.app:has(.sidebar-rail) .code-bar,
+.app:has(.sidebar-rail) .code-side {
+  padding-left: calc(var(--space-4) + 34px);
+}
+
+/* ---------- Panel dividers ---------- */
+
+/*
+ * A one-pixel seam with a nine-pixel grab area.
+ *
+ * Both numbers matter and they cannot be the same number: a divider you can see
+ * is too thin to hit, and one you can hit is too thick to look like a seam. So
+ * the element is wide, transparent, and negatively margined so it takes no space
+ * in the layout, and the line inside it is what you actually see.
+ */
+.panel-divider {
+  position: relative;
+  flex: none;
+  width: 9px;
+  margin: 0 -4px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.panel-divider-grip {
+  position: absolute;
+  inset: 0 4px;
+  background: var(--border);
+  transition: background var(--duration) var(--ease);
+}
+
+.panel-divider:hover .panel-divider-grip,
+.panel-divider:focus-visible .panel-divider-grip,
+.panel-divider.is-dragging .panel-divider-grip {
+  background: var(--accent, var(--border-strong));
+  inset: 0 3px;
+}
+
+.panel-divider:focus-visible {
+  outline: none;
+}
+
+/* A drag that crosses the conversation must not select it on the way past. */
+body.is-resizing {
+  user-select: none;
+}
+
+body.is-resizing iframe {
+  /* An iframe swallows pointer events, which ends the drag the moment the
+     cursor crosses the preview. */
+  pointer-events: none;
+}
+
+/* ---------- The Code page's bar and running panel ---------- */
+
+.code-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.code-bar-spacer {
+  flex: 1;
+}
+
+.code-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+}
+
+.code-bar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.code-bar-btn.is-on {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+/* Something is running. The dot is the whole point of the button being visible
+   while the panel is shut. */
+.code-bar-btn.is-live {
+  color: var(--text);
+}
+
+.code-bar-count {
+  display: grid;
+  place-items: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--ok, #3fb950);
+  color: #06130a;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.code-running {
+  flex: 0 1 auto;
+  min-width: 240px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.code-running-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+
+.code-running-head strong {
+  flex: 1;
+}
+
+/*
+ * On a narrow window the running panel stops taking layout space and slides
+ * over the conversation instead.
+ *
+ * Three resizable columns need about 1200px before the middle one stops being
+ * the loser. Below that the choice is between a crushed conversation and a
+ * panel that overlaps it, and overlapping is the honest one: the panel is
+ * something you open, look at, and close, not somewhere you type.
+ */
+@media (max-width: 1200px) {
+  .code-running {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    max-width: min(460px, 85vw);
+    background: var(--bg);
+    box-shadow: -8px 0 24px rgb(0 0 0 / 0.3);
+  }
+
+  /* Nothing to drag against once it floats. */
+  .code-running + .panel-divider,
+  .panel-divider:has(+ .code-running) {
+    display: none;
+  }
+}
+
+/*
+ * Narrower still and the file panel is the one in the way, so it collapses to
+ * nothing rather than competing with the conversation. The stored width is
+ * untouched — the panel comes back exactly as wide as it was dragged.
+ */
+@media (max-width: 900px) {
+  .code-side {
+    max-width: 40vw;
+  }
+}
+
+@media (max-width: 700px) {
+  .code-side,
+  .code-side + .panel-divider {
+    display: none;
+  }
+}
+
+/* ---------- Copy buttons ---------- */
+
+/*
+ * The button floats over the block's top-right corner rather than sitting in a
+ * header, so a block gains no height for having one. It fades in on hover —
+ * a page of code should not also be a page of buttons — but focus brings it
+ * back regardless, because fading a control out is a visual convenience and
+ * must never be an access rule.
+ */
+.code-surface {
+  position: relative;
+  min-width: 0;
+}
+
+.code-surface.is-filled {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.copy-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease), color var(--duration) var(--ease),
+    border-color var(--duration) var(--ease);
+}
+
+.code-surface:hover .copy-button,
+.copy-button:focus-visible {
+  opacity: 1;
+}
+
+.copy-button:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.copy-button.is-done {
+  opacity: 1;
+  color: var(--ok, #3fb950);
+  border-color: currentColor;
+}
+
+/* A fenced block in a reply keeps its language label, so the bar is real
+   layout rather than an overlay. */
+.code-surface.is-markdown {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.code-surface-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 6px 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.code-surface-lang {
+  margin-right: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.code-surface.is-markdown .copy-button {
+  position: static;
+  opacity: 0;
+  border: none;
+  background: transparent;
+  height: 20px;
+}
+
+.code-surface.is-markdown:hover .copy-button,
+.code-surface.is-markdown .copy-button:focus-visible,
+.code-surface.is-markdown .copy-button.is-done {
+  opacity: 1;
+}
+
+/* The block already has the surface's border and background. */
+.code-surface.is-markdown > pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+/* Inside a tool result, where space is tight, the label is dropped. */
+.code-surface.is-inline .copy-button-label {
+  display: none;
+}
+
+.code-surface.is-inline .copy-button {
+  top: 3px;
+  right: 3px;
+  height: 19px;
+  padding: 0 5px;
+}
+
+/* A pooled model reads as a category rather than a name. */
+.model-option.is-pooled .model-option-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+/* ---------- What the free keys have been spent on ---------- */
+
+.usage-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.usage-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+
+.usage-figure-label {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.usage-figure-value {
+  font-size: var(--text-lg, 1.25rem);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-figure-unit {
+  font-size: var(--text-xs);
+}
+
+.usage-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.usage-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usage-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.usage-row-name {
+  font-size: var(--text-sm);
+}
+
+.usage-row-note {
+  font-size: var(--text-xs);
+}
+
+/* Only drawn where a limit was entered — never an empty bar, which would imply
+   Kuro knew the allowance and measured nothing against it. */
+.usage-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ok, #3fb950);
+  transition: width var(--duration) var(--ease);
+}
+
+.limit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.limit-input {
+  max-width: 240px;
+  height: 28px;
+  font-size: var(--text-sm);
+}
+
+.toggle-row {
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+/* ---------- Confirming something irreversible ---------- */
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgb(0 0 0 / 0.55);
+}
+
+.confirm {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-raised);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.4);
+}
+
+.confirm-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.confirm-body p {
+  margin: 0;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* The colour is the warning. Reserved for actions with nothing behind them. */
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: transparent;
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+/* Room for a count and a bulk switch beside a panel heading. */
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The per-category all/none control sits at the end of its heading. */
+.skill-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* The way back to wherever you came from. Sits above the page title, so it
+   reads as leaving rather than as part of the page. */
+.back-link {
+  align-self: flex-start;
+  margin-bottom: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  transition: color var(--duration) var(--ease);
+}
+
+.back-link:hover {
+  color: var(--text);
+}
+
+/* ---------- File tree and viewer ---------- */
+
+.code-tree-filter {
+  position: relative;
+  margin-bottom: var(--space-2);
+}
+
+.code-tree-filter .input {
+  height: 28px;
+  padding-left: 26px;
+  font-size: var(--text-xs);
+}
+
+.code-tree-filter .search-icon {
+  left: 8px;
+}
+
+.code-tree-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.code-tree-file:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.code-tree-file .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A third column between the project pane and the conversation. Wider than the
+   file list because it holds code, narrower than the conversation because the
+   conversation is what grows. */
+.file-viewer {
+  flex: none;
+  width: min(520px, 38vw);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.file-viewer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.file-viewer-path {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-viewer-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-4);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--text-muted);
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* ---------- About you ---------- */
+
+.about-you {
+  height: auto;
+  min-height: 96px;
+  padding: var(--space-3);
+  line-height: 1.55;
+  resize: vertical;
 }
