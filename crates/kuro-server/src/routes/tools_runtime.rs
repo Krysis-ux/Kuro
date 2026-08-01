@@ -12,14 +12,6 @@ use serde_json::Value;
 
 use crate::state::SharedState;
 
-/// Ceiling on tool rounds in one turn.
-///
-/// A model that has not finished after this many rounds is usually looping — the
-/// classic case being a search that returns nothing and gets retried verbatim.
-/// Stopping and answering with what it has is better than spending the user's
-/// afternoon on it.
-pub const MAX_TOOL_ROUNDS: usize = 6;
-
 /// The tools offered for one turn, and where each came from.
 pub struct ToolSet {
     specs: Vec<ToolSpec>,
@@ -51,6 +43,13 @@ impl ToolSet {
                     .into_iter()
                     .map(CodingTool::spec),
             );
+
+            // Delegation needs something to delegate *about*, so it exists only
+            // alongside a workspace — and only in a mode that can read one,
+            // since a specialist with no tools has nothing to report.
+            if workspace.mode.allows(kuro_core::workspace::ToolRisk::Read) {
+                specs.push(crate::routes::subagent::spec());
+            }
         }
 
         let mut taken: Vec<String> = specs.iter().map(|spec| spec.name.clone()).collect();
@@ -129,6 +128,9 @@ pub async fn dispatch(
     set: &ToolSet,
     conversation_id: &str,
     workspace: Option<&Workspace>,
+    // Where this turn's model lives, so a delegated task reaches the same one.
+    target: &kuro_core::cloud::ChatTarget,
+    base_url: &str,
     call: &RequestedCall,
 ) -> ToolOutcome {
     let Some(spec) = set.find(&call.name) else {
@@ -143,6 +145,23 @@ pub async fn dispatch(
 
     match &spec.origin {
         ToolOrigin::Builtin => {
+            // Delegation goes first because it is the one built-in that has to
+            // reach back out to the engine rather than acting on the workspace.
+            if spec.name == "delegate" {
+                let Some(workspace) = workspace else {
+                    return ToolOutcome::failed("`delegate` only works inside a coding workspace");
+                };
+                return crate::routes::subagent::run(
+                    state,
+                    workspace,
+                    conversation_id,
+                    target,
+                    base_url,
+                    &call.arguments,
+                )
+                .await;
+            }
+
             // A workspace tool and a chat built-in are both `Builtin` origin, so
             // the coding set is checked first — and only reachable at all when
             // this turn actually has a workspace.
@@ -157,8 +176,9 @@ pub async fn dispatch(
                     db: &state.db,
                     workspace,
                     conversation_id: Some(conversation_id),
+                    processes: &state.processes,
                 };
-                return workspace::tools::run(tool, &call.arguments, &context);
+                return workspace::tools::run(tool, &call.arguments, &context).await;
             }
 
             let Some(builtin) = Builtin::parse(&spec.name) else {

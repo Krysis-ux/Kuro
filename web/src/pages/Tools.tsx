@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { BackLink } from '../components/BackLink'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   api,
@@ -16,6 +17,7 @@ import {
   PlugIcon,
   PlusIcon,
   RefreshIcon,
+  SearchIcon,
   SparkIcon,
   StoreIcon,
   ToolIcon,
@@ -34,6 +36,7 @@ export function ToolsPage() {
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [prefill, setPrefill] = useState<McpRegistryEntry | null>(null)
+  const [storeQuery, setStoreQuery] = useState('')
 
   const overview = useQuery({ queryKey: ['tools'], queryFn: api.tools.overview })
   const servers = useQuery({
@@ -41,6 +44,8 @@ export function ToolsPage() {
     queryFn: () => api.mcp.servers(true),
   })
   const registry = useQuery({ queryKey: ['mcp', 'registry'], queryFn: api.mcp.registry })
+
+  const matches = filterRegistry(registry.data?.entries ?? [], storeQuery)
 
   const refreshAll = () => {
     void queryClient.invalidateQueries({ queryKey: ['mcp'] })
@@ -55,12 +60,33 @@ export function ToolsPage() {
   return (
     <div className="page">
       <header className="page-head">
+        <BackLink />
         <h1>Tools</h1>
         <p className="muted">
           What a model can do besides produce text. Search and memory are built in; anything else
           comes from a Model Context Protocol server.
         </p>
       </header>
+
+      {overview.isError && (
+        <section className="panel">
+          <h2 className="panel-title">Built in</h2>
+          <p className="form-error">
+            {overview.error instanceof Error
+              ? overview.error.message
+              : 'The built-in tools could not be read.'}
+          </p>
+          <div className="panel-foot">
+            <button className="btn btn-ghost btn-sm" onClick={() => void overview.refetch()}>
+              <RefreshIcon size={14} />
+              Try again
+            </button>
+            <span className="faint">
+              Kuro may have stopped. Everything on this page comes from the local daemon.
+            </span>
+          </div>
+        </section>
+      )}
 
       <BuiltinSection overview={overview.data} onChanged={refreshAll} />
 
@@ -100,17 +126,40 @@ export function ToolsPage() {
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">
-          <StoreIcon size={15} />
-          Recommended
-        </h2>
+        <div className="panel-head">
+          <h2 className="panel-title">
+            <StoreIcon size={15} />
+            Marketplace
+          </h2>
+          <div className="store-search">
+            <SearchIcon size={13} className="search-icon" />
+            <input
+              className="input"
+              placeholder="Search servers…"
+              value={storeQuery}
+              onChange={(event) => setStoreQuery(event.target.value)}
+            />
+          </div>
+        </div>
         <p className="faint panel-note">
-          A short list rather than a directory. Everything here is either keyless or run by the
-          people who own the thing it connects to.
+          A curated list rather than a directory. Everything here is either keyless or run by
+          the people who own the thing it connects to.
         </p>
 
+        {registry.isError && (
+          <p className="form-error">The recommended list could not be read.</p>
+        )}
+
+        {matches.length === 0 && !registry.isLoading && (
+          <p className="faint panel-note">
+            {storeQuery.trim()
+              ? `Nothing matched "${storeQuery.trim()}". Any MCP server works — use Add server above.`
+              : 'Nothing to show.'}
+          </p>
+        )}
+
         <div className="store-grid">
-          {registry.data?.entries.map((entry) => (
+          {matches.map((entry) => (
             <StoreCard key={entry.slug} entry={entry} onInstall={() => openDialog(entry)} />
           ))}
         </div>
@@ -128,6 +177,24 @@ export function ToolsPage() {
         />
       )}
     </div>
+  )
+}
+
+/**
+ * Match a search across everything a person might type.
+ *
+ * Name, blurb and detail all count, because somebody looking for a browser will
+ * type "browser" and the entry is called Playwright. Matching only the name is
+ * the difference between a search bar and a filter nobody can use.
+ */
+function filterRegistry(entries: McpRegistryEntry[], query: string): McpRegistryEntry[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return entries
+
+  return entries.filter((entry) =>
+    [entry.name, entry.blurb, entry.detail, entry.slug].some((field) =>
+      field.toLowerCase().includes(needle),
+    ),
   )
 }
 
@@ -409,6 +476,21 @@ function SkillsSection({
     save.mutate(next)
   }
 
+  /**
+   * Turn a whole group on or off at once.
+   *
+   * Forty-four switches is a lot of clicking to answer "give me everything for
+   * writing code". The token count beside the heading stays the honest check on
+   * doing that — turning everything on is allowed, and the cost of it is
+   * visible in the same glance.
+   */
+  const setMany = (slugs: string[], on: boolean) => {
+    const next = on
+      ? [...new Set([...enabled, ...slugs])]
+      : enabled.filter((held) => !slugs.includes(held))
+    save.mutate(next)
+  }
+
   const byCategory = new Map<string, typeof catalogue>()
   for (const skill of catalogue) {
     byCategory.set(skill.category, [...(byCategory.get(skill.category) ?? []), skill])
@@ -430,11 +512,24 @@ function SkillsSection({
           <SparkIcon size={15} />
           Skills
         </h2>
-        {enabled.length > 0 && (
-          <span className="faint">
-            {enabled.length} on · about {approxTokens} tokens of context
-          </span>
-        )}
+        <div className="panel-head-actions">
+          {enabled.length > 0 && (
+            <span className="faint">
+              {enabled.length} on · about {approxTokens} tokens of context
+            </span>
+          )}
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() =>
+              setMany(
+                catalogue.map((skill) => skill.slug),
+                enabled.length < catalogue.length,
+              )
+            }
+          >
+            {enabled.length < catalogue.length ? 'Enable all' : 'Turn all off'}
+          </button>
+        </div>
       </div>
 
       <p className="faint panel-note">
@@ -442,9 +537,39 @@ function SkillsSection({
         same lever a hosted assistant uses, and the one that helps a small local model most.
       </p>
 
+      {overview.skills.essentials.length > 0 && (
+        <div className="skill-essentials">
+          <div className="skill-group-head">Always on in a coding workspace</div>
+          <p className="faint panel-note">
+            These have no switch. Reading a file before editing it, and running the tests
+            rather than describing them, are not preferences — an assistant with them turned
+            off is one that destroys work, so there is nothing here to turn off.
+          </p>
+          <ul className="skill-essential-list">
+            {overview.skills.essentials.map((skill) => (
+              <li key={skill.slug}>
+                <span className="skill-card-name">{skill.name}</span>
+                <span className="muted">{skill.blurb}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {[...byCategory].map(([category, skills]) => (
         <div key={category} className="skill-group">
-          <div className="skill-group-head">{CATEGORY_LABEL[category] ?? category}</div>
+          <div className="skill-group-head">
+            <span>{CATEGORY_LABEL[category] ?? category}</span>
+            <button
+              className="link-button faint"
+              onClick={() => {
+                const slugs = skills.map((skill) => skill.slug)
+                setMany(slugs, !slugs.every((slug) => enabled.includes(slug)))
+              }}
+            >
+              {skills.every((skill) => enabled.includes(skill.slug)) ? 'none' : 'all'}
+            </button>
+          </div>
           <div className="skill-grid">
             {skills.map((skill) => (
               <div

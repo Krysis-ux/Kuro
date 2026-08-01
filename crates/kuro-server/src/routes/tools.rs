@@ -7,8 +7,9 @@
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
+use kuro_core::orchestrate::Surface;
 use kuro_core::settings::{
-    default_tool_groups, memory_preload_enabled, SearchSettings, KEY_SEARCH_BASE_URL,
+    self, default_tool_groups, memory_preload_enabled, SearchSettings, KEY_SEARCH_BASE_URL,
     KEY_SEARCH_PROVIDER,
 };
 use kuro_core::tools::web_search::{self, SearchProvider};
@@ -35,11 +36,41 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
     Ok(Json(json!({
         "builtins": describe_builtins(),
         "defaultGroups": groups,
+        "groups": ToolGroup::ALL
+            .iter()
+            .map(|group| json!({
+                "id": group.as_str(),
+                "label": group.label(),
+                "blurb": group.blurb(),
+            }))
+            .collect::<Vec<_>>(),
         "skills": {
-            "catalogue": skills::SKILLS,
+            // Only what is a real choice. The essentials are in every coding
+            // brief already, and rendering them with a switch would say they
+            // were optional.
+            "catalogue": skills::selectable(),
             "enabled": enabled_skills,
             // Shown so a user turning on six skills at once understands the cost.
             "approxTokens": skills::approx_tokens(&active),
+            "essentials": skills::essentials()
+                .iter()
+                .map(|skill| json!({
+                    "slug": skill.slug,
+                    "name": skill.name,
+                    "blurb": skill.blurb,
+                }))
+                .collect::<Vec<_>>(),
+        },
+        "surfaces": {
+            "chat": {
+                "autoOrchestrate": settings::auto_orchestrate(&state.db, Surface::Chat)?,
+                "defaultEffort": settings::default_effort(&state.db, Surface::Chat)?.as_str(),
+            },
+            "code": {
+                "autoOrchestrate": settings::auto_orchestrate(&state.db, Surface::Code)?,
+                "defaultEffort": settings::default_effort(&state.db, Surface::Code)?.as_str(),
+                "defaultMode": settings::default_workspace_mode(&state.db)?.as_str(),
+            },
         },
         "memory": {
             "preload": memory_preload_enabled(&state.db)?,

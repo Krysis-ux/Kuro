@@ -1,3 +1,4 @@
+pub mod free;
 pub mod models;
 pub mod pull;
 pub mod run;

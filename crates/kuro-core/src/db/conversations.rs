@@ -58,6 +58,14 @@ pub struct NewMessage {
     pub used_web_search: bool,
     pub web_sources: Option<Value>,
     pub model_id: Option<String>,
+    /// Which provider's allowance this turn spends.
+    ///
+    /// Set at insert time, because the provider is chosen before the row is
+    /// created and a turn cannot change provider once it has started — a
+    /// provider that refuses is set aside for the *next* message rather than
+    /// swapped mid-reply. One row is therefore always exactly one provider,
+    /// which is the invariant the usage totals rest on.
+    pub provider_slug: Option<String>,
 }
 
 impl NewMessage {
@@ -84,6 +92,15 @@ pub struct MessageCompletion {
     pub content: String,
     pub reasoning_content: Option<String>,
     pub usage_prompt_tokens: Option<i64>,
+    /// Prompt tokens across every round, where the field above holds the last
+    /// round's only.
+    ///
+    /// Both are wanted, by different readers. The inspector shows what was
+    /// processed to produce the answer, which is the last round. An allowance
+    /// paid for all of them: a five-round agentic turn sent five prompts and
+    /// was charged for five, and recording one understated the spend by most of
+    /// it.
+    pub usage_prompt_tokens_total: Option<i64>,
     pub usage_completion_tokens: Option<i64>,
     pub timing_ttft_ms: Option<i64>,
     pub timing_total_ms: Option<i64>,
@@ -278,8 +295,9 @@ impl Db {
             conn.execute(
                 "INSERT INTO messages (
                      id, conversation_id, role, content, reasoning_content, tool_calls,
-                     tool_call_id, attachments, used_web_search, web_sources, model_id, created_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                     tool_call_id, attachments, used_web_search, web_sources, model_id,
+                     provider_slug, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     id,
                     conversation_id,
@@ -292,6 +310,7 @@ impl Db {
                     message.used_web_search as i64,
                     web_sources,
                     message.model_id,
+                    message.provider_slug,
                     timestamp,
                 ],
             )?;
@@ -345,7 +364,8 @@ impl Db {
                      usage_prompt_tokens = ?4, usage_completion_tokens = ?5,
                      timing_ttft_ms = ?6, timing_total_ms = ?7, timing_tokens_per_sec = ?8,
                      finish_reason = ?9, tool_calls = ?10,
-                     used_web_search = ?11, web_sources = ?12
+                     used_web_search = ?11, web_sources = ?12,
+                     usage_prompt_tokens_total = ?13
                  WHERE id = ?1",
                 params![
                     id,
@@ -360,6 +380,7 @@ impl Db {
                     tool_calls,
                     completion.used_web_search as i64,
                     web_sources,
+                    completion.usage_prompt_tokens_total,
                 ],
             )?;
             Ok(())
@@ -488,6 +509,13 @@ impl Db {
                 // Original timestamps are kept so the copy reads back in exactly
                 // the order it was said in, independent of how fast the rows are
                 // written here.
+                // `provider_slug` is deliberately not copied, which leaves it
+                // NULL on every forked row. The usage totals sum over rows that
+                // carry a slug, and a fork spent no allowance — copying it
+                // would bill the user twice for one answer, and again for every
+                // fork of the fork. The usage numbers below *are* copied,
+                // because the request inspector shows them per message and a
+                // fork should not look emptier than what it came from.
                 conn.execute(
                     "INSERT INTO messages (
                          id, conversation_id, role, content, reasoning_content, tool_calls,
