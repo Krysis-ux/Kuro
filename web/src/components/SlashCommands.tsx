@@ -97,6 +97,30 @@ export function matchCommands(commands: SlashCommand[], query: string): SlashCom
   return scored.map((entry) => entry.command)
 }
 
+/**
+ * Skill slugs written into a message as `/name`.
+ *
+ * The palette is one way to attach a skill and typing is the other, and until
+ * now only the first worked: writing "use /brainstorming on this" attached
+ * nothing, because attaching happened when a menu row was clicked rather than
+ * when the name appeared in the text. So the message said one thing and the
+ * request carried another.
+ *
+ * Matched against the catalogue rather than accepting any slash-word, so a path
+ * or a date cannot silently turn into a skill.
+ */
+export function skillsNamedIn(text: string, known: PaletteSkill[]): string[] {
+  const found: string[] = []
+
+  for (const match of text.matchAll(/(^|[\s([{])\/([A-Za-z][\w-]*)/g)) {
+    const slug = (match[2] ?? '').toLowerCase()
+    if (!known.some((skill) => skill.slug === slug)) continue
+    if (!found.includes(slug)) found.push(slug)
+  }
+
+  return found
+}
+
 interface SlashMenuProps {
   commands: SlashCommand[]
   query: string
@@ -192,9 +216,8 @@ export function buildCommands(parts: {
     command?: string
   }[]
   skills: PaletteSkill[]
-  /** Slugs already attached to this message, so the row can say so. */
+  /** Slugs already written into this message, so the row can say so. */
   attached: string[]
-  onAttach: (slug: string) => void
 }): SlashCommand[] {
   const fromToggles: SlashCommand[] = parts.toggles.map((toggle) => ({
     name: toggle.command ?? toggle.id,
@@ -204,14 +227,17 @@ export function buildCommands(parts: {
     run: () => toggle.onChange(!toggle.on),
   }))
 
+  // A skill has no `run`. Choosing one writes its name into the message, which
+  // the composer does by completing the word the caret is in — there is nothing
+  // left for a callback to do, and a second path to the same effect is a second
+  // path to get out of step with the first.
   const fromSkills: SlashCommand[] = parts.skills.map((skill) => ({
     name: skill.slug,
     hint: skill.blurb,
     aliases: [skill.name.toLowerCase()],
-    state: parts.attached.includes(skill.slug) ? 'added' : undefined,
+    state: parts.attached.includes(skill.slug) ? 'in message' : undefined,
     kind: 'skill',
     slug: skill.slug,
-    run: () => parts.onAttach(skill.slug),
   }))
 
   // Switches first: there are two or three of them, they change what this
