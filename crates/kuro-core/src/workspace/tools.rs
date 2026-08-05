@@ -35,6 +35,7 @@ pub enum CodingTool {
     ProjectTree,
     ReadFile,
     SearchFiles,
+    FindFiles,
     EditFile,
     WriteFile,
     RunCommand,
@@ -48,6 +49,7 @@ impl CodingTool {
         Self::ProjectTree,
         Self::ReadFile,
         Self::SearchFiles,
+        Self::FindFiles,
         Self::EditFile,
         Self::WriteFile,
         Self::RunCommand,
@@ -61,6 +63,7 @@ impl CodingTool {
             Self::ProjectTree => "project_tree",
             Self::ReadFile => "read_file",
             Self::SearchFiles => "search_files",
+            Self::FindFiles => "find_files",
             Self::EditFile => "edit_file",
             Self::WriteFile => "write_file",
             Self::RunCommand => "run_command",
@@ -76,7 +79,9 @@ impl CodingTool {
 
     pub fn risk(self) -> ToolRisk {
         match self {
-            Self::ProjectTree | Self::ReadFile | Self::SearchFiles => ToolRisk::Read,
+            Self::ProjectTree | Self::ReadFile | Self::SearchFiles | Self::FindFiles => {
+                ToolRisk::Read
+            }
             Self::EditFile | Self::WriteFile => ToolRisk::Write,
             Self::RunCommand | Self::StartServer | Self::CheckServer | Self::StopServer => {
                 ToolRisk::Execute
@@ -91,8 +96,17 @@ impl CodingTool {
                  the layout. Dependency and build directories are left out."
             }
             Self::ReadFile => {
-                "Read a file from this project. Always read a file before changing it — never \
-                 edit from memory of what it probably contains."
+                "Read a file from this project, with line numbers. Always read a file before \
+                 changing it — never edit from memory of what it probably contains. Pass \
+                 `start_line` and `end_line` to read part of a large file: a search result or \
+                 a compiler error already tells you where to look, and reading the whole file \
+                 to find twenty relevant lines spends context you will want later."
+            }
+            Self::FindFiles => {
+                "Find files by name, using a pattern like `*.rs`, `src/**/*.ts` or `*test*`. \
+                 Use this to locate files when you know roughly what they are called — it is \
+                 the fast way into an unfamiliar project. search_files looks *inside* files \
+                 for text; this looks at their names."
             }
             Self::SearchFiles => {
                 "Find a literal string across the project. Use this to locate a function, an \
@@ -146,8 +160,32 @@ impl CodingTool {
                         "type": "string",
                         "description": "Path relative to the project root, such as src/main.rs.",
                     },
+                    "start_line": {
+                        "type": "integer",
+                        "description":
+                            "First line to read, counting from 1. Omit to start at the top.",
+                        "minimum": 1,
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description":
+                            "Last line to read, inclusive. Defaults to 200 lines from the start.",
+                        "minimum": 1,
+                    },
                 },
                 "required": ["path"],
+            }),
+            Self::FindFiles => json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description":
+                            "A glob such as `*.rs`, `src/**/*.ts` or `*test*`. A pattern with \
+                             no slash matches the file name anywhere in the project.",
+                    },
+                },
+                "required": ["pattern"],
             }),
             Self::SearchFiles => json!({
                 "type": "object",
@@ -334,6 +372,7 @@ pub async fn run(
         CodingTool::ProjectTree => run_tree(context),
         CodingTool::ReadFile => run_read(arguments, context),
         CodingTool::SearchFiles => run_search(arguments, context),
+        CodingTool::FindFiles => run_find(arguments, context),
         CodingTool::EditFile => run_edit(arguments, context),
         CodingTool::WriteFile => run_write(arguments, context),
         CodingTool::RunCommand => run_command(arguments, context).await,
@@ -511,16 +550,104 @@ fn run_tree(context: &WorkspaceContext<'_>) -> ToolOutcome {
     }
 }
 
+/// Lines returned when the model asks for a range but not a size.
+const DEFAULT_RANGE_LINES: usize = 200;
+
+/// Lines above which a whole-file read is cut short and says so.
+///
+/// Not a safety limit — [`files::MAX_READ_BYTES`] is that. This is a context
+/// limit, and on the models Kuro is built for it is the one that bites first:
+/// a 2,000-line file is most of a small model's window spent before it has
+/// read the question, and the answer is usually in twenty of those lines.
+const WHOLE_FILE_LINE_LIMIT: usize = 400;
+
 fn run_read(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     let Some(path) = string_argument(arguments, "path") else {
         return ToolOutcome::failed("`path` is required and must be a string");
     };
 
-    match context.workspace.permissions().resolve_path(&path, false) {
-        Ok(resolved) => match files::read_file(&resolved) {
-            Ok(text) => ToolOutcome::ok(format!("`{path}`:\n\n{text}")),
-            Err(error) => ToolOutcome::failed(error),
-        },
+    let start = arguments.get("start_line").and_then(Value::as_u64);
+    let end = arguments.get("end_line").and_then(Value::as_u64);
+
+    let resolved = match context.workspace.permissions().resolve_path(&path, false) {
+        Ok(resolved) => resolved,
+        Err(error) => return ToolOutcome::failed(error),
+    };
+
+    let text = match files::read_file(&resolved) {
+        Ok(text) => text,
+        Err(error) => return ToolOutcome::failed(error),
+    };
+
+    let lines: Vec<&str> = text.lines().collect();
+    let total = lines.len();
+
+    // Numbered on the way out, because every other tool here speaks in line
+    // numbers — a search result, a compiler error, the range for the next read —
+    // and a model that has to count lines itself gets it wrong.
+    let render = |from: usize, to: usize| -> String {
+        lines[from..to]
+            .iter()
+            .enumerate()
+            .map(|(offset, line)| format!("{:>5}  {line}", from + offset + 1))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    if start.is_none() && end.is_none() {
+        if total <= WHOLE_FILE_LINE_LIMIT {
+            return ToolOutcome::ok(format!("`{path}` ({total} lines):\n\n{}", render(0, total)));
+        }
+        // Truncated rather than refused, and told how to get the rest — a
+        // refusal here would leave the model with no way forward, and a silent
+        // cut would have it reason about a file it has only seen the start of.
+        return ToolOutcome::ok(format!(
+            "`{path}` ({total} lines, showing the first {WHOLE_FILE_LINE_LIMIT}):\n\n{}\n\n\
+             … {} more lines. Call read_file again with `start_line` for the rest, or \
+             search_files to find the part you need.",
+            render(0, WHOLE_FILE_LINE_LIMIT),
+            total - WHOLE_FILE_LINE_LIMIT
+        ));
+    }
+
+    // One-based and inclusive, which is how every editor, compiler error and
+    // search result in this project already counts.
+    let from = start.unwrap_or(1).max(1) as usize - 1;
+    if from >= total {
+        return ToolOutcome::failed(format!(
+            "`{path}` has {total} lines, so line {} does not exist",
+            from + 1
+        ));
+    }
+    let to = end
+        .map(|value| value as usize)
+        .unwrap_or(from + DEFAULT_RANGE_LINES)
+        .min(total);
+    let to = to.max(from + 1);
+
+    ToolOutcome::ok(format!(
+        "`{path}` lines {}–{} of {total}:\n\n{}",
+        from + 1,
+        to,
+        render(from, to)
+    ))
+}
+
+/// Find files by name, rather than by what is inside them.
+///
+/// The gap this fills: `search_files` looks *inside* files for a string, and
+/// `project_tree` lists everything. Neither answers "where are the test files"
+/// or "which components exist", which is how somebody actually starts on an
+/// unfamiliar project — and without it the model's only route to that question
+/// was to list the entire tree and read it, which on a real repository is
+/// hundreds of paths of context spent on a question a pattern answers exactly.
+fn run_find(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
+    let Some(pattern) = string_argument(arguments, "pattern") else {
+        return ToolOutcome::failed("`pattern` is required and must be a string");
+    };
+
+    match search::find_files(&context.workspace.root, &pattern) {
+        Ok(found) => ToolOutcome::ok(search::format_paths(&pattern, &found)),
         Err(error) => ToolOutcome::failed(error),
     }
 }
@@ -808,6 +935,81 @@ mod tests {
         let after = std::fs::read_to_string(fixture.workspace.root.join("src/main.rs")).unwrap();
         assert!(after.contains("hello"));
         assert!(after.starts_with("fn main() {"), "the rest of the file must survive");
+    }
+
+    #[tokio::test]
+    async fn a_read_is_numbered_so_the_next_call_can_name_a_range() {
+        // Every other tool here speaks in line numbers — a search hit, a
+        // compiler error, the range for the next read — and a model asked to
+        // count lines itself gets it wrong.
+        let fixture = Fixture::new(WorkspaceMode::Agent);
+        std::fs::write(fixture.workspace.root.join("src/n.rs"), "one\ntwo\nthree\n")
+            .expect("write");
+
+        let outcome = fixture.run(CodingTool::ReadFile, json!({ "path": "src/n.rs" })).await;
+
+        assert!(!outcome.is_error, "got: {}", outcome.content);
+        assert!(outcome.content.contains("    1  one"), "got: {}", outcome.content);
+        assert!(outcome.content.contains("    3  three"));
+    }
+
+    #[tokio::test]
+    async fn a_range_reads_only_what_was_asked_for() {
+        let fixture = Fixture::new(WorkspaceMode::Agent);
+        let body: String = (1..=50).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(fixture.workspace.root.join("src/long.rs"), body).expect("write");
+
+        let outcome = fixture
+            .run(
+                CodingTool::ReadFile,
+                json!({ "path": "src/long.rs", "start_line": 10, "end_line": 12 }),
+            )
+            .await;
+
+        assert!(!outcome.is_error);
+        assert!(outcome.content.contains("line 10"));
+        assert!(outcome.content.contains("line 12"));
+        assert!(!outcome.content.contains("line 13"), "read past the range");
+        assert!(!outcome.content.contains("line 9"), "read before the range");
+    }
+
+    #[tokio::test]
+    async fn a_long_file_is_cut_short_and_says_how_to_get_the_rest() {
+        // Truncating silently would have the model reason about a file it has
+        // only seen the start of; refusing would leave it with no way forward.
+        let fixture = Fixture::new(WorkspaceMode::Agent);
+        let body: String = (1..=900).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(fixture.workspace.root.join("src/huge.rs"), body).expect("write");
+
+        let outcome = fixture.run(CodingTool::ReadFile, json!({ "path": "src/huge.rs" })).await;
+
+        assert!(!outcome.is_error);
+        assert!(outcome.content.contains("900 lines"));
+        assert!(outcome.content.contains("start_line"), "got: {}", outcome.content);
+        assert!(!outcome.content.contains("line 900"), "the whole file went through");
+    }
+
+    #[tokio::test]
+    async fn a_range_past_the_end_of_the_file_says_so() {
+        let fixture = Fixture::new(WorkspaceMode::Agent);
+        std::fs::write(fixture.workspace.root.join("src/short.rs"), "one\ntwo\n").expect("write");
+
+        let outcome = fixture
+            .run(CodingTool::ReadFile, json!({ "path": "src/short.rs", "start_line": 99 }))
+            .await;
+
+        assert!(outcome.is_error);
+        assert!(outcome.content.contains("2 lines"), "got: {}", outcome.content);
+    }
+
+    #[tokio::test]
+    async fn finding_files_by_name_is_offered_wherever_reading_is() {
+        let fixture = Fixture::new(WorkspaceMode::Plan);
+
+        let outcome = fixture.run(CodingTool::FindFiles, json!({ "pattern": "*.rs" })).await;
+
+        assert!(!outcome.is_error, "got: {}", outcome.content);
+        assert!(outcome.content.contains(".rs"));
     }
 
     #[tokio::test]

@@ -190,6 +190,13 @@ const TRIGGERS: &[(&str, &[&str])] = &[
     ("ui-design", &["ui", "ux", "interface", "spacing", "typography", "colour", "color"]),
     ("data-modelling", &["model", "modelling", "modeling", "entity", "relation", "migration"]),
     ("recursive-learning", &["again", "retry", "still", "keeps", "remember", "learned", "loop"]),
+    ("root-cause", &["why", "cause", "root", "broken", "failing", "regression"]),
+    ("staying-in-scope", &["just", "only", "minimal", "small", "quick", "scope"]),
+    ("matching-the-codebase", &["convention", "style", "consistent", "existing", "idiom"]),
+    ("honest-reporting", &["verify", "verified", "actually", "confirm", "sure", "check"]),
+    ("context-economy", &["large", "huge", "big", "context"]),
+    ("tool-batching", &["parallel", "batch", "faster", "rounds"]),
+    ("asking-well", &["ambiguous", "unclear", "assume", "unsure"]),
 ];
 
 /// Resolve an effort level into a plan.
@@ -255,15 +262,29 @@ pub fn plan(request: &Request<'_>, already_enabled: &[&'static Skill]) -> Plan {
         }
 
         // Craft skills, as the budget allows.
+        if request.effort >= Effort::Balanced {
+            for slug in ["context-economy", "staying-in-scope", "honest-reporting"] {
+                if let Some(skill) = skills::find(slug) {
+                    push_new(&mut added, already_enabled, skill);
+                }
+            }
+        }
         if request.effort >= Effort::High {
-            for slug in ["reading-errors", "planning-the-work"] {
+            for slug in ["reading-errors", "planning-the-work", "tool-batching", "root-cause"] {
                 if let Some(skill) = skills::find(slug) {
                     push_new(&mut added, already_enabled, skill);
                 }
             }
         }
         if request.effort >= Effort::Max {
-            for slug in ["using-the-terminal", "checking-it-visually", "dependencies"] {
+            for slug in [
+                "using-the-terminal",
+                "checking-it-visually",
+                "dependencies",
+                "matching-the-codebase",
+                "asking-well",
+                "recursive-learning",
+            ] {
                 if let Some(skill) = skills::find(slug) {
                     push_new(&mut added, already_enabled, skill);
                 }

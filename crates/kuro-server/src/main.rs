@@ -97,6 +97,9 @@ async fn main() -> anyhow::Result<()> {
     // of them, and since the model list is fetched once rather than polled, it
     // stayed that way. Four working keys looked like four broken ones.
     free.restore_catalogues(routes::free::stored_catalogues(&db));
+    // And which providers were refusing when this last ran, so a rejected key
+    // is not silently retried and shown as available by a restart.
+    free.restore_troubles(routes::free::stored_troubles(&db));
 
     let app_state = Arc::new(AppState {
         db,
