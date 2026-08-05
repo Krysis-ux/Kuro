@@ -941,6 +941,16 @@ impl Trouble {
         }
     }
 
+    /// Read back a stored kind. Unknown values are dropped rather than guessed.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "rate_limited" => Some(Self::RateLimited),
+            "rejected" => Some(Self::Rejected),
+            "model_gone" => Some(Self::Gone),
+            _ => None,
+        }
+    }
+
     /// Whether this is a sign the cached catalogue is out of date.
     pub fn stale_catalogue(self) -> bool {
         self == Self::Gone
@@ -1122,6 +1132,59 @@ impl FreePool {
             .lock()
             .expect("free pool lock")
             .insert(slug.to_string(), (models, Instant::now()));
+    }
+
+    /// Providers and models currently set aside, with how long is left.
+    ///
+    /// Seconds remaining rather than a timestamp, because [`Instant`] is not a
+    /// wall clock and cannot be stored — and seconds is the honest unit anyway:
+    /// what survives a restart should be "this had four minutes left", not a
+    /// clock reading that a suspended laptop makes meaningless.
+    pub fn troubles(&self) -> Vec<(String, &'static str, u64)> {
+        let held = self.troubled.lock().expect("free pool lock");
+        let models = self.unavailable.lock().expect("free pool lock");
+
+        held.iter()
+            .chain(models.iter())
+            .filter_map(|(key, (trouble, since))| {
+                let left = trouble.cooldown().checked_sub(since.elapsed())?;
+                Some((key.clone(), trouble.as_str(), left.as_secs()))
+            })
+            .collect()
+    }
+
+    /// Put back what was set aside before a restart.
+    ///
+    /// Without this, restarting cleared every refusal — so a key the provider
+    /// had rejected came back looking fine, was tried again, failed again, and
+    /// the picker showed it as available throughout. A cooldown that a restart
+    /// erases is not a cooldown.
+    pub fn restore_troubles(&self, stored: Vec<(String, String, u64)>) {
+        let now = Instant::now();
+
+        for (key, kind, seconds_left) in stored {
+            let Some(trouble) = Trouble::parse(&kind) else {
+                continue;
+            };
+            let left = Duration::from_secs(seconds_left);
+            let Some(elapsed) = trouble.cooldown().checked_sub(left) else {
+                continue;
+            };
+            // Backdated so it expires when it would have, rather than starting
+            // its cooldown again from zero on every restart.
+            let Some(since) = now.checked_sub(elapsed) else {
+                continue;
+            };
+
+            // A `/` means it names one model on a provider rather than the
+            // provider itself — the same split `note_model_trouble` writes.
+            let target = if key.contains('/') {
+                &self.unavailable
+            } else {
+                &self.troubled
+            };
+            target.lock().expect("free pool lock").insert(key, (trouble, since));
+        }
     }
 
     /// Every catalogue currently held, for writing to storage.
@@ -1831,6 +1894,80 @@ mod tests {
         assert!(!is_free_model("free:notaprovider/some-model"));
         assert!(!is_free_model("free:nvidia/"));
         assert!(!is_free_model("free:nvidia"));
+    }
+
+    #[test]
+    fn one_model_refusing_does_not_take_the_provider_down_with_it() {
+        // The NVIDIA case. A key that is not provisioned for one model answers
+        // 404 for that model and works perfectly for the other eighty-two, and
+        // reading it as a provider failure meant one unprovisioned model
+        // reported that there was no working NVIDIA key at all.
+        let pool = FreePool::new();
+        let held = keys(&["nvidia"]);
+
+        pool.note_model_trouble("nvidia", "deepseek-ai/deepseek-v4-pro", Trouble::Gone);
+
+        assert!(pool.model_trouble("nvidia", "deepseek-ai/deepseek-v4-pro").is_some());
+        assert!(
+            pool.model_trouble("nvidia", "meta/llama-3.3-70b-instruct").is_none(),
+            "a sibling model was set aside too"
+        );
+        assert!(pool.trouble("nvidia").is_none(), "the provider was set aside");
+        assert!(
+            pool.pinned("nvidia", "meta/llama-3.3-70b-instruct", &held).is_some(),
+            "the key still works for everything else"
+        );
+    }
+
+    #[test]
+    fn a_refusal_survives_a_restart() {
+        // A cooldown a restart erases is not a cooldown: the rejected key came
+        // back looking fine, was tried again, failed again, and the picker
+        // offered it as available throughout.
+        let before = FreePool::new();
+        before.note_trouble("cerebras", Trouble::RateLimited);
+        before.note_model_trouble("nvidia", "some/model", Trouble::Gone);
+
+        let stored: Vec<(String, String, u64)> = before
+            .troubles()
+            .into_iter()
+            .map(|(key, kind, left)| (key, kind.to_string(), left))
+            .collect();
+        assert_eq!(stored.len(), 2);
+
+        let after = FreePool::new();
+        after.restore_troubles(stored);
+
+        assert_eq!(after.trouble("cerebras"), Some(Trouble::RateLimited));
+        assert_eq!(after.model_trouble("nvidia", "some/model"), Some(Trouble::Gone));
+        // And the split between the two maps survives the round trip: a
+        // provider-level refusal must not come back as a model-level one.
+        assert!(after.trouble("nvidia").is_none());
+    }
+
+    #[test]
+    fn a_refusal_that_has_already_expired_is_not_restored() {
+        let pool = FreePool::new();
+        // Zero seconds left is an expired cooldown, and restoring it would set
+        // a provider aside for a full fresh cooldown on every restart.
+        pool.restore_troubles(vec![("groq".to_string(), "rate_limited".to_string(), 0)]);
+
+        assert!(pool.trouble("groq").is_none());
+    }
+
+    #[test]
+    fn replacing_a_key_clears_the_models_it_had_refused() {
+        // A new key is exactly the thing that changes which models are
+        // reachable, so holding on to "this one 404'd" would hide the fix the
+        // user just applied.
+        let pool = FreePool::new();
+        pool.note_model_trouble("nvidia", "some/model", Trouble::Gone);
+        pool.note_trouble("nvidia", Trouble::Rejected);
+
+        pool.clear_trouble("nvidia");
+
+        assert!(pool.trouble("nvidia").is_none());
+        assert!(pool.model_trouble("nvidia", "some/model").is_none());
     }
 
     #[test]

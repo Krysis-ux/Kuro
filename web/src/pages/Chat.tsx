@@ -148,6 +148,9 @@ export function ChatPage() {
       // brings in the usage, timing and tool numbers.
       void queryClient.invalidateQueries({ queryKey: ['messages', targetId] })
       void queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      // And the models, so a provider that just refused shows as greyed with
+      // its reason rather than being offered again from a stale list.
+      void queryClient.invalidateQueries({ queryKey: ['models'] })
     }
   }
 

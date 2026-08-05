@@ -940,10 +940,12 @@ fn note_free_trouble(
     // abandoning a key that works perfectly.
     if trouble.stale_catalogue() {
         state.free.note_model_trouble(slug, model, trouble);
-        return;
+    } else {
+        state.free.note_trouble(slug, trouble);
     }
 
-    state.free.note_trouble(slug, trouble);
+    // Written through, so the picker still greys this row after a restart.
+    crate::routes::free::save_troubles(state);
 }
 
 struct Finished {

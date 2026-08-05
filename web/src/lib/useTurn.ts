@@ -141,6 +141,15 @@ export function useTurn(onChanged?: () => void) {
       // the usage, timing and tool numbers.
       void queryClient.invalidateQueries({ queryKey: ['messages', conversationId] })
       void queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      // And the model list, because a turn is the main thing that changes it.
+      //
+      // A provider that refuses is set aside on the server, and the picker
+      // renders that as a greyed row saying why — out of allowance, key
+      // rejected, this model not enabled on your key. None of which was ever
+      // visible: the model list is fetched once, so the picker went on
+      // offering a model that had just failed, and the greying looked broken
+      // when it was only stale.
+      void queryClient.invalidateQueries({ queryKey: ['models'] })
       // A coding turn may have changed files, so the panels that show them
       // refetch too. The caller decides what that means.
       onChanged?.()
