@@ -2,7 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, relativeTime, type RunningProcess, type WorkspaceMode } from '../lib/api'
 import { CodeBlock } from './CodeBlock'
-import { EyeIcon, ExternalIcon, PlayIcon, RefreshIcon, StopIcon, TerminalIcon } from './icons'
+import {
+  CloseIcon,
+  EyeIcon,
+  ExternalIcon,
+  PlayIcon,
+  RefreshIcon,
+  StopIcon,
+  TerminalIcon,
+  TrashIcon,
+} from './icons'
 
 /** How often the running list is re-read while something is alive. */
 const POLL_MS = 2000
@@ -32,9 +41,19 @@ const POLL_MS = 2000
 export function PreviewPanel({
   workspaceId,
   mode,
+  view = 'terminal',
 }: {
   workspaceId: string
   mode: WorkspaceMode
+  /**
+   * Which half of this panel is being asked for.
+   *
+   * `terminal` is the command line and the output; `browser` is the frame
+   * around whatever is being served. They were one scrolling column with the
+   * frame at the bottom, which meant that on the turn you wanted to *look* at
+   * the page you first had to scroll past the log of how it got built.
+   */
+  view?: 'terminal' | 'browser'
 }) {
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState<string | null>(null)
@@ -66,11 +85,25 @@ export function PreviewPanel({
       setStartError(caught instanceof Error ? caught.message : 'That command could not start.'),
   })
 
+  const refresh = () =>
+    void queryClient.invalidateQueries({ queryKey: ['workspace-processes', workspaceId] })
+
   const stop = useMutation({
     mutationFn: (processId: string) => api.workspaces.stopProcess(workspaceId, processId),
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['workspace-processes', workspaceId] }),
+    onSuccess: refresh,
   })
+
+  const forget = useMutation({
+    mutationFn: (processId: string) => api.workspaces.forgetProcess(workspaceId, processId),
+    onSuccess: refresh,
+  })
+
+  const clearFinished = useMutation({
+    mutationFn: () => api.workspaces.clearProcesses(workspaceId),
+    onSuccess: refresh,
+  })
+
+  const finished = held.filter((process) => !process.running).length
 
   const canRun = mode === 'agent' || mode === 'bypass'
 
@@ -85,6 +118,7 @@ export function PreviewPanel({
 
   return (
     <div className="preview-panel">
+      {view === 'terminal' && (
       <form
         className="inline-form preview-start"
         onSubmit={(event) => {
@@ -108,8 +142,20 @@ export function PreviewPanel({
           Start
         </button>
       </form>
+      )}
 
       {startError && <p className="form-error">{startError}</p>}
+
+      {finished > 1 && (
+        <button
+          className="btn btn-ghost btn-sm preview-clear"
+          onClick={() => clearFinished.mutate()}
+          disabled={clearFinished.isPending}
+        >
+          <TrashIcon size={12} />
+          Clear {finished} finished
+        </button>
+      )}
 
       {held.length === 0 && (
         <p className="faint code-panel-note">
@@ -132,7 +178,7 @@ export function PreviewPanel({
                   <span className="faint process-row-note">{describe(process)}</span>
                 </span>
               </button>
-              {process.running && (
+              {process.running ? (
                 <button
                   className="btn btn-ghost btn-icon"
                   aria-label={`Stop ${process.command}`}
@@ -141,13 +187,37 @@ export function PreviewPanel({
                 >
                   <StopIcon size={13} />
                 </button>
+              ) : (
+                // A finished process is history, and history that cannot be
+                // cleared is a list that only grows. Twenty dead `npm test`
+                // rows above the one server actually running is not a record,
+                // it is a thing to scroll past.
+                <button
+                  className="btn btn-ghost btn-icon"
+                  aria-label={`Clear ${process.command}`}
+                  title="Clear this from the list"
+                  onClick={() => forget.mutate(process.id)}
+                >
+                  <CloseIcon size={13} />
+                </button>
               )}
             </li>
           ))}
         </ul>
       )}
 
-      {active?.url && active.running ? (
+      {view === 'browser' && !(active?.url && active.running) && (
+        <p className="faint code-panel-note">
+          Nothing is serving a page yet. Start a dev server in the terminal and its address
+          appears here as soon as it prints one.
+        </p>
+      )}
+
+      {view === 'terminal' && active && (
+        <ProcessLog workspaceId={workspaceId} process={active} />
+      )}
+
+      {view === 'browser' && active?.url && active.running && (
         <div className="preview-frame-wrap">
           <div className="preview-frame-bar">
             <EyeIcon size={12} />
@@ -187,8 +257,6 @@ export function PreviewPanel({
             be framed — open it in a browser tab instead.
           </p>
         </div>
-      ) : (
-        active && <ProcessLog workspaceId={workspaceId} process={active} />
       )}
     </div>
   )

@@ -397,6 +397,19 @@ async fn run_command(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolO
         return ToolOutcome::failed(refusal.to_string());
     }
 
+    // Refused rather than run, because running it means waiting three minutes
+    // for a timeout and reporting a failure for something that was working. The
+    // refusal names the tool that does work, which is the only part of this
+    // that changes what the model does next.
+    if let Some(reason) = exec::looks_like_a_server(&command) {
+        return ToolOutcome::failed(format!(
+            "`{command}` was not run because {reason}, and `run_command` waits for what it \
+             starts. Use `start_server` with the same command: it runs in the background, its \
+             output stays readable with `check_server`, and the user can see it in the running \
+             panel and stop it."
+        ));
+    }
+
     let timeout = arguments
         .get("timeout_seconds")
         .and_then(Value::as_u64)

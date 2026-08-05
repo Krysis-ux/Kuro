@@ -1,16 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Composer, chatToggles } from '../components/Composer'
-import { MessageList, type StreamingState } from '../components/MessageList'
+import { MessageList } from '../components/MessageList'
 import { Logo } from '../components/Logo'
-import {
-  api,
-  streamEditMessage,
-  streamMessage,
-  OPTIMISTIC_ID_PREFIX,
-  type Message,
-} from '../lib/api'
+import { api } from '../lib/api'
+import { forkTurn, runTurn, stopTurn, useTurn } from '../lib/turns'
 import { activeToolGroups, useUi } from '../store/ui'
 
 export function ChatPage() {
@@ -29,13 +24,14 @@ export function ChatPage() {
     setProjects,
   } = useUi()
 
-  const [streaming, setStreaming] = useState<StreamingState | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [notices, setNotices] = useState<string[]>([])
-  const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const conversationId = params.id ?? null
+
+  // Read from the store rather than from local state. A turn is work the server
+  // is doing, and unmounting this page — which opening Settings or clicking
+  // another conversation both do — is no reason to abandon it.
+  const { stream: streaming, error, notices } = useTurn(conversationId)
 
   const models = useQuery({ queryKey: ['models'], queryFn: api.models.list })
 
@@ -46,28 +42,37 @@ export function ChatPage() {
   })
 
   const history = messages.data?.messages ?? []
-  const isEmpty = conversationId === null || (history.length === 0 && !streaming)
+  /**
+   * Whether to show the welcome screen instead of the transcript.
+   *
+   * An error counts as content. Without that, a turn that failed before the
+   * server stored anything — a model with too small a context window, a
+   * provider that refused — left the welcome screen up and said nothing at all:
+   * the message vanished, no error appeared, and the only evidence anything had
+   * happened was a new empty chat in the sidebar. "It just stopped and I don't
+   * know why" is the exact experience that produces.
+   */
+  const isEmpty =
+    conversationId === null ||
+    (history.length === 0 && !streaming && !error && notices.length === 0)
 
   // Follow the output as it streams.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [history.length, streaming?.content, streaming?.reasoning, streaming?.tools.length])
 
-  // Abandoning a stream by navigating away should stop it, not leave it running.
-  useEffect(() => () => abortRef.current?.abort(), [])
-
   /**
    * Run a turn: either a new message, or a rewrite of an existing one.
    *
    * `editing` carries the id of the message being replaced. The server drops
-   * that message and everything after it, so the local cache is trimmed to
-   * match before the optimistic row goes in — otherwise the old replies stay on
-   * screen underneath the new question until the refetch lands.
+   * that message and everything after it; the store trims the local cache to
+   * match before its optimistic row goes in.
+   *
+   * The conversation is created first when there is not one yet, because the
+   * turn is keyed by its id — a turn that started under "no conversation yet"
+   * would have nowhere to be shown once there was one.
    */
   const send = async (content: string, skills: string[] = [], editing?: string) => {
-    setError(null)
-    setNotices([])
-
     let targetId = conversationId
     if (targetId === null) {
       const created = await api.conversations.create(selectedModel ?? undefined)
@@ -76,85 +81,21 @@ export function ChatPage() {
       void queryClient.invalidateQueries({ queryKey: ['conversations'] })
     }
 
-    // Show the user's own message immediately rather than waiting for a refetch.
-    queryClient.setQueryData<{ messages: Message[] }>(['messages', targetId], (existing) => {
-      const held = existing?.messages ?? []
-      const cut = editing ? held.findIndex((message) => message.id === editing) : -1
-      // A cut of -1 means the row is not in the cache. Keeping everything is the
-      // safe reading: the refetch that follows will correct it either way, and
-      // `slice(0, -1)` would quietly drop the wrong message.
-      const kept = cut === -1 ? held : held.slice(0, cut)
-      return { messages: [...kept, optimisticUserMessage(targetId as string, content)] }
-    })
-
-    setStreaming(emptyStream())
-
-    const controller = new AbortController()
-    abortRef.current = controller
-
-    try {
-      const request = {
-        content,
+    await runTurn(
+      targetId,
+      content,
+      {
         model: selectedModel ?? undefined,
         effort,
         tools: activeToolGroups({ webSearch, memory, projects }),
         web_search: webSearch,
         skills,
-      }
-      const events = editing
-        ? streamEditMessage(targetId, editing, request, controller.signal)
-        : streamMessage(targetId, request, controller.signal)
-
-      for await (const event of events) {
-        if (event.type === 'token') {
-          setStreaming((state) => ({
-            ...(state ?? emptyStream()),
-            content: (state?.content ?? '') + event.content,
-          }))
-        } else if (event.type === 'reasoning') {
-          setStreaming((state) => ({
-            ...(state ?? emptyStream()),
-            reasoning: (state?.reasoning ?? '') + event.content,
-          }))
-        } else if (event.type === 'tool_call') {
-          // Shown while it runs, so a long search does not look like a hang.
-          setStreaming((state) => ({
-            ...(state ?? emptyStream()),
-            tools: [
-              ...(state?.tools ?? []),
-              { name: event.name, arguments: event.arguments, state: 'running' },
-            ],
-          }))
-        } else if (event.type === 'tool_result') {
-          setStreaming((state) => ({
-            ...(state ?? emptyStream()),
-            tools: resolveLast(state?.tools ?? [], event.name, event.ok, event.preview),
-          }))
-        } else if (event.type === 'notice') {
-          setNotices((held) => [...held, event.message])
-        } else if (event.type === 'error') {
-          setError(event.message)
-        }
-      }
-    } catch (caught) {
-      // An abort is the user pressing stop, not a failure worth reporting.
-      if (!controller.signal.aborted) {
-        setError(caught instanceof Error ? caught.message : 'Something went wrong.')
-      }
-    } finally {
-      abortRef.current = null
-      setStreaming(null)
-      // Replace the optimistic view with what was actually stored, which also
-      // brings in the usage, timing and tool numbers.
-      void queryClient.invalidateQueries({ queryKey: ['messages', targetId] })
-      void queryClient.invalidateQueries({ queryKey: ['conversations'] })
-      // And the models, so a provider that just refused shows as greyed with
-      // its reason rather than being offered again from a stale list.
-      void queryClient.invalidateQueries({ queryKey: ['models'] })
-    }
+      },
+      editing,
+    )
   }
 
-  const stop = () => abortRef.current?.abort()
+  const stop = () => stopTurn(conversationId)
 
   /**
    * Branch this conversation at a message and open the copy.
@@ -163,14 +104,8 @@ export function ChatPage() {
    * editing: two directions from the same history, both kept.
    */
   const fork = async (messageId: string) => {
-    setError(null)
-    try {
-      const branch = await api.conversations.fork(conversationId as string, messageId)
-      void queryClient.invalidateQueries({ queryKey: ['conversations'] })
-      navigate(`/chat/${branch.id}`)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not fork this conversation.')
-    }
+    const branch = await forkTurn(conversationId as string, messageId)
+    if (branch) navigate(`/chat/${branch.id}`)
   }
 
   const composer = (centred: boolean) => (
@@ -219,64 +154,9 @@ export function ChatPage() {
   )
 }
 
-function emptyStream(): StreamingState {
-  return { content: '', reasoning: '', tools: [] }
-}
-
-/**
- * Mark the most recent matching call as finished.
- *
- * Matched from the end because parallel calls to the same tool are legal, and the
- * result that just arrived belongs to the newest one still running.
- */
-function resolveLast(
-  tools: StreamingState['tools'],
-  name: string,
-  ok: boolean,
-  preview: string,
-): StreamingState['tools'] {
-  const index = [...tools]
-    .reverse()
-    .findIndex((tool) => tool.name === name && tool.state === 'running')
-
-  if (index === -1) return tools
-
-  const target = tools.length - 1 - index
-  return tools.map((tool, position) =>
-    position === target ? { ...tool, state: ok ? 'done' : 'failed', preview } : tool,
-  )
-}
-
 function welcomeLine(data: { models: unknown[]; remote: unknown[] } | undefined): string {
   if (!data) return 'Loading…'
   if (data.models.length > 0) return 'Ask anything. Everything runs on this machine.'
   if (data.remote.length > 0) return 'No local models yet — a connected provider is standing in.'
   return 'Install a model to get started, or connect a provider.'
-}
-
-/**
- * Stand-in for the message the server is about to store.
- *
- * Only the fields the message list reads are filled; the real row replaces this as
- * soon as the turn finishes.
- */
-function optimisticUserMessage(conversationId: string, content: string): Message {
-  return {
-    id: `${OPTIMISTIC_ID_PREFIX}${Date.now()}`,
-    conversation_id: conversationId,
-    role: 'user',
-    content,
-    reasoning_content: null,
-    tool_calls: null,
-    used_web_search: false,
-    web_sources: null,
-    model_id: null,
-    usage_prompt_tokens: null,
-    usage_completion_tokens: null,
-    timing_ttft_ms: null,
-    timing_total_ms: null,
-    timing_tokens_per_sec: null,
-    finish_reason: null,
-    created_at: new Date().toISOString(),
-  }
 }
