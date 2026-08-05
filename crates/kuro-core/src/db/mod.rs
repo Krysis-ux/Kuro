@@ -21,6 +21,7 @@ mod memories;
 mod models;
 mod projects;
 mod runtimes;
+mod skills;
 mod usage;
 mod workspaces;
 
@@ -32,6 +33,7 @@ pub use memories::MemoryRecord;
 pub use models::{ModelRecord, ModelSource, ModelStatus, NewModel};
 pub use projects::{NewProject, ProjectRecord, ProjectUpdate};
 pub use runtimes::EngineRuntimeRecord;
+pub use skills::{UserSkillRecord, MAX_INSTRUCTION_CHARS as MAX_USER_SKILL_CHARS};
 pub use usage::ProviderUsage;
 pub use workspaces::{UndoPlan, WorkspaceChange, WorkspaceRecord};
 
@@ -50,7 +52,11 @@ const LATE_INDEXES: &str = "
         ON messages (provider_slug, created_at)
         WHERE provider_slug IS NOT NULL;
 ";
-const SCHEMA_VERSION: i32 = 6;
+// Bumped to 7 when `user_skills` arrived. The schema file is only replayed when
+// this number moves, so adding a `CREATE TABLE IF NOT EXISTS` without touching
+// it produces a table that exists on a fresh install and nowhere else — which
+// is a bug that passes every test, because tests open an empty database.
+const SCHEMA_VERSION: i32 = 7;
 
 #[derive(Clone)]
 pub struct Db {
