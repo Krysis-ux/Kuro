@@ -11,6 +11,14 @@ use crate::{KuroError, Result};
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub root: PathBuf,
+    /// Where weights go, when that is not inside the root.
+    ///
+    /// Model files are the only thing Kuro stores that is measured in tens of
+    /// gigabytes, and a boot disk is often the wrong place for them. Everything
+    /// else — the database, logs, the engine binary — is small enough that
+    /// moving it would be fiddling rather than a decision, so only this one is
+    /// overridable.
+    models_override: Option<PathBuf>,
 }
 
 impl Paths {
@@ -20,7 +28,7 @@ impl Paths {
             Some(dir) => PathBuf::from(dir),
             None => Self::default_root()?,
         };
-        Ok(Self { root })
+        Ok(Self { root, models_override: None })
     }
 
     /// Resolve the app root and create every directory Kuro writes to.
@@ -28,6 +36,43 @@ impl Paths {
         let paths = Self::resolve()?;
         paths.create_all()?;
         Ok(paths)
+    }
+
+    /// A Paths rooted at a specific directory, with no overrides.
+    ///
+    /// For tests and for any caller that already knows where the root is.
+    /// Construction goes through here rather than through a public field so
+    /// that an override can only be set by [`Self::with_models_dir`], which is
+    /// also the thing that makes sure the directory exists.
+    pub fn for_root(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            models_override: None,
+        }
+    }
+
+    /// Point model downloads somewhere else.
+    ///
+    /// Applied once at startup rather than read per download, so a path that has
+    /// become unwritable fails immediately and visibly instead of failing three
+    /// gigabytes into a transfer. Existing weights are not moved, and are still
+    /// found: the database stores each model's full path, not a path relative to
+    /// this one.
+    pub fn with_models_dir(mut self, dir: impl Into<PathBuf>) -> Result<Self> {
+        let dir = dir.into();
+        if dir.as_os_str().is_empty() {
+            return Ok(self);
+        }
+
+        std::fs::create_dir_all(&dir).map_err(|error| {
+            KuroError::bad_request(format!(
+                "models directory `{}` could not be used: {error}",
+                dir.display()
+            ))
+        })?;
+
+        self.models_override = Some(dir);
+        Ok(self)
     }
 
     fn default_root() -> Result<PathBuf> {
@@ -61,7 +106,9 @@ impl Paths {
 
     /// Downloaded GGUF weights.
     pub fn models_dir(&self) -> PathBuf {
-        self.root.join("models")
+        self.models_override
+            .clone()
+            .unwrap_or_else(|| self.root.join("models"))
     }
 
     pub fn engine_dir(&self) -> PathBuf {
@@ -195,10 +242,39 @@ mod tests {
     }
 
     #[test]
+    fn weights_can_be_sent_to_another_disk() {
+        let root = std::env::temp_dir().join(format!("kuro-paths-{}", uuid::Uuid::new_v4()));
+        let elsewhere = root.join("external-drive");
+
+        let paths = Paths::for_root(root.clone());
+        assert_eq!(paths.models_dir(), root.join("models"));
+
+        let moved = paths.with_models_dir(&elsewhere).expect("override");
+        assert_eq!(moved.models_dir(), elsewhere);
+        assert!(elsewhere.is_dir(), "the directory should be made ready to use");
+        assert!(
+            moved.model_file("qwen3-4b:q4_k_m", "x.gguf").starts_with(&elsewhere),
+            "weights must land in the chosen directory, not the default one"
+        );
+        // Everything that is not weights stays with the database.
+        assert!(moved.database_file().starts_with(&root));
+        assert!(moved.logs_dir().starts_with(&root));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_empty_override_leaves_the_default_alone() {
+        // A cleared setting is stored as an empty string, and reading that as
+        // "put the models at the filesystem root" would be memorable.
+        let paths = Paths::for_root("/tmp/kuro-test");
+        let unchanged = paths.clone().with_models_dir("").expect("no-op");
+        assert_eq!(unchanged.models_dir(), paths.models_dir());
+    }
+
+    #[test]
     fn model_file_stays_within_models_dir() {
-        let paths = Paths {
-            root: PathBuf::from("/tmp/kuro"),
-        };
+        let paths = Paths::for_root(PathBuf::from("/tmp/kuro"));
         let file = paths.model_file("../../escape", "../../evil.gguf");
         assert!(file.starts_with(paths.models_dir()));
     }

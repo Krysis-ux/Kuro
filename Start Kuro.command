@@ -78,7 +78,21 @@ fi
 # Build whatever is missing
 # ---------------------------------------------------------------------------
 
-if [ ! -x "target/release/kuro-server" ]; then
+# Whether any source file is newer than something already built.
+#
+# The launcher used to check only whether the binary *existed*, which meant that
+# after any change to the code it cheerfully started the previous build — and the
+# symptom was not a build error but a running application whose newer interface
+# called endpoints its older server had never heard of. Pages failed to load and
+# nothing said why.
+stale() {
+  local built="$1"
+  shift
+  [ -e "$built" ] || return 0
+  [ -n "$(find "$@" -type f -newer "$built" -print -quit 2>/dev/null)" ]
+}
+
+if stale "target/release/kuro-server" crates Cargo.toml Cargo.lock; then
   if ! command -v cargo >/dev/null 2>&1; then
     fail "Rust is not installed, and Kuro has not been built yet."
     printf '\n'
@@ -90,8 +104,12 @@ if [ ! -x "target/release/kuro-server" ]; then
     exit 1
   fi
 
-  bold "Building the server."
-  dim "First run only. This takes a few minutes."
+  if [ -x "target/release/kuro-server" ]; then
+    bold "The server has changed since it was last built. Rebuilding."
+  else
+    bold "Building the server."
+    dim "First run only. This takes a few minutes."
+  fi
   printf '\n'
   if ! cargo build --release; then
     printf '\n'
@@ -103,14 +121,18 @@ if [ ! -x "target/release/kuro-server" ]; then
   printf '\n'
 fi
 
-if [ ! -f "web/dist/index.html" ]; then
+if stale "web/dist/index.html" web/src web/index.html web/package.json; then
   if ! command -v npm >/dev/null 2>&1; then
     warn "Node.js is not installed, so the web interface cannot be built."
     echo "The API will still start. Install Node 18+ from https://nodejs.org"
     echo "and run this again to get the interface."
     printf '\n'
   else
-    bold "Building the interface."
+    if [ -f "web/dist/index.html" ]; then
+      bold "The interface has changed since it was last built. Rebuilding."
+    else
+      bold "Building the interface."
+    fi
     printf '\n'
     if [ ! -d "web/node_modules" ]; then
       (cd web && npm install) || {
@@ -129,6 +151,24 @@ if [ ! -f "web/dist/index.html" ]; then
     fi
     printf '\n'
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Put `kuro` on the PATH
+# ---------------------------------------------------------------------------
+
+# Building produced a working `kuro` and left it in target/release, where
+# nothing looks for it — so `kuro` was not a command, and the first thing
+# anybody typed after building answered "command not found". Linking it is one
+# line and it belongs here, next to the build that produced it.
+#
+# Best-effort on purpose. A machine where no writable directory is on the PATH
+# still gets a working server; it just also gets a note about the command line,
+# which is not a reason to refuse to start.
+if [ ! -L "$HOME/.local/bin/kuro" ] && ! command -v kuro >/dev/null 2>&1; then
+  ./packaging/install-cli.sh "$ROOT/target/release/kuro" || \
+    warn "Could not link the kuro command. The interface is unaffected."
+  printf '\n'
 fi
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::Result;
+use crate::{KuroError, Result};
 
 /// Directories never walked into.
 ///
@@ -112,6 +112,139 @@ pub fn tree(root: &Path) -> Result<Vec<String>> {
         ));
     }
     Ok(found)
+}
+
+/// Find files whose path matches a shell-style pattern.
+///
+/// `*.rs`, `src/**/*.ts`, `*test*`. Deliberately not a regular expression: a
+/// model writing an untested regex is the reliable way to get zero results and
+/// conclude the code does not exist, and the patterns people actually reach for
+/// when looking for files are glob-shaped anyway.
+///
+/// Matched against the path relative to the root, so `src/*.rs` means what it
+/// looks like. A pattern with no slash in it is matched against the file's name
+/// alone, because `*.rs` obviously means "any Rust file anywhere" and making
+/// somebody write `**/*.rs` for that is a trap.
+pub fn find_files(root: &Path, pattern: &str) -> Result<Vec<String>> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return Err(KuroError::bad_request("a pattern is required"));
+    }
+    let name_only = !pattern.contains('/');
+
+    let mut found: Vec<String> = tree(root)?
+        .into_iter()
+        .filter(|entry| !entry.ends_with('/') && !entry.starts_with('…'))
+        .filter(|entry| {
+            let candidate = if name_only {
+                entry.rsplit('/').next().unwrap_or(entry)
+            } else {
+                entry.as_str()
+            };
+            glob_match(pattern, candidate)
+        })
+        .collect();
+
+    found.sort();
+    found.truncate(MAX_MATCHES);
+    Ok(found)
+}
+
+/// Whether a glob pattern matches, supporting `*`, `**` and `?`.
+///
+/// Hand-rolled rather than pulled in as a dependency: the crate that would
+/// replace it brings a `Pattern` type, an error enum and a compilation step for
+/// a job done once per call on a few hundred short strings.
+///
+/// Matched a path segment at a time rather than character by character. The
+/// first attempt here did the latter and got `**` wrong in a way worth
+/// recording: a single flag tracked whether the *most recent* star could cross
+/// a `/`, so in `src/**/*.rs` the inner `*` overwrote the outer `**`'s
+/// backtracking point, and `src/db/models.rs` — the exact case `**` exists for —
+/// failed to match. Splitting on `/` first makes that impossible to express: a
+/// `**` segment consumes whole segments and a `*` never sees a separator at all.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<&str> = pattern.split('/').collect();
+    let text: Vec<&str> = text.split('/').collect();
+    match_segments(&pattern, &text)
+}
+
+/// Match a list of pattern segments against a list of path segments.
+///
+/// Recursive, and safely so: the depth is the number of `/` in a path, which is
+/// a handful even in a deeply nested project.
+fn match_segments(pattern: &[&str], text: &[&str]) -> bool {
+    let Some((head, rest)) = pattern.split_first() else {
+        return text.is_empty();
+    };
+
+    if *head == "**" {
+        // Zero or more segments, zero included — otherwise `src/**/*.rs` is a
+        // pattern that mysteriously skips the files directly inside `src`.
+        return (0..=text.len()).any(|skip| match_segments(rest, &text[skip..]));
+    }
+
+    let Some((first, others)) = text.split_first() else {
+        return false;
+    };
+    match_segment(head, first) && match_segments(rest, others)
+}
+
+/// Match one segment, where `*` means "any run of characters within this
+/// segment" and `?` means exactly one.
+fn match_segment(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+
+    // Iterative with a single backtrack point, which is enough now that there
+    // are no separators to reason about.
+    let (mut p, mut t) = (0usize, 0usize);
+    let (mut star, mut star_t) = (None, 0usize);
+
+    while t < text.len() {
+        if p < pattern.len()
+            && pattern[p] != '*'
+            && (pattern[p] == '?' || pattern[p] == text[t])
+        {
+            p += 1;
+            t += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            p += 1;
+            star = Some(p);
+            star_t = t;
+        } else if let Some(resume) = star {
+            p = resume;
+            star_t += 1;
+            t = star_t;
+        } else {
+            return false;
+        }
+    }
+
+    while p < pattern.len() && pattern[p] == '*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
+/// One path per line, or a plain statement that nothing matched.
+pub fn format_paths(pattern: &str, found: &[String]) -> String {
+    if found.is_empty() {
+        return format!(
+            "No file matches `{pattern}`. Try a broader pattern, or project_tree to see \
+             the layout."
+        );
+    }
+
+    let mut out = format!(
+        "{} file{} matching `{pattern}`:\n",
+        found.len(),
+        if found.len() == 1 { "" } else { "s" }
+    );
+    for path in found {
+        out.push_str(&format!("\n{path}"));
+    }
+    out
 }
 
 /// Find a literal string in the project's text files.
@@ -245,6 +378,81 @@ fn truncate(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_star_matches_within_a_segment_and_stops_at_a_slash() {
+        assert!(glob_match("*.rs", "main.rs"));
+        assert!(glob_match("src/*.rs", "src/main.rs"));
+        // The distinction that makes `**` worth having: a single star must not
+        // reach across a directory boundary, or `src/*.rs` silently matches
+        // everything under `src` however deep.
+        assert!(!glob_match("src/*.rs", "src/db/models.rs"));
+    }
+
+    #[test]
+    fn a_double_star_crosses_directories_including_none_at_all() {
+        assert!(glob_match("src/**/*.rs", "src/db/models.rs"));
+        assert!(glob_match("src/**/*.rs", "src/db/deep/nested/thing.rs"));
+        // Zero directories too, or `src/**/*.rs` is a pattern that mysteriously
+        // skips the files directly inside `src`.
+        assert!(glob_match("src/**/*.rs", "src/main.rs"));
+    }
+
+    #[test]
+    fn a_question_mark_matches_exactly_one_character() {
+        assert!(glob_match("v?.rs", "v1.rs"));
+        assert!(!glob_match("v?.rs", "v10.rs"));
+        assert!(!glob_match("v?.rs", "v.rs"));
+    }
+
+    #[test]
+    fn a_pattern_matching_nothing_says_so_rather_than_matching_everything() {
+        assert!(!glob_match("*.rs", "main.ts"));
+        assert!(!glob_match("test_*", "main.rs"));
+        assert!(glob_match("*", "anything"));
+    }
+
+    #[test]
+    fn a_pattern_without_a_slash_matches_the_name_at_any_depth() {
+        // `*.rs` obviously means "any Rust file"; making somebody write
+        // `**/*.rs` for that is a trap, and the one they will fall into first.
+        let root = sample_project();
+
+        let found = find_files(&root, "*.rs").expect("find");
+
+        assert!(found.contains(&"src/main.rs".to_string()), "got {found:?}");
+        assert!(found.contains(&"src/greet.rs".to_string()));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn finding_files_skips_the_directories_a_walk_should_never_enter() {
+        // The same reason `tree` skips them: `node_modules` would fill the
+        // answer with dependency source before reaching the user's own code.
+        let root = sample_project();
+
+        let found = find_files(&root, "*").expect("find");
+
+        assert!(!found.iter().any(|path| path.contains("node_modules")), "got {found:?}");
+        assert!(!found.iter().any(|path| path.contains(".git")));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_pattern_that_matches_nothing_suggests_what_to_do_instead() {
+        let root = sample_project();
+
+        let found = find_files(&root, "*.cobol").expect("find");
+        let rendered = format_paths("*.cobol", &found);
+
+        assert!(found.is_empty());
+        assert!(rendered.contains("No file matches"));
+        assert!(rendered.contains("project_tree"), "a dead end needs a way out");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     /// A small project with the kinds of directory that ruin a naive walk.
     fn sample_project() -> PathBuf {

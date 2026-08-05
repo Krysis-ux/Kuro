@@ -20,10 +20,16 @@
 
 pub mod presets;
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
 use serde::Serialize;
 
 use crate::db::{CloudConnectorRecord, Db};
+use crate::free::Trouble;
 use crate::secrets::SecretStore;
+use crate::wire::Quirks;
 use crate::{KuroError, Result};
 
 pub use presets::{Preset, PRESETS};
@@ -41,6 +47,35 @@ fn key_reference(connector_id: &str) -> String {
     format!("provider:{connector_id}")
 }
 
+/// What marks a model on a provider as costing nothing.
+///
+/// OpenRouter's convention, and the only one of these that is a convention
+/// rather than a per-model fact somebody has to look up. A provider that does
+/// not use it simply has no pool, which is the right failure: inventing one
+/// would mean guessing which of somebody's models are billed.
+const FREE_SUFFIX: &str = ":free";
+
+/// The reserved model name behind "free models".
+///
+/// Deliberately without a slash, because [`parse_model_id`] splits on the first
+/// one and every real OpenRouter id has several. Nothing a provider could
+/// legitimately return collides with it.
+pub const FREE_POOL_MODEL: &str = "kuro:free-pool";
+
+/// The free models among a connector's list, in the order they will be tried.
+///
+/// Sorted so the order is the same across restarts — a pool that reshuffled
+/// itself on every boot would make "which model answered" unanswerable.
+pub fn free_models_of(models: &[String]) -> Vec<String> {
+    let mut free: Vec<String> = models
+        .iter()
+        .filter(|model| model.ends_with(FREE_SUFFIX))
+        .cloned()
+        .collect();
+    free.sort();
+    free
+}
+
 /// Where a chat request should be sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatTarget {
@@ -51,10 +86,47 @@ pub enum ChatTarget {
         connector_id: String,
         label: String,
         base_url: String,
-        api_key: String,
+        /// The complete `Authorization` value, or `None` for an endpoint that
+        /// takes none.
+        ///
+        /// Was `api_key: String`, which obliged every caller to assume a bearer
+        /// token. The shared endpoints break that assumption: sending them
+        /// `Bearer ` reads as a malformed key rather than as an absent one, and
+        /// there is no string that means "no header".
+        authorization: Option<String>,
         /// The name the provider knows the model by, without Kuro's prefix.
         model: String,
+        /// How this endpoint departs from the plain OpenAI shape.
+        quirks: Quirks,
+        /// Which upstream actually answered, when `connector_id` names a pool
+        /// rather than one endpoint.
+        ///
+        /// `connector_id` on a free turn is `free:auto` — which is what the
+        /// conversation should remember, because the user chose Kuro Free and
+        /// not a particular provider. But *which allowance the turn spent* is a
+        /// different question, and it used to be unanswerable: the slug was
+        /// dropped on the floor here, so nothing downstream could attribute a
+        /// turn, and the failure path had to re-derive it by guessing.
+        upstream: Option<String>,
     },
+}
+
+impl ChatTarget {
+    /// Which provider's allowance this turn spends, if that is knowable.
+    pub fn upstream(&self) -> Option<&str> {
+        match self {
+            Self::Local { .. } => None,
+            Self::Remote { upstream, .. } => upstream.as_deref(),
+        }
+    }
+
+    /// How this endpoint departs from the plain OpenAI shape.
+    pub fn quirks(&self) -> Quirks {
+        match self {
+            Self::Local { .. } => Quirks::OPENAI,
+            Self::Remote { quirks, .. } => *quirks,
+        }
+    }
 }
 
 impl ChatTarget {
@@ -109,17 +181,133 @@ pub struct RemoteModel {
     pub connector_id: String,
     pub connector_label: String,
     pub provider: String,
+    /// Whether this row is the free pool rather than one named model.
+    ///
+    /// The picker uses it to mark the row, and to keep it at the top of its
+    /// provider's group — it is the entry most people want and the one nobody
+    /// would find by scrolling a list of four hundred model ids.
+    pub pooled: bool,
+    /// How many models the pool covers. Zero for an ordinary row.
+    pub pool_size: usize,
+    /// Whether this model costs nothing on the key that reaches it.
+    ///
+    /// The distinction is per-model rather than per-provider because on a
+    /// gateway it is: an OpenRouter key reaches three hundred models it bills
+    /// for and fourteen it does not, and a picker that does not say which is
+    /// which is a picker somebody spends money in by accident.
+    pub free: bool,
+    /// What the model's name says it was trained for, as words the picker can
+    /// put on the row. Empty only for a pooled row, which is not one model.
+    pub specialities: Vec<&'static str>,
+    /// Size in billions of parameters, when the name states one.
+    pub params_b: Option<f32>,
+    /// Why this cannot be picked right now, when it cannot.
+    ///
+    /// The row stays in the list and goes grey rather than disappearing. A
+    /// model that vanishes answers "where did the one I used yesterday go" with
+    /// silence, and the answer — out of allowance until tomorrow, or this key
+    /// was not issued for it — is exactly what the user needs in order to act.
+    pub unavailable: Option<String>,
+    /// Where to go to make it work, when there is somewhere to go.
+    ///
+    /// NVIDIA is the case that forced this: its models are provisioned per key,
+    /// and the fix is a page on build.nvidia.com for that specific model. A
+    /// reason with no remedy attached is a dead end.
+    pub fix_url: Option<String>,
+}
+
+impl RemoteModel {
+    /// Describe one named model, reading its name for what it is.
+    ///
+    /// The id is passed in rather than built here because the two callers
+    /// address their models differently: a connector's models are `cloud:`
+    /// ids resolved against the registry, and a free provider's are `free:`
+    /// ids resolved against the pool. Everything after the id is the same
+    /// question in both cases, which is what makes one constructor worth
+    /// having.
+    ///
+    /// Non-chat models are the caller's to filter out. This cannot refuse
+    /// them, because refusing would also have to be a `None` the pooled rows
+    /// would trip over.
+    pub fn described(id: String, group: RemoteGroup<'_>, model: &str, free: bool) -> Self {
+        let classified = crate::classify::classify(model);
+        Self {
+            id,
+            name: model.to_string(),
+            connector_id: group.connector_id.to_string(),
+            connector_label: group.connector_label.to_string(),
+            provider: group.provider.to_string(),
+            pooled: false,
+            pool_size: 0,
+            free,
+            specialities: classified
+                .specialities
+                .iter()
+                .map(|speciality| speciality.label())
+                .collect(),
+            params_b: classified.params_b,
+            unavailable: None,
+            fix_url: None,
+        }
+    }
+}
+
+/// Which heading a model is filed under in the picker.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteGroup<'a> {
+    pub connector_id: &'a str,
+    pub connector_label: &'a str,
+    pub provider: &'a str,
+}
+
+/// Which free model a connector is currently using, and which have refused.
+///
+/// Sticky rather than round-robin. Rotating on every request would spread the
+/// shared daily cap slightly more evenly and would also mean two consecutive
+/// messages in one conversation came from two different models — which reads as
+/// the assistant changing personality mid-thought, for a benefit nobody asked
+/// for. So one model answers until it refuses, and the refusal is what moves the
+/// cursor on.
+#[derive(Default)]
+struct PoolState {
+    cursor: usize,
+    troubled: HashMap<String, (Trouble, Instant)>,
+}
+
+impl PoolState {
+    /// Whether this model is still inside its cooldown.
+    fn is_troubled(&mut self, model: &str) -> bool {
+        let Some((trouble, since)) = self.troubled.get(model).copied() else {
+            return false;
+        };
+        if since.elapsed() >= trouble.cooldown() {
+            self.troubled.remove(model);
+            return false;
+        }
+        true
+    }
 }
 
 pub struct ProviderRegistry {
     db: Db,
     secrets: SecretStore,
     client: reqwest::Client,
+    /// Free-pool state per connector.
+    ///
+    /// In memory, like the free tiers' own cooldowns: it describes the next few
+    /// minutes, and one that survived a restart would be describing a rate limit
+    /// that had long since reset.
+    pools: Arc<Mutex<HashMap<String, PoolState>>>,
 }
 
 impl ProviderRegistry {
     pub fn new(db: Db, secrets: SecretStore, client: reqwest::Client) -> Self {
-        Self { db, secrets, client }
+        Self {
+            db,
+            secrets,
+            client,
+            pools: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     /// Add a provider: store the key, record the endpoint, then probe it.
@@ -219,6 +407,13 @@ impl ProviderRegistry {
     }
 
     /// Every model from every enabled, working provider.
+    ///
+    /// A provider that offers free models gets one extra row at the top of its
+    /// own list: the pool, which is every one of them behind a single id. On
+    /// OpenRouter that row is the difference between a usable free tier and a
+    /// four-hundred-entry list nobody reads to the end of — the free models are
+    /// scattered through it alphabetically, and picking one by hand means also
+    /// noticing when it runs out of allowance and picking another.
     pub fn remote_models(&self) -> Result<Vec<RemoteModel>> {
         let mut out = Vec::new();
 
@@ -226,14 +421,42 @@ impl ProviderRegistry {
             if !connector.enabled {
                 continue;
             }
-            for model in &connector.models {
+
+            let free = free_models_of(&connector.models);
+            if !free.is_empty() {
                 out.push(RemoteModel {
-                    id: format!("{MODEL_PREFIX}{}/{}", connector.id, model),
-                    name: model.clone(),
+                    id: format!("{MODEL_PREFIX}{}/{FREE_POOL_MODEL}", connector.id),
+                    name: format!("{} free models", connector.label),
                     connector_id: connector.id.clone(),
                     connector_label: connector.label.clone(),
                     provider: connector.provider.clone(),
+                    pooled: true,
+                    pool_size: free.len(),
+                    free: true,
+                    specialities: Vec::new(),
+                    params_b: None,
+                    unavailable: None,
+                    fix_url: None,
                 });
+            }
+
+            for model in &connector.models {
+                // A provider's model list is not a list of chat models. Sending
+                // a conversation to an embedding endpoint fails with a 400 that
+                // reads like a broken key, so those rows never reach a picker.
+                if !crate::classify::classify(model).kind.is_chat() {
+                    continue;
+                }
+                out.push(RemoteModel::described(
+                    format!("{MODEL_PREFIX}{}/{}", connector.id, model),
+                    RemoteGroup {
+                        connector_id: &connector.id,
+                        connector_label: &connector.label,
+                        provider: &connector.provider,
+                    },
+                    model,
+                    free.iter().any(|entry| entry == model),
+                ));
             }
         }
 
@@ -256,13 +479,79 @@ impl ProviderRegistry {
             )));
         }
 
+        let model = if model == FREE_POOL_MODEL {
+            self.choose_free(&connector)?
+        } else {
+            model
+        };
+
         Ok(ChatTarget::Remote {
-            api_key: self.key_for(&connector)?,
+            authorization: Some(format!("Bearer {}", self.key_for(&connector)?)),
+            // A connector the user added is one endpoint they named, so the
+            // allowance it spends is its own.
+            upstream: Some(connector.provider.clone()),
             connector_id: connector.id,
             label: connector.label,
             base_url: connector.base_url,
             model,
+            quirks: Quirks::OPENAI,
         })
+    }
+
+    /// Which free model this connector should answer with right now.
+    ///
+    /// The one the cursor is on, unless it has recently refused, in which case
+    /// the next one that has not. If every one of them is inside a cooldown the
+    /// cursor's model is used anyway: a stale cooldown is a guess, and a request
+    /// that might work beats an error that definitely does not.
+    fn choose_free(&self, connector: &CloudConnectorRecord) -> Result<String> {
+        let free = free_models_of(&connector.models);
+
+        if free.is_empty() {
+            return Err(KuroError::bad_request(format!(
+                "`{}` is not offering any free models at the moment. Refresh it under \
+                 Providers, or pick a model by name.",
+                connector.label
+            )));
+        }
+
+        let mut pools = self.pools.lock().expect("provider pool lock");
+        let state = pools.entry(connector.id.clone()).or_default();
+
+        // The list can shrink between refreshes, so the cursor is taken modulo
+        // the current length rather than trusted.
+        let start = state.cursor % free.len();
+
+        for offset in 0..free.len() {
+            let index = (start + offset) % free.len();
+            if !state.is_troubled(&free[index]) {
+                state.cursor = index;
+                return Ok(free[index].clone());
+            }
+        }
+
+        Ok(free[start].clone())
+    }
+
+    /// Note that a model refused, so the pool moves on from it.
+    ///
+    /// Called on every failing remote response rather than only on pooled ones.
+    /// A model that is not in a pool is recorded and never consulted, which
+    /// costs a map entry and saves threading "was this a pool pick" through the
+    /// whole turn.
+    pub fn note_trouble(&self, connector_id: &str, model: &str, status: u16) {
+        let Some(trouble) = Trouble::from_status(status) else {
+            return;
+        };
+
+        let mut pools = self.pools.lock().expect("provider pool lock");
+        let state = pools.entry(connector_id.to_string()).or_default();
+        state.troubled.insert(model.to_string(), (trouble, Instant::now()));
+        // Move off it now, so the next request does not have to rediscover the
+        // refusal before failing over.
+        state.cursor = state.cursor.saturating_add(1);
+
+        tracing::info!(connector_id, model, kind = trouble.as_str(), "free model set aside");
     }
 
     /// Remove a provider and its key together.
@@ -425,8 +714,10 @@ mod tests {
             connector_id: "abc".to_string(),
             label: "OpenRouter".to_string(),
             base_url: "https://openrouter.ai/api/v1".to_string(),
-            api_key: "sk-or".to_string(),
+            authorization: Some("Bearer sk-or".to_string()),
             model: "anthropic/claude-opus-5".to_string(),
+            quirks: Quirks::OPENAI,
+            upstream: Some("openrouter".to_string()),
         };
 
         let recorded = target.recorded_id();
@@ -519,6 +810,160 @@ mod tests {
         assert!(models.iter().all(|model| model.id.starts_with(MODEL_PREFIX)));
         assert!(models.iter().all(|model| model.connector_label == "OpenRouter"));
         assert!(!models.iter().any(|model| model.name == "gpt-4o"));
+    }
+
+    /// A connector whose catalogue looks like OpenRouter's: mostly paid, a few
+    /// free, scattered through it alphabetically.
+    fn openrouter(db: &Db) -> CloudConnectorRecord {
+        let connector = db
+            .insert_cloud_connector("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "r1")
+            .expect("insert");
+        db.set_cloud_ok(
+            &connector.id,
+            &[
+                "anthropic/claude-opus-5".to_string(),
+                "deepseek/deepseek-r1:free".to_string(),
+                "meta-llama/llama-3.3-70b-instruct:free".to_string(),
+                "openai/gpt-4o".to_string(),
+                "qwen/qwen-2.5-coder-32b-instruct:free".to_string(),
+            ],
+        )
+        .expect("ok");
+        db.get_cloud_connector(&connector.id).expect("get").expect("present")
+    }
+
+    #[test]
+    fn only_ids_ending_in_free_are_pooled_and_the_order_is_stable() {
+        let models = vec![
+            "z/model:free".to_string(),
+            "openai/gpt-4o".to_string(),
+            "a/model:free".to_string(),
+            // Not free: the suffix has to end the id, not merely appear in it.
+            "vendor/freestyle".to_string(),
+            "vendor/model:free-tier".to_string(),
+        ];
+
+        assert_eq!(
+            free_models_of(&models),
+            vec!["a/model:free".to_string(), "z/model:free".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_provider_with_free_models_gets_a_pool_row_at_the_top_of_its_own_list() {
+        let (registry, db) = registry();
+        let connector = openrouter(&db);
+
+        let models = registry.remote_models().expect("models");
+        let first = &models[0];
+
+        assert!(first.pooled, "the pool must come before the models it pools");
+        assert_eq!(first.id, format!("cloud:{}/{FREE_POOL_MODEL}", connector.id));
+        assert_eq!(first.name, "OpenRouter free models");
+        assert_eq!(first.pool_size, 3);
+        assert_eq!(models.len(), 6, "the pool is one extra row, not a replacement");
+        assert!(models[1..].iter().all(|model| !model.pooled));
+    }
+
+    #[test]
+    fn a_provider_with_nothing_free_gets_no_pool_row() {
+        let (registry, db) = registry();
+        let connector = db
+            .insert_cloud_connector("openai", "OpenAI", "https://api.openai.com/v1", "r2")
+            .expect("insert");
+        db.set_cloud_ok(&connector.id, &["gpt-4o".to_string()]).expect("ok");
+
+        let models = registry.remote_models().expect("models");
+
+        assert_eq!(models.len(), 1);
+        assert!(!models[0].pooled, "an empty pool would be a row that never resolves");
+    }
+
+    #[test]
+    fn the_pool_resolves_to_a_real_free_model_and_never_sends_its_own_name() {
+        let (registry, db) = registry();
+        let connector = openrouter(&db);
+        registry.secrets.put("r1", "sk-or-test").expect("put");
+
+        let target = registry
+            .resolve_target(&format!("cloud:{}/{FREE_POOL_MODEL}", connector.id))
+            .expect("resolve");
+
+        let model = target.wire_model();
+        assert!(model.ends_with(":free"), "got {model}");
+        assert_ne!(model, FREE_POOL_MODEL, "the sentinel must never reach a provider");
+    }
+
+    #[test]
+    fn the_pool_stays_on_one_model_until_it_refuses_then_moves_to_the_next() {
+        let (registry, db) = registry();
+        let connector = openrouter(&db);
+        registry.secrets.put("r1", "sk-or-test").expect("put");
+        let pool_id = format!("cloud:{}/{FREE_POOL_MODEL}", connector.id);
+
+        let first = registry.resolve_target(&pool_id).expect("resolve").wire_model().to_string();
+        assert_eq!(
+            registry.resolve_target(&pool_id).expect("resolve").wire_model(),
+            first,
+            "a conversation must not change model between messages for no reason"
+        );
+
+        registry.note_trouble(&connector.id, &first, 429);
+
+        let second = registry.resolve_target(&pool_id).expect("resolve").wire_model().to_string();
+        assert_ne!(second, first, "an exhausted model is not an outage");
+        assert!(second.ends_with(":free"));
+    }
+
+    #[test]
+    fn every_free_model_refusing_still_produces_a_request_rather_than_an_error() {
+        // The alternative is telling somebody their free tier is unavailable on
+        // the strength of three cooldowns that may already have expired.
+        let (registry, db) = registry();
+        let connector = openrouter(&db);
+        registry.secrets.put("r1", "sk-or-test").expect("put");
+        let pool_id = format!("cloud:{}/{FREE_POOL_MODEL}", connector.id);
+
+        for model in free_models_of(&connector.models) {
+            registry.note_trouble(&connector.id, &model, 429);
+        }
+
+        let target = registry.resolve_target(&pool_id).expect("resolve");
+        assert!(target.wire_model().ends_with(":free"));
+    }
+
+    #[test]
+    fn a_success_status_is_not_treated_as_a_refusal() {
+        let (registry, db) = registry();
+        let connector = openrouter(&db);
+        registry.secrets.put("r1", "sk-or-test").expect("put");
+        let pool_id = format!("cloud:{}/{FREE_POOL_MODEL}", connector.id);
+
+        let first = registry.resolve_target(&pool_id).expect("resolve").wire_model().to_string();
+        registry.note_trouble(&connector.id, &first, 500);
+
+        assert_eq!(
+            registry.resolve_target(&pool_id).expect("resolve").wire_model(),
+            first,
+            "a server error is not the model's fault"
+        );
+    }
+
+    #[test]
+    fn asking_a_provider_with_no_free_models_for_its_pool_says_so_plainly() {
+        let (registry, db) = registry();
+        let connector = db
+            .insert_cloud_connector("openai", "OpenAI", "https://api.openai.com/v1", "r3")
+            .expect("insert");
+        db.set_cloud_ok(&connector.id, &["gpt-4o".to_string()]).expect("ok");
+        registry.secrets.put("r3", "sk-test").expect("put");
+
+        let error = registry
+            .resolve_target(&format!("cloud:{}/{FREE_POOL_MODEL}", connector.id))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("free models"), "got: {error}");
     }
 
     #[tokio::test]

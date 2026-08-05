@@ -46,6 +46,10 @@ pub struct PromptContext<'a> {
     /// The coding workspace this turn is running in, when there is one. Absent
     /// in an ordinary chat, which has no access to files at all.
     pub workspace: Option<WorkspaceBrief<'a>>,
+    /// Whether this turn can read the user's coding workspaces without being in
+    /// one. A chat with this on can answer questions about a project; it still
+    /// cannot change a single byte of it.
+    pub projects_readable: bool,
     /// Skills the user switched on.
     pub skills: &'a [&'a Skill],
     /// Standing instructions from the project this conversation belongs to.
@@ -191,17 +195,29 @@ fn capabilities(context: &PromptContext<'_>) -> String {
 /// Vagueness here is the failure. Told only "you have file tools", a model either
 /// claims access to the whole machine or refuses a folder it was given; naming the
 /// folder and the mode means both questions have a factual answer.
+///
+/// The two writing modes get an extra sentence about commands, because a model
+/// that can run `npm test` and does not know it will describe the test it would
+/// have run. That is the single most common way a coding assistant wastes a turn.
 fn files_line(context: &PromptContext<'_>) -> String {
     let Some(workspace) = &context.workspace else {
-        return "- You have NO access to the user's files. You cannot read, list or write \
-                anything on this computer, and no setting in this conversation changes that. \
-                If they ask, say that file access lives in a coding workspace on the Code \
-                page, where they choose the folder.\n"
-            .to_string();
+        let projects = if context.projects_readable {
+            " You CAN read the coding workspaces they opened, with `list_projects`, \
+             `read_project_file` and `search_projects`. That is read-only."
+        } else {
+            ""
+        };
+
+        return format!(
+            "- You CANNOT change any file on this computer, and no setting in this \
+             conversation changes that.{projects} If they ask you to edit something, say \
+             that editing happens in a coding workspace on the Code page.\n"
+        );
     };
 
     let root = workspace.root;
     let name = workspace.name;
+    let shell = crate::workspace::exec::shell_description();
 
     match workspace.mode {
         WorkspaceMode::Ask => format!(
@@ -212,16 +228,29 @@ fn files_line(context: &PromptContext<'_>) -> String {
         WorkspaceMode::Plan => format!(
             "- You are in the `{name}` workspace, and can READ it: {root}. You may list, \
              read and search files there, and nothing outside it. You CANNOT change \
-             anything this turn — propose the edit and say which file and line it goes in. \
-             Read a file before describing it; never guess at its contents.\n"
+             anything this turn and you CANNOT run commands — propose the edit and say \
+             which file and line it goes in. Read a file before describing it; never guess \
+             at its contents.\n"
         ),
-        WorkspaceMode::Agent => format!(
-            "- You are in the `{name}` workspace and can READ AND CHANGE it: {root}. \
-             Anything outside that folder is refused. Always read a file before editing it. \
-             Prefer `edit_file` over `write_file` for a file that already exists — \
-             `write_file` replaces the whole thing. Every change you make is recorded and \
-             the user can undo it, so say plainly what you changed.\n"
-        ),
+        WorkspaceMode::Agent | WorkspaceMode::Bypass => {
+            let commands = if workspace.mode == WorkspaceMode::Bypass {
+                "any command, with no allowlist"
+            } else {
+                "build, test and package commands; anything else is refused, and says so"
+            };
+
+            format!(
+                "- You are in the `{name}` workspace and can READ AND CHANGE it: {root}. \
+                 Anything outside is refused. Read a file before editing it, and prefer \
+                 `edit_file` over `write_file`, which replaces the whole file. Every change \
+                 can be undone, so say plainly what you changed.\n\
+                 - `run_command` runs {commands} there, through {shell}. Check your work by \
+                 running it — do not describe a command instead of calling it.\n\
+                 - `start_server` runs a dev server in the background and the user sees the \
+                 page in a preview panel. `check_server` reads its output, `stop_server` \
+                 ends it.\n"
+            )
+        }
     }
 }
 
@@ -310,6 +339,7 @@ mod tests {
             tool_names: &[],
             mcp_servers: &[],
             workspace: None,
+            projects_readable: false,
             skills: &[],
             project: None,
         }
@@ -475,14 +505,90 @@ mod tests {
     }
 
     #[test]
-    fn a_chat_is_told_plainly_that_it_cannot_reach_any_file() {
+    fn a_chat_is_told_plainly_that_it_cannot_change_any_file() {
         let prompt = build(&context());
 
-        assert!(prompt.contains("NO access to the user's files"));
+        assert!(prompt.contains("CANNOT change any file"));
         assert!(
             prompt.contains("coding workspace"),
-            "it should say where file access does live"
+            "it should say where editing does live"
         );
+        assert!(
+            !prompt.contains("read_project_file"),
+            "a chat without the projects switch should not be told about a tool it does not have"
+        );
+    }
+
+    #[test]
+    fn a_chat_that_can_read_projects_is_told_it_is_read_only() {
+        let prompt = build(&PromptContext {
+            projects_readable: true,
+            ..context()
+        });
+
+        assert!(prompt.contains("read_project_file"));
+        assert!(prompt.contains("read-only"));
+        assert!(
+            prompt.contains("CANNOT change any file"),
+            "being able to read must not read as being able to write"
+        );
+    }
+
+    #[test]
+    fn a_workspace_turn_is_not_also_told_about_the_weaker_project_tools() {
+        // Inside a workspace the file line already describes access to that
+        // folder. A second, weaker route to the same files is only confusing.
+        let prompt = build(&PromptContext {
+            workspace: Some(WorkspaceBrief {
+                name: "App",
+                root: "/tmp/app",
+                mode: WorkspaceMode::Plan,
+            }),
+            projects_readable: true,
+            ..context()
+        });
+
+        assert!(!prompt.contains("read_project_file"));
+    }
+
+    #[test]
+    fn a_writable_workspace_is_told_it_can_run_things_and_look_at_them() {
+        // The failure this prevents: a model that could have run the test suite
+        // describing the command it would have run instead.
+        let prompt = build(&PromptContext {
+            workspace: Some(WorkspaceBrief {
+                name: "App",
+                root: "/tmp/app",
+                mode: WorkspaceMode::Agent,
+            }),
+            ..context()
+        });
+
+        assert!(prompt.contains("run_command"));
+        assert!(prompt.contains("start_server"));
+        assert!(prompt.contains("preview panel"));
+        assert!(
+            prompt.contains("do not describe a command instead of calling it"),
+            "the whole point is that it runs the command instead of narrating it"
+        );
+        assert!(
+            prompt.contains("refused"),
+            "Agent mode's allowlist should be stated, not discovered"
+        );
+    }
+
+    #[test]
+    fn bypass_is_told_the_allowlist_is_off_rather_than_told_nothing() {
+        let prompt = build(&PromptContext {
+            workspace: Some(WorkspaceBrief {
+                name: "App",
+                root: "/tmp/app",
+                mode: WorkspaceMode::Bypass,
+            }),
+            ..context()
+        });
+
+        assert!(prompt.contains("no allowlist"));
     }
 
     #[test]
@@ -509,7 +615,7 @@ mod tests {
         });
         assert!(asking.contains("NO file tools"));
         assert!(
-            writable.contains("Anything outside that folder is refused"),
+            writable.contains("Anything outside is refused"),
             "the boundary matters more than the capability"
         );
     }
@@ -584,11 +690,14 @@ mod tests {
 
         let words = prompt.split_whitespace().count();
         // Every switch on at once is the worst case and not the common one. The
-        // ceiling moved up from 400 when the file and MCP lines were added; those
-        // paid for themselves by turning two wrong answers into right ones, but
-        // the budget still needs a limit or it will drift indefinitely.
+        // ceiling has moved twice: from 400 when the file and MCP lines were
+        // added, and to here when a writable workspace gained commands and a dev
+        // server. Each rise bought a specific wrong answer becoming a right one —
+        // a model that narrates `npm test` instead of running it is the failure
+        // those three lines exist to stop. The budget still needs a limit, or it
+        // drifts indefinitely and the smallest models drown.
         assert!(
-            words < 500,
+            words < 560,
             "a 0.5B model has little context to spare; got {words} words"
         );
     }
@@ -609,6 +718,7 @@ mod project_tests {
             tool_names: &[],
             mcp_servers: &[],
             workspace: None,
+            projects_readable: false,
             skills: &[],
             project: None,
         }
