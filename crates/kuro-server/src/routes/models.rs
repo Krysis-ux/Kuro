@@ -105,7 +105,17 @@ pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Val
 fn free_models(state: &SharedState) -> Vec<kuro_core::cloud::RemoteModel> {
     let keys = crate::routes::free::stored_keys(state);
 
-    free::FreeFlavour::ALL
+    // Opening the picker is the natural moment to find out what these keys
+    // reach. Without this the provider sections are empty until something else
+    // happens to read the catalogues — a message sent, or a visit to the free
+    // screen — so the first look at a newly pasted key showed a provider with
+    // no models under it and no indication that was temporary.
+    //
+    // In the background, so the picker still opens instantly. The list arrives
+    // on the next poll, which is the right trade for a menu.
+    crate::routes::free::refresh_catalogues_in_background(state, &keys);
+
+    let mut out: Vec<kuro_core::cloud::RemoteModel> = free::FreeFlavour::ALL
         .iter()
         .filter(|flavour| state.free.choose(**flavour, &keys).is_some())
         .map(|flavour| kuro_core::cloud::RemoteModel {
@@ -122,8 +132,109 @@ fn free_models(state: &SharedState) -> Vec<kuro_core::cloud::RemoteModel> {
             // difference. The group heading already says what they are.
             pooled: false,
             pool_size: 0,
+            free: true,
+            specialities: flavour.speciality().map(|s| vec![s.label()]).unwrap_or_default(),
+            params_b: None,
+            // A pooled row is only listed when something can serve it, so by
+            // construction it is available. That check is the `filter` above.
+            unavailable: None,
+            fix_url: None,
         })
-        .collect()
+        .collect();
+
+    out.extend(named_free_models(state, &keys));
+    out
+}
+
+/// Why a model cannot be picked, in words rather than a status code.
+///
+/// A picker row saying "429" is a row nobody can act on. Each of these names
+/// the thing that has to change and, where it is not obvious, who has to change
+/// it — an exhausted allowance is waiting, a rejected key is retyping, and an
+/// unprovisioned model is a page to visit.
+fn explain(trouble: free::Trouble, provider: &str) -> String {
+    match trouble {
+        free::Trouble::RateLimited => {
+            format!("{provider} is out of allowance for now — it comes back")
+        }
+        free::Trouble::Rejected => {
+            format!("{provider} rejected the key. Check it on the Free models screen")
+        }
+        // Not "this model was retired". NVIDIA answers 404 for a model the key
+        // was never provisioned for, which is by far the commoner reason to see
+        // this, and the two are indistinguishable from the response.
+        free::Trouble::Gone => {
+            format!("{provider} would not serve this model on your key")
+        }
+    }
+}
+
+/// Each free provider's own catalogue, named individually.
+///
+/// The four pooled rows above answer "just give me something that works". This
+/// answers the other question, which the picker could not previously ask at
+/// all: *which* models does the key I pasted actually reach? Somebody who adds
+/// an NVIDIA key gets a catalogue of sixty-odd models, and until now every one
+/// of them was invisible — the pool would silently pick one and the picker
+/// showed none.
+///
+/// Grouped under the provider rather than under Kuro Free, because these are a
+/// choice of endpoint rather than a preference handed to the pool: picking one
+/// here pins the request to that provider.
+fn named_free_models(
+    state: &SharedState,
+    keys: &std::collections::HashMap<String, String>,
+) -> Vec<kuro_core::cloud::RemoteModel> {
+    let allow_keyless = state.free.allows_keyless();
+    let mut out = Vec::new();
+
+    for provider in free::FREE_PROVIDERS {
+        if !provider.is_reachable(keys, allow_keyless) {
+            continue;
+        }
+        let group = kuro_core::cloud::RemoteGroup {
+            connector_id: &free::connector_id(provider.slug),
+            connector_label: provider.name,
+            provider: provider.slug,
+        };
+
+        // Why the whole provider is out, if it is. Applies to every one of its
+        // models, so it is asked once.
+        let provider_trouble = state.free.trouble(provider.slug);
+
+        for model in state.free.advertised_chat_models(provider) {
+            let mut row = kuro_core::cloud::RemoteModel::described(
+                format!("{}{}/{model}", free::MODEL_PREFIX, provider.slug),
+                group,
+                &model,
+                // Everything reachable here is inside the provider's free
+                // allowance by construction: `advertised_chat_models` has
+                // already applied the marker that separates the allowance from
+                // the bill.
+                true,
+            );
+
+            // The model's own refusal wins over the provider's, because it is
+            // the more specific fact and the one with a remedy attached.
+            let trouble = state
+                .free
+                .model_trouble(provider.slug, &model)
+                .or(provider_trouble);
+
+            if let Some(trouble) = trouble {
+                row.unavailable = Some(explain(trouble, provider.name));
+                if trouble.stale_catalogue() {
+                    row.fix_url = provider
+                        .model_key_url
+                        .map(|template| template.replace("{model}", &model));
+                }
+            }
+
+            out.push(row);
+        }
+    }
+
+    out
 }
 
 /// Kuro's built-in suggestions, with a fit estimate and whether each is already

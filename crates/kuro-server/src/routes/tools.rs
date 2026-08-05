@@ -7,7 +7,8 @@
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use kuro_core::orchestrate::Surface;
+use kuro_core::orchestrate::{budget_for, Surface};
+use kuro_core::settings::Effort;
 use kuro_core::settings::{
     self, default_tool_groups, memory_preload_enabled, SearchSettings, KEY_SEARCH_BASE_URL,
     KEY_SEARCH_PROVIDER,
@@ -21,6 +22,29 @@ use serde_json::{json, Value};
 
 use crate::error::AppResult;
 use crate::state::SharedState;
+
+/// What one turn will actually carry, at each surface and effort.
+///
+/// The screen's honest headline. Switching a skill on adds it to the pool a
+/// turn chooses from; these are the ceilings on what any turn spends out of
+/// that pool, which is the number a user is really asking about when they look
+/// at the token count and start switching things off.
+fn budget_summary() -> Value {
+    let describe = |surface: Surface| {
+        [Effort::Low, Effort::Balanced, Effort::High, Effort::Max, Effort::Ultra]
+            .iter()
+            .map(|effort| json!({
+                "effort": effort.as_str(),
+                "tokens": budget_for(*effort, surface),
+            }))
+            .collect::<Vec<_>>()
+    };
+
+    json!({
+        "chat": describe(Surface::Chat),
+        "code": describe(Surface::Code),
+    })
+}
 
 /// Everything the tools screen needs in one call.
 pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>> {
@@ -50,8 +74,21 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
             // were optional.
             "catalogue": skills::selectable(),
             "enabled": enabled_skills,
-            // Shown so a user turning on six skills at once understands the cost.
+            // What every enabled skill would cost if they all went in at once.
+            //
+            // Kept, but no longer the number the screen leads with, because it
+            // stopped being what a turn spends. Skills used to be concatenated
+            // into every prompt, so this total *was* the cost; a turn now ranks
+            // the enabled set against what was asked and sends what fits
+            // `budgetTokens`. Showing forty thousand as the running cost of
+            // leaving switches on would be describing a version of Kuro that no
+            // longer exists — and it is precisely the number that made people
+            // switch skills off to protect a context window that was never
+            // actually at risk.
             "approxTokens": skills::approx_tokens(&active),
+            // What one turn will really carry, per surface and effort. The
+            // honest headline.
+            "budgets": budget_summary(),
             "essentials": skills::essentials()
                 .iter()
                 .map(|skill| json!({

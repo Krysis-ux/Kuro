@@ -63,6 +63,31 @@ export interface RemoteModel {
   pooled: boolean
   /** How many models the pool covers. Zero on an ordinary row. */
   pool_size: number
+  /**
+   * Whether this model costs nothing on the key that reaches it.
+   *
+   * Per-model rather than per-provider because on a gateway it is: one
+   * OpenRouter key reaches hundreds of billed models and a dozen free ones.
+   */
+  free: boolean
+  /**
+   * What the model's name says it was trained for — `code`, `reasoning`,
+   * `vision`, `fast`, `general`. Read off the id by the server, because no
+   * provider publishes this and a list of four hundred untagged ids is a list
+   * nobody can choose from.
+   */
+  specialities: string[]
+  /** Size in billions of parameters, when the name states one. */
+  params_b: number | null
+  /**
+   * Why this cannot be picked right now, when it cannot.
+   *
+   * The row greys out rather than disappearing: a model that vanishes answers
+   * "where did the one I used yesterday go" with silence.
+   */
+  unavailable: string | null
+  /** Where to go to make it work — a provisioning page, when one exists. */
+  fix_url: string | null
 }
 
 /** A GGUF repository found on Hugging Face. */
@@ -134,6 +159,12 @@ export interface SurfaceSettings {
   defaultMode?: WorkspaceMode
 }
 
+/** How much skill guidance one turn may carry at a given effort level. */
+export interface SkillBudget {
+  effort: string
+  tokens: number
+}
+
 export interface ToolsOverview {
   builtins: BuiltinTool[]
   defaultGroups: ToolGroup[]
@@ -141,8 +172,19 @@ export interface ToolsOverview {
   skills: {
     catalogue: Skill[]
     enabled: string[]
-    /** Rough context cost of what is on, so a user can see it adding up. */
+    /**
+     * What every enabled skill would cost if they all went into one prompt.
+     *
+     * No longer what a turn spends, and no longer what the screen leads with.
+     * A turn ranks the enabled set against the message and sends what fits
+     * `budgets`; this total only describes the pool.
+     */
     approxTokens: number
+    /** The ceiling on what one turn carries, per surface and effort level. */
+    budgets: {
+      chat: SkillBudget[]
+      code: SkillBudget[]
+    }
     /** Shown as a note, not as switches — these cannot be turned off. */
     essentials: EssentialSkill[]
   }

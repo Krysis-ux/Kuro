@@ -154,6 +154,24 @@ if stale "web/dist/index.html" web/src web/index.html web/package.json; then
 fi
 
 # ---------------------------------------------------------------------------
+# Put `kuro` on the PATH
+# ---------------------------------------------------------------------------
+
+# Building produced a working `kuro` and left it in target/release, where
+# nothing looks for it — so `kuro` was not a command, and the first thing
+# anybody typed after building answered "command not found". Linking it is one
+# line and it belongs here, next to the build that produced it.
+#
+# Best-effort on purpose. A machine where no writable directory is on the PATH
+# still gets a working server; it just also gets a note about the command line,
+# which is not a reason to refuse to start.
+if [ ! -L "$HOME/.local/bin/kuro" ] && ! command -v kuro >/dev/null 2>&1; then
+  ./packaging/install-cli.sh "$ROOT/target/release/kuro" || \
+    warn "Could not link the kuro command. The interface is unaffected."
+  printf '\n'
+fi
+
+# ---------------------------------------------------------------------------
 # Start
 # ---------------------------------------------------------------------------
 

@@ -467,7 +467,13 @@ function SkillsSection({
 
   if (!overview) return null
 
-  const { catalogue, enabled, approxTokens } = overview.skills
+  const { catalogue, enabled, budgets } = overview.skills
+
+  // What a coding turn at the default effort will actually carry. The number
+  // worth showing, because it is the one that does not move when a switch is
+  // flipped — see the note on the heading below.
+  const perTurn =
+    budgets?.code.find((entry) => entry.effort === 'balanced')?.tokens ?? null
 
   const toggle = (slug: string) => {
     const next = enabled.includes(slug)
@@ -480,9 +486,10 @@ function SkillsSection({
    * Turn a whole group on or off at once.
    *
    * Forty-four switches is a lot of clicking to answer "give me everything for
-   * writing code". The token count beside the heading stays the honest check on
-   * doing that — turning everything on is allowed, and the cost of it is
-   * visible in the same glance.
+   * writing code". Doing exactly that is now the default, and it is no longer
+   * something the user needs protecting from: a turn ranks what is switched on
+   * against what was asked and sends what fits its budget, so a skill that is
+   * on but irrelevant costs nothing.
    */
   const setMany = (slugs: string[], on: boolean) => {
     const next = on
@@ -514,8 +521,18 @@ function SkillsSection({
         </h2>
         <div className="panel-head-actions">
           {enabled.length > 0 && (
-            <span className="faint">
-              {enabled.length} on · about {approxTokens} tokens of context
+            // Deliberately no longer the sum of everything switched on. That
+            // number ran to tens of thousands with the whole catalogue enabled
+            // and read as the running cost of leaving switches on — so people
+            // switched skills off to protect a context window that was never
+            // actually at risk. What a turn spends is capped regardless of how
+            // many are on, and the cap is the honest figure.
+            <span
+              className="faint"
+              title="Switching a skill on makes it available. Each turn picks the ones your message calls for, up to the budget."
+            >
+              {enabled.length} on
+              {perTurn !== null && ` · up to ~${perTurn} tokens per turn`}
             </span>
           )}
           <button

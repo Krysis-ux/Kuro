@@ -189,6 +189,75 @@ pub struct RemoteModel {
     pub pooled: bool,
     /// How many models the pool covers. Zero for an ordinary row.
     pub pool_size: usize,
+    /// Whether this model costs nothing on the key that reaches it.
+    ///
+    /// The distinction is per-model rather than per-provider because on a
+    /// gateway it is: an OpenRouter key reaches three hundred models it bills
+    /// for and fourteen it does not, and a picker that does not say which is
+    /// which is a picker somebody spends money in by accident.
+    pub free: bool,
+    /// What the model's name says it was trained for, as words the picker can
+    /// put on the row. Empty only for a pooled row, which is not one model.
+    pub specialities: Vec<&'static str>,
+    /// Size in billions of parameters, when the name states one.
+    pub params_b: Option<f32>,
+    /// Why this cannot be picked right now, when it cannot.
+    ///
+    /// The row stays in the list and goes grey rather than disappearing. A
+    /// model that vanishes answers "where did the one I used yesterday go" with
+    /// silence, and the answer — out of allowance until tomorrow, or this key
+    /// was not issued for it — is exactly what the user needs in order to act.
+    pub unavailable: Option<String>,
+    /// Where to go to make it work, when there is somewhere to go.
+    ///
+    /// NVIDIA is the case that forced this: its models are provisioned per key,
+    /// and the fix is a page on build.nvidia.com for that specific model. A
+    /// reason with no remedy attached is a dead end.
+    pub fix_url: Option<String>,
+}
+
+impl RemoteModel {
+    /// Describe one named model, reading its name for what it is.
+    ///
+    /// The id is passed in rather than built here because the two callers
+    /// address their models differently: a connector's models are `cloud:`
+    /// ids resolved against the registry, and a free provider's are `free:`
+    /// ids resolved against the pool. Everything after the id is the same
+    /// question in both cases, which is what makes one constructor worth
+    /// having.
+    ///
+    /// Non-chat models are the caller's to filter out. This cannot refuse
+    /// them, because refusing would also have to be a `None` the pooled rows
+    /// would trip over.
+    pub fn described(id: String, group: RemoteGroup<'_>, model: &str, free: bool) -> Self {
+        let classified = crate::classify::classify(model);
+        Self {
+            id,
+            name: model.to_string(),
+            connector_id: group.connector_id.to_string(),
+            connector_label: group.connector_label.to_string(),
+            provider: group.provider.to_string(),
+            pooled: false,
+            pool_size: 0,
+            free,
+            specialities: classified
+                .specialities
+                .iter()
+                .map(|speciality| speciality.label())
+                .collect(),
+            params_b: classified.params_b,
+            unavailable: None,
+            fix_url: None,
+        }
+    }
+}
+
+/// Which heading a model is filed under in the picker.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteGroup<'a> {
+    pub connector_id: &'a str,
+    pub connector_label: &'a str,
+    pub provider: &'a str,
 }
 
 /// Which free model a connector is currently using, and which have refused.
@@ -363,19 +432,31 @@ impl ProviderRegistry {
                     provider: connector.provider.clone(),
                     pooled: true,
                     pool_size: free.len(),
+                    free: true,
+                    specialities: Vec::new(),
+                    params_b: None,
+                    unavailable: None,
+                    fix_url: None,
                 });
             }
 
             for model in &connector.models {
-                out.push(RemoteModel {
-                    id: format!("{MODEL_PREFIX}{}/{}", connector.id, model),
-                    name: model.clone(),
-                    connector_id: connector.id.clone(),
-                    connector_label: connector.label.clone(),
-                    provider: connector.provider.clone(),
-                    pooled: false,
-                    pool_size: 0,
-                });
+                // A provider's model list is not a list of chat models. Sending
+                // a conversation to an embedding endpoint fails with a 400 that
+                // reads like a broken key, so those rows never reach a picker.
+                if !crate::classify::classify(model).kind.is_chat() {
+                    continue;
+                }
+                out.push(RemoteModel::described(
+                    format!("{MODEL_PREFIX}{}/{}", connector.id, model),
+                    RemoteGroup {
+                        connector_id: &connector.id,
+                        connector_label: &connector.label,
+                        provider: &connector.provider,
+                    },
+                    model,
+                    free.iter().any(|entry| entry == model),
+                ));
             }
         }
 

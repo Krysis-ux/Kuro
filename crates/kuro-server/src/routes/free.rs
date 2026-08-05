@@ -459,6 +459,40 @@ fn gather_keys(
 /// this costs nothing for half an hour, and the first message after a restart
 /// pays one round trip per provider rather than picking a model that was retired
 /// three months ago.
+/// Start a catalogue read in the background and return at once.
+///
+/// This is what a chat turn calls, and the reason it exists is latency that was
+/// being paid in the worst possible place. `refresh_catalogues` reads every
+/// stale provider concurrently, so it takes as long as the *slowest* of them —
+/// up to the fifteen-second timeout — and it was awaited before a free model
+/// was chosen. The cost landed on the first message after every restart and
+/// again every half hour, as dead air before the first token, on the one code
+/// path where the user is watching a cursor blink.
+///
+/// Nothing needs it to be synchronous. A cold catalogue is not a blocker: an
+/// unknown provider is tried with its curated models, and a model that turns
+/// out to have been retired answers 404, which is already handled as `Gone` —
+/// a short cooldown and a failover to the next provider. That is one failed
+/// round trip in the rare case, against fifteen seconds of stall in the common
+/// one.
+pub fn refresh_catalogues_in_background(state: &SharedState, keys: &HashMap<String, String>) {
+    if !state.free.needs_any_catalogue(keys) {
+        return;
+    }
+    // One read at a time. A burst of messages must not each start their own
+    // sweep of the same twenty endpoints.
+    if !state.free.begin_refresh() {
+        return;
+    }
+
+    let state = state.clone();
+    let keys = keys.clone();
+    tokio::spawn(async move {
+        refresh_catalogues(&state, &keys).await;
+        state.free.end_refresh();
+    });
+}
+
 pub async fn refresh_catalogues(state: &SharedState, keys: &HashMap<String, String>) {
     let allow_keyless = state.free.allows_keyless();
 
@@ -494,15 +528,53 @@ pub async fn refresh_catalogues(state: &SharedState, keys: &HashMap<String, Stri
             (slug, models)
         });
 
+    let mut learned = false;
     for (slug, models) in futures::future::join_all(reads).await {
         match models {
             Some(models) => {
                 tracing::debug!(slug, count = models.len(), "free catalogue read");
                 state.free.set_live_models(slug, models);
+                learned = true;
             }
             None => tracing::debug!(slug, "free catalogue could not be read"),
         }
     }
+
+    if learned {
+        save_catalogues(state);
+    }
+}
+
+/// Settings key holding the last catalogue read of every free provider.
+pub const KEY_CATALOGUES: &str = "free.catalogues";
+
+/// Write the catalogues to storage so the next start already has them.
+///
+/// A cloud connector's model list has always been in the database, which is why
+/// OpenRouter's four hundred models were in the picker the instant it opened. A
+/// free provider's lived only in memory, so after a restart the picker rendered
+/// with none of them and filled in seconds later — and the model list is fetched
+/// once, not polled, so in practice it did not fill in at all. One provider
+/// showed and four did not, which reads as four keys that stopped working.
+fn save_catalogues(state: &SharedState) {
+    let stored = state.free.catalogues();
+    if let Err(error) = state
+        .db
+        .set_setting(KEY_CATALOGUES, &serde_json::json!(stored))
+    {
+        // Not worth failing a request over: the catalogues are a cache, and the
+        // cost of losing them is one slow start rather than a wrong answer.
+        tracing::warn!(%error, "could not store free catalogues");
+    }
+}
+
+/// Read back what the last run learned.
+pub fn stored_catalogues(db: &kuro_core::db::Db) -> HashMap<String, Vec<String>> {
+    db.get_setting(KEY_CATALOGUES)
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
 }
 
 /// One provider's advertised model ids.

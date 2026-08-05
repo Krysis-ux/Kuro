@@ -386,13 +386,24 @@ async fn run_turn(
                 .as_ref()
                 .map(|held| (held.workspace.root.as_path(), held.workspace.mode)),
             auto: settings::auto_orchestrate(&state.db, surface).unwrap_or(true),
+            // What was asked, so a skill about the subject at hand outranks one
+            // that merely happens to be switched on when the brief runs out of
+            // room.
+            message: turn.query,
         },
         &chosen_skills,
     );
     tracing::debug!(plan = %orchestration.summary, "effort resolved");
 
-    let mut active_skills = chosen_skills;
-    active_skills.extend(orchestration.added_skills.iter().copied());
+    // The plan's own list, rather than the user's selection plus additions.
+    //
+    // Those used to be the same thing, and that is what made the store's token
+    // counter a warning rather than a number: every enabled skill went into
+    // every prompt, so switching on all forty-odd meant carrying all forty-odd
+    // into a question about none of them. The plan now ranks the enabled set
+    // against what was actually asked and sends what fits — so a switch means
+    // "Kuro may use this", not "put this in front of every message".
+    let active_skills = orchestration.skills.clone();
 
     // The workspace, if this conversation belongs to one. Described to the model
     // exactly as it is enforced, so the brief never claims an access the tools
@@ -789,7 +800,7 @@ async fn stream_once(
                 // retrying now is deliberate: the stream is already open on the
                 // client, and swapping providers mid-turn would produce a reply
                 // half from each.
-                note_free_trouble(state, turn.target.upstream(), status.as_u16());
+                note_free_trouble(state, turn.target.upstream(), model, status.as_u16());
                 // The same, one level down: a single free model on a provider
                 // that has run out of allowance, so that provider's pool moves
                 // to the next one rather than sending every later message to a
@@ -884,7 +895,12 @@ async fn stream_once(
 /// the request found it. That costs one credential read on a path that has just
 /// failed anyway, and keeps the pool from having to thread its choice through
 /// the whole turn.
-fn note_free_trouble(state: &SharedState, upstream: Option<&str>, status: u16) {
+fn note_free_trouble(
+    state: &SharedState,
+    upstream: Option<&str>,
+    model: &str,
+    status: u16,
+) {
     let Some(trouble) = kuro_core::free::Trouble::from_status(status) else {
         return;
     };
@@ -898,13 +914,21 @@ fn note_free_trouble(state: &SharedState, upstream: Option<&str>, status: u16) {
         return;
     };
 
-    // "No such model" says Kuro's idea of what this provider offers is out of
-    // date, so the cached list is thrown away and the next message reads it
-    // again. Setting the provider aside as well is what makes *this* message
-    // fail over rather than retrying a name that has already been retired.
+    // A 404 is about the *model*, not the provider, and conflating the two was
+    // expensive. NVIDIA NIM issues several of its models per-key: asking for one
+    // the key was not provisioned for answers `404 Function '…': Not found for
+    // account '…'`, which used to set the whole provider aside and discard its
+    // catalogue. One unprovisioned model took out the other eighty-two, and the
+    // next message reported there was no working NVIDIA key at all.
+    //
+    // So the model is set aside and the provider is left alone, which makes this
+    // message fail over to another model on the *same* key rather than
+    // abandoning a key that works perfectly.
     if trouble.stale_catalogue() {
-        state.free.forget_live_models(slug);
+        state.free.note_model_trouble(slug, model, trouble);
+        return;
     }
+
     state.free.note_trouble(slug, trouble);
 }
 

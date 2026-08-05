@@ -89,6 +89,14 @@ async fn main() -> anyhow::Result<()> {
     // touch the database; the database is where it is decided.
     let free = kuro_core::free::FreePool::new();
     free.set_allow_keyless(kuro_core::settings::allow_keyless(&db).unwrap_or(true));
+    // What the last run learned about each provider's catalogue.
+    //
+    // A cloud connector's models are in the database, so OpenRouter's four
+    // hundred are in the picker the moment it opens. A free provider's were in
+    // this process only — so after every restart the picker rendered with none
+    // of them, and since the model list is fetched once rather than polled, it
+    // stayed that way. Four working keys looked like four broken ones.
+    free.restore_catalogues(routes::free::stored_catalogues(&db));
 
     let app_state = Arc::new(AppState {
         db,

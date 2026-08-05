@@ -13,6 +13,7 @@ import { useUi } from '../store/ui'
 import {
   BoltIcon,
   ChatIcon,
+  ChevronIcon,
   CloseIcon,
   EyeIcon,
   ListIcon,
@@ -598,22 +599,147 @@ function FileTree({ id, onOpen }: { id: string; onOpen: (path: string) => void }
       )}
 
       <ul className="code-tree">
-        {shown.map((entry) =>
-          entry.endsWith('/') ? (
-            <li key={entry} className="is-dir">
-              <FolderIcon size={12} />
-              <span className="mono">{entry}</span>
-            </li>
-          ) : (
-            <li key={entry}>
-              <button className="code-tree-file" onClick={() => onOpen(entry)} title={entry}>
+        <TreeLevel
+          nodes={buildTree(shown)}
+          depth={0}
+          // A filter is a search, and a search whose hits are inside closed
+          // folders looks like a search that found nothing.
+          forceOpen={needle.length > 0}
+          onOpen={onOpen}
+        />
+      </ul>
+    </>
+  )
+}
+
+/** One node of the project tree. */
+interface TreeNode {
+  name: string
+  path: string
+  dir: boolean
+  children: TreeNode[]
+}
+
+/**
+ * Turn the flat list of paths into a tree.
+ *
+ * The API answers with every path in the project — `src/`, `src/main.rs`,
+ * `src/db/mod.rs` — and this used to be rendered exactly as it arrived: one flat
+ * list, every directory a label you could not click, every file in the project
+ * visible at once. On anything real that is hundreds of rows deep and there is
+ * no way to collapse any of it, which makes the panel useless for the thing a
+ * file tree is for — seeing the shape of a project.
+ */
+function buildTree(paths: string[]): TreeNode[] {
+  const roots: TreeNode[] = []
+
+  for (const path of paths) {
+    const dir = path.endsWith('/')
+    const parts = path.replace(/\/$/, '').split('/').filter(Boolean)
+    let level = roots
+
+    parts.forEach((name, index) => {
+      const last = index === parts.length - 1
+      const here = parts.slice(0, index + 1).join('/')
+
+      let node = level.find((candidate) => candidate.name === name)
+      if (!node) {
+        node = { name, path: last && !dir ? path : `${here}/`, dir: !last || dir, children: [] }
+        level.push(node)
+      }
+      // A directory entry can arrive after a file inside it, so a node created
+      // as a leaf has to be able to become a branch.
+      if (!last) node.dir = true
+      level = node.children
+    })
+  }
+
+  return sortLevel(roots)
+}
+
+/** Folders first, then files, each alphabetical — the order every file tree uses. */
+function sortLevel(nodes: TreeNode[]): TreeNode[] {
+  nodes.sort((left, right) => {
+    if (left.dir !== right.dir) return left.dir ? -1 : 1
+    return left.name.localeCompare(right.name)
+  })
+  for (const node of nodes) sortLevel(node.children)
+  return nodes
+}
+
+/**
+ * One level of the tree.
+ *
+ * Folders start closed. That is the whole point of the rewrite: opening a
+ * project should show you its top level — a handful of directories and the
+ * files beside them — not every file it contains.
+ */
+function TreeLevel({
+  nodes,
+  depth,
+  forceOpen,
+  onOpen,
+}: {
+  nodes: TreeNode[]
+  depth: number
+  forceOpen: boolean
+  onOpen: (path: string) => void
+}) {
+  const [open, setOpen] = useState<string[]>([])
+
+  return (
+    <>
+      {nodes.map((node) => {
+        const isOpen = forceOpen || open.includes(node.path)
+
+        if (!node.dir) {
+          return (
+            <li key={node.path} style={{ paddingLeft: depth * 12 }}>
+              <button
+                className="code-tree-file"
+                onClick={() => onOpen(node.path)}
+                title={node.path}
+              >
                 <FileIcon size={12} />
-                <span className="mono">{entry}</span>
+                <span className="mono">{node.name}</span>
               </button>
             </li>
-          ),
-        )}
-      </ul>
+          )
+        }
+
+        return (
+          <li key={node.path}>
+            <button
+              className="code-tree-dir"
+              style={{ paddingLeft: depth * 12 }}
+              aria-expanded={isOpen}
+              onClick={() =>
+                setOpen((held) =>
+                  held.includes(node.path)
+                    ? held.filter((path) => path !== node.path)
+                    : [...held, node.path],
+                )
+              }
+              title={node.path}
+            >
+              <ChevronIcon size={11} className={isOpen ? 'is-open' : ''} />
+              <FolderIcon size={12} />
+              <span className="mono">{node.name}</span>
+            </button>
+
+            {isOpen && node.children.length > 0 && (
+              <ul className="code-tree">
+                <TreeLevel
+                  nodes={node.children}
+                  depth={depth + 1}
+                  forceOpen={forceOpen}
+                  onOpen={onOpen}
+                />
+              </ul>
+            )}
+          </li>
+        )
+      })}
     </>
   )
 }
