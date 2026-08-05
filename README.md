@@ -174,6 +174,37 @@ Then open <http://127.0.0.1:8420>.
   a shutdown with extra steps. Useful when an engine setting needs a reload or a
   child process has wedged.
 
+## Using Kuro as the model for another coding tool
+
+`kuro launch` runs a coding tool you already have installed against a model Kuro
+supplies — local weights, a free provider's allowance, or a key you hold:
+
+```bash
+kuro launch claude
+kuro launch claude --model free:coding
+kuro launch codex --model qwen2.5-coder-7b
+```
+
+The tool starts normally and keeps its own interface, file editing and permission
+prompts. What changes is where the model comes from.
+
+This works because Kuro serves `/v1/messages` in Anthropic's shape as well as
+`/v1/chat/completions` in OpenAI's, and translates either into whatever the chosen
+endpoint actually speaks. The launcher sets `ANTHROPIC_BASE_URL` (or
+`OPENAI_BASE_URL`) for the child process and nothing else — no configuration file
+is edited and nothing is installed, so closing the terminal is the whole undo.
+
+Kuro's own coding tools are deliberately not offered on that path. The launched
+tool brings its own, under its own rules; two tool layers with two ideas of what
+is permitted would mean neither was really in charge.
+
+You can also point anything else at it by hand:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8420
+export ANTHROPIC_AUTH_TOKEN=kuro-local
+```
+
 ## Not built yet
 
 Listed honestly, because the interface shows some of these as disabled rather than

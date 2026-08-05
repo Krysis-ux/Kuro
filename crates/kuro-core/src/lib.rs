@@ -12,6 +12,7 @@ pub mod db;
 pub mod engine;
 pub mod error;
 pub mod free;
+pub mod gateway;
 pub mod hardware;
 pub mod http;
 pub mod mcp;

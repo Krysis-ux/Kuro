@@ -32,6 +32,11 @@ impl KuroClient {
         })
     }
 
+    /// The daemon's address, for handing to another program.
+    pub fn base_url(&self) -> String {
+        self.base_url.clone()
+    }
+
     pub fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
