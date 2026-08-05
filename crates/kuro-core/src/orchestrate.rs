@@ -65,9 +65,22 @@ pub const ULTRA_ROUNDS: usize = 40;
 pub struct Plan {
     /// How many times the model may call tools and be asked again.
     pub max_tool_rounds: usize,
-    /// Skills added on top of the user's own selection, already de-duplicated
-    /// against it.
+    /// The brief's actual skill list: what the user switched on and what
+    /// orchestration added, ranked by relevance and cut to the budget.
+    ///
+    /// This is what the caller should send. It is not the same as "everything
+    /// the user enabled" and is not meant to be — see [`fit_to_budget`].
+    pub skills: Vec<&'static Skill>,
+    /// Of `skills`, the ones the user had not switched on themselves.
     pub added_skills: Vec<&'static Skill>,
+    /// Skills left out because the brief had no room for them.
+    ///
+    /// Reported rather than dropped silently: a user who switched fifteen
+    /// skills on and got six is owed the reason, and "your brief was full" is a
+    /// different problem from "your switch did not work".
+    pub trimmed_skills: Vec<&'static Skill>,
+    /// The ceiling this turn was fitted to.
+    pub budget_tokens: usize,
     /// One line for the interface, so the effort control can say what it did
     /// rather than being a mystery dial.
     pub summary: String,
@@ -83,21 +96,120 @@ pub struct Request<'a> {
     pub workspace: Option<(&'a Path, WorkspaceMode)>,
     /// Whether the user has auto-orchestration on for this surface.
     pub auto: bool,
+    /// What the user actually asked, so a skill about the subject at hand can
+    /// outrank one that merely happens to be switched on.
+    ///
+    /// This is the only guess in the module and it is used only to *order*
+    /// candidates, never to admit one that was not already a candidate. A wrong
+    /// guess therefore costs a slightly worse ordering rather than expertise
+    /// the user did not ask for — which is the property that makes matching on
+    /// a message defensible at all.
+    pub message: &'a str,
 }
+
+/// How many tokens of skill guidance a turn may carry, over and above the
+/// essentials.
+///
+/// The reason there is a number here at all: skills are additive and nothing
+/// used to subtract. Switch on everything the store offers and the brief runs
+/// past forty thousand tokens before the first message — which on a small local
+/// model is most of the context window spent on advice about languages the
+/// question does not involve. The store's token counter said so honestly and
+/// the orchestrator did nothing about it.
+///
+/// So the budget is the thing that makes "leave them all on" a reasonable
+/// default. Everything stays switched on; what changes is that a turn takes the
+/// most relevant few and says which it left behind.
+///
+/// The essentials are outside this. They are four short rules about not
+/// destroying the user's code, and rationing those to make room for a style
+/// preference would be the wrong trade at any budget.
+pub fn budget_for(effort: Effort, surface: Surface) -> usize {
+    match (surface, effort) {
+        (Surface::Chat, Effort::Low) => 200,
+        (Surface::Chat, Effort::Balanced) => 500,
+        (Surface::Chat, Effort::High) => 900,
+        (Surface::Chat, Effort::Max | Effort::Ultra) => 1_400,
+        (Surface::Code, Effort::Low) => 400,
+        (Surface::Code, Effort::Balanced) => 1_000,
+        (Surface::Code, Effort::High) => 1_800,
+        (Surface::Code, Effort::Max) => 3_000,
+        // Ultra stops rationing, near enough. A long agentic run genuinely
+        // benefits from the whole coding shelf, and somebody who chose Ultra has
+        // said they will pay for it.
+        (Surface::Code, Effort::Ultra) => 8_000,
+    }
+}
+
+/// Which skills a request's own words call for.
+///
+/// A deliberately small table, and everything not in it falls back to matching
+/// its own slug. Two reasons for that shape. A derived trigger list — the words
+/// in the skill's name — produces entries like "way" and "around" from "Finding
+/// your way around", which match everything. And a guess that fires on the
+/// wrong word is invisible: nothing in the output says why the Ruby skill turned
+/// up, so it has to be predictable enough to reason about from the table alone.
+///
+/// Matching is on whole words, so `go` does not fire on "going" and `sql` does
+/// not fire on "sqlite" without meaning to — that one is listed on purpose.
+const TRIGGERS: &[(&str, &[&str])] = &[
+    ("rust", &["rust", "cargo", "clippy", "rustc", "crate"]),
+    ("python", &["python", "py", "pip", "django", "flask", "pandas", "numpy", "pytest"]),
+    ("typescript", &["typescript", "ts", "tsx", "javascript", "js", "node", "npm", "deno"]),
+    ("go", &["go", "golang", "goroutine", "gofmt"]),
+    ("sql", &["sql", "postgres", "postgresql", "sqlite", "mysql", "query", "schema", "index"]),
+    ("shell", &["shell", "bash", "zsh", "sh", "script"]),
+    ("java", &["java", "maven", "gradle", "spring"]),
+    ("csharp", &["csharp", "dotnet", "nuget", "asp"]),
+    ("cpp", &["cpp", "cmake", "clang", "gcc"]),
+    ("swift", &["swift", "swiftui", "xcode", "ios"]),
+    ("kotlin", &["kotlin", "android", "compose"]),
+    ("php", &["php", "laravel", "composer", "symfony"]),
+    ("ruby", &["ruby", "rails", "gem", "bundler"]),
+    ("html-css", &["html", "css", "stylesheet", "tailwind", "flexbox", "grid", "layout"]),
+    ("react", &["react", "jsx", "hook", "hooks", "component", "usestate", "useeffect"]),
+    ("testing", &["test", "tests", "testing", "coverage", "assert", "spec", "mock"]),
+    ("debugging", &["debug", "debugging", "bug", "crash", "broken", "failing", "why"]),
+    ("security", &["security", "secure", "auth", "vulnerability", "injection", "xss", "csrf"]),
+    ("performance", &["performance", "slow", "slower", "fast", "faster", "latency", "optimise",
+                      "optimize", "profiling", "memory"]),
+    ("code-review", &["review", "reviewing", "feedback", "critique"]),
+    ("refactoring", &["refactor", "refactoring", "cleanup", "tidy", "simplify"]),
+    ("architecture", &["architecture", "design", "structure", "module", "boundary"]),
+    ("api-design", &["api", "endpoint", "rest", "route", "http"]),
+    ("git", &["git", "commit", "branch", "merge", "rebase", "conflict"]),
+    ("error-handling", &["error", "errors", "exception", "panic", "failure"]),
+    ("accessibility", &["accessibility", "a11y", "aria", "screenreader", "contrast"]),
+    ("ui-design", &["ui", "ux", "interface", "spacing", "typography", "colour", "color"]),
+    ("data-modelling", &["model", "modelling", "modeling", "entity", "relation", "migration"]),
+    ("recursive-learning", &["again", "retry", "still", "keeps", "remember", "learned", "loop"]),
+];
 
 /// Resolve an effort level into a plan.
 pub fn plan(request: &Request<'_>, already_enabled: &[&'static Skill]) -> Plan {
     let rounds = rounds_for(request.effort, request.surface);
+    let budget = budget_for(request.effort, request.surface);
 
     if !request.auto {
+        // Orchestration off means the user's own list goes in verbatim, budget
+        // and all. They asked for exactly these and switched off the thing that
+        // would have second-guessed them.
         return Plan {
             max_tool_rounds: rounds,
+            skills: already_enabled.to_vec(),
             added_skills: Vec::new(),
+            trimmed_skills: Vec::new(),
+            budget_tokens: budget,
             summary: format!("{} effort · up to {rounds} tool rounds", request.effort.as_str()),
         };
     }
 
     let mut added: Vec<&'static Skill> = Vec::new();
+    // Skills the *project* is evidence for, tracked apart from the rest so they
+    // can outrank a switch somebody flipped months ago and forgot. A
+    // `Cargo.toml` in the folder being worked in is a stronger signal about
+    // what this turn needs than a preference set once.
+    let mut from_project: Vec<&'static str> = Vec::new();
 
     // The essentials, whenever there is a project to work in. These are not a
     // function of effort: reading a file before editing it is not something to
@@ -117,6 +229,7 @@ pub fn plan(request: &Request<'_>, already_enabled: &[&'static Skill]) -> Plan {
         if request.effort >= Effort::Balanced {
             for slug in detect_languages(root) {
                 if let Some(skill) = skills::find(slug) {
+                    from_project.push(skill.slug);
                     push_new(&mut added, already_enabled, skill);
                 }
             }
@@ -167,11 +280,165 @@ pub fn plan(request: &Request<'_>, already_enabled: &[&'static Skill]) -> Plan {
         }
     }
 
+    let chosen = Selection {
+        enabled: already_enabled,
+        added: &added,
+        from_project: &from_project,
+    };
+    let (kept, trimmed) = fit_to_budget(&chosen, request, budget);
+
+    // What the brief gained over the user's own list, which is what the effort
+    // dial's summary is describing.
+    let added_skills: Vec<&'static Skill> = kept
+        .iter()
+        .copied()
+        .filter(|skill| !already_enabled.iter().any(|have| have.slug == skill.slug))
+        .collect();
+
     Plan {
-        summary: describe(request.effort, rounds, &added),
+        summary: describe(request.effort, rounds, &added_skills, &trimmed),
         max_tool_rounds: rounds,
-        added_skills: added,
+        skills: kept,
+        added_skills,
+        trimmed_skills: trimmed,
+        budget_tokens: budget,
     }
+}
+
+/// Everything that could go in this turn's brief, and where each came from.
+struct Selection<'a> {
+    /// What the user switched on in the store.
+    enabled: &'a [&'static Skill],
+    /// What orchestration reached for on top of it.
+    added: &'a [&'static Skill],
+    /// Slugs among `added` that a file in the project is evidence for.
+    from_project: &'a [&'static str],
+}
+
+/// Choose this turn's brief from everything available to it.
+///
+/// ## Switched on means available, not always sent
+///
+/// This is the distinction the whole module turns on, and getting it wrong is
+/// what made the store's token counter frightening. Every enabled skill used to
+/// be concatenated into every system prompt, so switching on the forty-odd the
+/// store offers meant carrying all forty-odd into a question about none of
+/// them — tens of thousands of tokens of advice about Ruby and accessibility in
+/// front of "why won't this compile". On a small local model that is most of
+/// the context window, spent before the question is read.
+///
+/// So an enabled skill is a *candidate*. The user has said Kuro may use it; this
+/// decides whether this particular turn should. That is what makes leaving
+/// everything on a reasonable default rather than a way to ruin the model, and
+/// it is why the store can stop being a budgeting exercise.
+///
+/// ## The ranking
+///
+/// Most protected first:
+///
+/// 1. **Essentials.** Outside the budget entirely — the rules about not
+///    destroying the user's code. Trading one away for a style preference is the
+///    wrong trade at any budget.
+/// 2. **Skills the request itself named.** Somebody asking why their tests fail
+///    gets the testing and debugging guidance ahead of everything else.
+/// 3. **Skills the project is evidence for.** A `Cargo.toml` in the folder being
+///    worked in beats a switch flipped months ago and forgotten.
+/// 4. **The rest of what the user chose.**
+/// 5. **The rest of what orchestration reached for.**
+///
+/// Cheapest first within a tier, so the remaining budget buys as many as it can
+/// rather than one long one.
+fn fit_to_budget(
+    selection: &Selection<'_>,
+    request: &Request<'_>,
+    budget: usize,
+) -> (Vec<&'static Skill>, Vec<&'static Skill>) {
+    let words = tokenise(request.message);
+
+    let mut ranked: Vec<(u8, usize, &'static Skill)> = Vec::new();
+    let mut seen: Vec<&'static str> = Vec::new();
+
+    // The user's own list first, so that when a skill is both chosen and added
+    // it is ranked as chosen.
+    let candidates = selection
+        .enabled
+        .iter()
+        .map(|skill| (*skill, true))
+        .chain(selection.added.iter().map(|skill| (*skill, false)));
+
+    for (skill, chosen) in candidates {
+        if seen.contains(&skill.slug) {
+            continue;
+        }
+        seen.push(skill.slug);
+
+        let tier = if skill.essential {
+            0
+        } else if mentions(skill, &words) {
+            1
+        } else if selection.from_project.contains(&skill.slug) {
+            2
+        } else if chosen {
+            3
+        } else {
+            4
+        };
+        ranked.push((tier, skill.approx_tokens, skill));
+    }
+
+    ranked.sort_by_key(|(tier, cost, _)| (*tier, *cost));
+
+    let mut spent = 0usize;
+    let mut kept = Vec::new();
+    let mut trimmed = Vec::new();
+
+    for (tier, cost, skill) in ranked {
+        if tier == 0 {
+            kept.push(skill);
+            continue;
+        }
+        if spent + cost > budget {
+            trimmed.push(skill);
+            continue;
+        }
+        spent += cost;
+        kept.push(skill);
+    }
+
+    (kept, trimmed)
+}
+
+/// Whether the request asked for what this skill is about.
+fn mentions(skill: &Skill, words: &[String]) -> bool {
+    let triggers = TRIGGERS
+        .iter()
+        .find(|(slug, _)| *slug == skill.slug)
+        .map(|(_, words)| *words);
+
+    match triggers {
+        Some(triggers) => triggers.iter().any(|trigger| words.iter().any(|word| word == trigger)),
+        // Not in the table: fall back to the skill's own slug, split on the
+        // hyphen, so `careful-edits` still answers to "edits".
+        None => skill
+            .slug
+            .split('-')
+            .filter(|part| part.len() >= 3)
+            .any(|part| words.iter().any(|word| word == part)),
+    }
+}
+
+/// The request's words, lowercased, for whole-word matching.
+///
+/// Whole words rather than substrings because the alternative misfires
+/// constantly: `go` appears inside "going", "algorithm" and "category", and a
+/// substring match would bring the Go skill into every third conversation.
+fn tokenise(message: &str) -> Vec<String> {
+    message
+        .to_ascii_lowercase()
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn push_new(
@@ -186,17 +453,29 @@ fn push_new(
     }
 }
 
-fn describe(effort: Effort, rounds: usize, added: &[&'static Skill]) -> String {
-    if added.is_empty() {
-        return format!("{} effort · up to {rounds} tool rounds", effort.as_str());
+fn describe(
+    effort: Effort,
+    rounds: usize,
+    added: &[&'static Skill],
+    trimmed: &[&'static Skill],
+) -> String {
+    let mut out = format!("{} effort · up to {rounds} tool rounds", effort.as_str());
+
+    if !added.is_empty() {
+        let names: Vec<&str> = added.iter().map(|skill| skill.name).collect();
+        out.push_str(&format!(" · added {}", names.join(", ")));
     }
 
-    let names: Vec<&str> = added.iter().map(|skill| skill.name).collect();
-    format!(
-        "{} effort · up to {rounds} tool rounds · added {}",
-        effort.as_str(),
-        names.join(", ")
-    )
+    // Said out loud rather than left as a silent difference between what the
+    // store shows switched on and what the model was actually told.
+    if !trimmed.is_empty() {
+        out.push_str(&format!(
+            " · {} left out for room",
+            trimmed.len()
+        ));
+    }
+
+    out
 }
 
 /// How many tool rounds an effort level buys.
@@ -310,6 +589,7 @@ mod tests {
             surface: Surface::Code,
             workspace: Some((root, mode)),
             auto: true,
+            message: "",
         }
     }
 
@@ -478,6 +758,7 @@ mod tests {
                 surface: Surface::Chat,
                 workspace: None,
                 auto: true,
+                message: "",
             },
             &[],
         );
@@ -530,6 +811,7 @@ mod tests {
                 surface: Surface::Chat,
                 workspace: None,
                 auto: true,
+                message: "",
             },
             &[],
         );
@@ -551,5 +833,193 @@ mod tests {
         assert!(plan.summary.contains("Rust"), "got: {}", plan.summary);
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The user has switched on everything the store offers.
+    ///
+    /// The state the budget exists for: with every skill enabled the brief used
+    /// to run past forty thousand tokens, which on a small local model is most
+    /// of the context window spent before the first word of the question.
+    fn everything() -> Vec<&'static Skill> {
+        skills::selectable()
+    }
+
+    #[test]
+    fn a_brief_never_costs_more_than_its_budget_even_with_every_skill_switched_on() {
+        // The state the budget exists for. With everything enabled the brief
+        // used to carry every skill into every prompt — tens of thousands of
+        // tokens of advice about Ruby and accessibility in front of a question
+        // about neither.
+        let root = project(&[("Cargo.toml", ""), ("package.json", "{}")]);
+
+        for effort in [Effort::Low, Effort::Balanced, Effort::High, Effort::Max, Effort::Ultra] {
+            let planned = plan(&request(effort, &root, WorkspaceMode::Agent), &everything());
+
+            let spent: usize = planned
+                .skills
+                .iter()
+                .filter(|skill| !skill.essential)
+                .map(|skill| skill.approx_tokens)
+                .sum();
+
+            assert!(
+                spent <= planned.budget_tokens,
+                "{} spent {spent} against a budget of {}",
+                effort.as_str(),
+                planned.budget_tokens
+            );
+        }
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn switching_everything_on_is_survivable_rather_than_ruinous() {
+        // The whole point of the exercise: a user who leaves every switch on
+        // should get a usable assistant, not one that has spent its context
+        // window before reading the question.
+        let root = project(&[("Cargo.toml", "")]);
+        let all = everything();
+
+        let planned = plan(&request(Effort::Balanced, &root, WorkspaceMode::Agent), &all);
+
+        let everything_cost = skills::approx_tokens(&all);
+        let sent_cost = skills::approx_tokens(&planned.skills);
+
+        assert!(
+            sent_cost < everything_cost / 2,
+            "sent {sent_cost} of {everything_cost} — the selection is not selecting"
+        );
+        assert!(!planned.skills.is_empty(), "and it still has to send something");
+    }
+
+    #[test]
+    fn the_essentials_are_never_traded_away_to_make_room() {
+        // They are the rules about not destroying the user's code. Cutting one
+        // to fit a style preference is the wrong trade at any budget, so they
+        // sit outside it entirely.
+        let root = project(&[("Cargo.toml", "")]);
+
+        let planned = plan(&request(Effort::Low, &root, WorkspaceMode::Agent), &everything());
+
+        for essential in skills::essentials() {
+            // `running-code` is dropped in a mode that cannot run anything,
+            // which is a different reason and a correct one.
+            if essential.slug == "running-code" {
+                continue;
+            }
+            assert!(
+                planned.skills.iter().any(|kept| kept.slug == essential.slug),
+                "`{}` was trimmed",
+                essential.slug
+            );
+        }
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn turning_orchestration_off_sends_the_users_list_verbatim() {
+        // Somebody who switched off the thing that would second-guess them has
+        // said what they want in the brief. The budget does not get a vote.
+        let root = project(&[("Cargo.toml", "")]);
+        let chosen = everything();
+
+        let mut asked = request(Effort::Low, &root, WorkspaceMode::Agent);
+        asked.auto = false;
+
+        let planned = plan(&asked, &chosen);
+
+        assert_eq!(planned.skills.len(), chosen.len());
+        assert!(planned.trimmed_skills.is_empty());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_crowded_brief_says_what_it_left_out_rather_than_dropping_it_silently() {
+        let root = project(&[("Cargo.toml", "")]);
+
+        // Low effort with everything switched on: something has to give.
+        let planned = plan(&request(Effort::Low, &root, WorkspaceMode::Agent), &everything());
+
+        assert!(!planned.trimmed_skills.is_empty(), "nothing was trimmed to check");
+        assert!(
+            planned.summary.contains("left out"),
+            "the difference between what is switched on and what was sent has to \
+             be visible, or a full brief looks like a broken switch — got: {}",
+            planned.summary
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_words_of_the_request_decide_what_survives_a_trim() {
+        // Everything is switched on and the budget is tight, so the ranking is
+        // the only thing deciding what the model actually reads.
+        let root = project(&[("Cargo.toml", "")]);
+
+        let mut asked = request(Effort::Low, &root, WorkspaceMode::Agent);
+        asked.message = "my postgres query is slow, can you help me add an index";
+
+        let planned = plan(&asked, &everything());
+        let kept = |slug: &str| planned.skills.iter().any(|skill| skill.slug == slug);
+
+        assert!(kept("sql"), "the question is about SQL: {}", planned.summary);
+        assert!(kept("performance"), "and about speed: {}", planned.summary);
+        // And the ones it plainly is not about lost their place.
+        assert!(!kept("ruby"));
+        assert!(!kept("accessibility"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_project_outranks_a_switch_flipped_months_ago() {
+        // A `Cargo.toml` in the folder being worked in is stronger evidence
+        // about this turn than a preference set once and forgotten.
+        let root = project(&[("Cargo.toml", "")]);
+
+        let mut asked = request(Effort::Balanced, &root, WorkspaceMode::Agent);
+        asked.message = "tidy this up";
+
+        let planned = plan(&asked, &everything());
+
+        assert!(
+            planned.skills.iter().any(|skill| skill.slug == "rust"),
+            "got: {}",
+            planned.summary
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_word_inside_another_word_does_not_summon_a_language() {
+        // Substring matching would bring the Go skill into every third
+        // conversation: `go` sits inside "going", "algorithm" and "category".
+        let words = tokenise("I am going to categorise the algorithm");
+        let go = skills::find("go").expect("go");
+
+        assert!(!mentions(go, &words));
+        assert!(mentions(go, &tokenise("write me a go server")));
+    }
+
+    #[test]
+    fn matching_ignores_case_and_punctuation() {
+        let rust = skills::find("rust").expect("rust");
+
+        assert!(mentions(rust, &tokenise("Why won't CARGO build?")));
+        assert!(mentions(rust, &tokenise("rust: lifetimes")));
+    }
+
+    #[test]
+    fn a_skill_outside_the_trigger_table_still_answers_to_its_own_name() {
+        // The table covers the ones where the obvious word is not the slug.
+        // Everything else falls back rather than becoming unreachable.
+        let skill = skills::find("careful-edits").expect("careful-edits");
+        assert!(mentions(skill, &tokenise("be careful with those edits")));
+        assert!(!mentions(skill, &tokenise("write me a poem")));
     }
 }

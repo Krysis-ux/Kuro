@@ -1666,15 +1666,175 @@
   margin-top: var(--space-2);
 }
 
+/* The `/` command palette.
+   Sits above the composer rather than over it: the message being typed has to
+   stay readable, because half the reason to run a command mid-sentence is that
+   the sentence told you which one you wanted. */
+.slash-menu {
+  margin-bottom: var(--space-2);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border-radius: var(--radius);
+  background: var(--bg-hover);
+  box-shadow: var(--shadow-pop);
+}
+
+.slash-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 7px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  text-align: left;
+  color: var(--text-muted);
+}
+
+/* Hover and keyboard selection are one state, so moving the mouse over the list
+   does not leave two rows looking equally chosen. */
+.slash-item.is-on {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.slash-name {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.slash-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-empty {
+  padding: var(--space-3);
+  text-align: center;
+  font-size: var(--text-sm);
+}
+
+/* Introduces the run of provider sections. There is exactly one of these, and
+   it exists because "API providers" is the boundary the eye needs: everything
+   above it runs on this machine and everything below it does not. */
+.model-section-head {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.model-section-head:first-child {
+  margin-top: 0;
+  border-top: none;
+}
+
 .model-group-head {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   padding: var(--space-2) var(--space-2) var(--space-1);
   font-size: var(--text-xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-faint);
+  text-align: left;
+}
+
+/* A provider heading is a disclosure rather than a label, so it has to read as
+   pressable: full row, its own hover, and a chevron that turns. */
+.model-group-head.is-button {
+  padding: 7px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.model-group-head.is-button:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.model-group-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* How many models are behind the row, so the size of what is about to open is
+   known before it opens. */
+.model-group-count {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--bg-active);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.model-group-head svg:last-child {
+  flex: none;
+  transition: transform var(--duration, 120ms) ease;
+}
+
+.model-group-head svg.is-open {
+  transform: rotate(180deg);
+}
+
+/* Was a sentence telling the user to search. That is advice, not a control —
+   and when the thing you want is forty rows down a list you have already
+   opened, being told to type something else is a worse answer than a button. */
+.model-group-more {
+  width: 100%;
+  padding: 7px var(--space-2) 7px 30px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  text-align: left;
+  color: var(--text-muted);
+}
+
+.model-group-more:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+/* A model that has already refused. Visible, legible, and not clickable — the
+   reason it is greyed is the point, so it must not be greyed into illegibility. */
+.model-option.is-unavailable {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.model-option.is-unavailable:hover {
+  background: transparent;
+}
+
+.model-option-why {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 190px;
+}
+
+/* The way out of the greyed state. Kept interactive while its row is not. */
+.model-option-fix {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 4px;
+  cursor: pointer;
+  pointer-events: auto;
+  color: var(--text-muted);
+}
+
+.model-option-fix:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .model-option {
@@ -4022,6 +4182,46 @@ body.is-resizing iframe {
 .code-tree-file:hover {
   background: var(--bg-hover);
   color: var(--text);
+}
+
+/* A directory row. Was a static label, which made every folder in the project
+   permanently open and the panel a flat dump of hundreds of paths. */
+.code-tree-dir {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.code-tree-dir:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.code-tree-dir svg:first-child {
+  flex: none;
+  transition: transform 120ms ease;
+  /* Points right when closed, down when open — the convention every file tree
+     uses, and the only affordance saying the row can be opened at all. */
+  transform: rotate(-90deg);
+}
+
+.code-tree-dir svg:first-child.is-open {
+  transform: rotate(0deg);
+}
+
+/* Nested levels carry their own indent through inline padding, so the list
+   itself adds none. */
+.code-tree .code-tree {
+  padding-left: 0;
 }
 
 .code-tree-file .mono {

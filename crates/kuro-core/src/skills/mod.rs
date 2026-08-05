@@ -624,6 +624,40 @@ When debugging:
 - Once the cause is known, say why it produced this symptom before giving the patch.",
     },
     Skill {
+        // The one skill here about the *shape* of an attempt rather than about
+        // a language or a practice.
+        //
+        // Small models fail in a characteristic way: the first approach does not
+        // work, and the second attempt is the first attempt again. Nothing in
+        // the transcript stops that — the failed attempt is right there in the
+        // context and gets pattern-matched as "what we do here". So the rule
+        // that matters is not "try harder", it is "say what the last attempt
+        // ruled out before starting the next one", which turns the context from
+        // an echo into evidence.
+        //
+        // The memory tools are named explicitly because a rule that says
+        // "remember this for next time" with no mechanism is a rule the model
+        // performs rather than follows. `remember` and `recall` are real, they
+        // ship switched on, and a fact written to one is genuinely there in a
+        // conversation next week.
+        slug: "recursive-learning",
+        name: "Learning as you go",
+        blurb: "Never repeat a failed attempt. Carry forward what each one ruled out.",
+        category: SkillCategory::Practice,
+        approx_tokens: 190,
+        essential: false,
+        instructions: "\
+Treat repeated attempts as a search that narrows, never as the same attempt again:
+- Before a task resembling an earlier one, call `recall`. Do not rediscover a decision already made.
+- State your assumption and what would disprove it before acting, so the result is informative either way.
+- After a failure, name in one line what it ruled out, then try something different in kind. Re-running an unchanged command is not a next step.
+- Never repeat an approach that has already failed here. If it is genuinely the only option, say why it should work this time.
+- After two failures on one sub-problem, change the frame: question the assumption you have not tested, or say what you would need to make progress.
+- When you learn something durable — a convention, a decision, a preference — call `remember` with it as a standalone sentence. Facts, not commentary.
+- Do not record passing detail, anything uncertain, or a summary of what you just did.
+- End a substantial task by saying what you now know that you did not at the start.",
+    },
+    Skill {
         slug: "testing",
         name: "Testing",
         blurb: "Tests that fail for one reason and name it.",
@@ -941,22 +975,23 @@ pub fn selectable() -> Vec<&'static Skill> {
 /// Slugs the user has switched on.
 /// What a fresh install starts with switched on.
 ///
-/// Everything in the coding category, because somebody who opens the Code page
-/// on the first day wants an assistant that already knows how to work in a
-/// codebase — not forty-four switches and no idea which of them matter. These
-/// stay ordinary preferences: they appear in the store with the rest, and
-/// turning one off keeps it off, because the choice is recorded as soon as it
-/// is made.
+/// Everything. That used to be the coding category only, and the reason for the
+/// restraint was sound at the time: skills were concatenated into every system
+/// prompt, so switching on all forty-odd meant carrying all forty-odd into every
+/// question, and a default that spent the context window before the first
+/// message would have been a worse first day than a short list.
 ///
-/// Deliberately not "everything". The token count beside the heading is real,
-/// and a default that spent the whole context window before the first message
-/// would be a worse first day than a short list.
+/// [`crate::orchestrate`] removed that constraint. An enabled skill is now a
+/// candidate rather than a guarantee: each turn ranks the enabled set against
+/// what was actually asked and sends what fits a token budget. Leaving Ruby on
+/// therefore costs nothing on a Rust question — it simply never wins a place —
+/// and the switch means "Kuro may use this" rather than "put this in front of
+/// every message".
+///
+/// With that true, a short default is no longer protecting anything. It is just
+/// expertise the user has to go and find.
 pub fn default_slugs() -> Vec<String> {
-    SKILLS
-        .iter()
-        .filter(|skill| skill.category == SkillCategory::Coding && !skill.essential)
-        .map(|skill| skill.slug.to_string())
-        .collect()
+    selectable().iter().map(|skill| skill.slug.to_string()).collect()
 }
 
 pub fn enabled_slugs(db: &Db) -> Result<Vec<String>> {
@@ -1065,22 +1100,24 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_install_starts_with_the_coding_skills_and_nothing_else() {
-        // This used to assert that nothing was on. The rule changed
-        // deliberately: opening the Code page on the first day and finding
-        // forty-four switches, none of them on, is a worse introduction than
-        // an assistant that already knows how to work in a codebase.
+    fn a_fresh_install_starts_with_everything_switched_on() {
+        // Twice revised, and each revision followed a change in what "switched
+        // on" costs. It began as nothing on, which meant opening the Code page
+        // and finding forty-four switches with no idea which mattered. It became
+        // the coding category, because concatenating every enabled skill into
+        // every prompt made "everything" ruinously expensive.
         //
-        // Only the coding category, and only the switchable ones. Turning
-        // everything on would spend most of a small model's context before the
-        // first message.
+        // Neither constraint holds now. `crate::orchestrate` ranks the enabled
+        // set per turn and sends what fits a budget, so an enabled skill costs
+        // nothing on a question it is irrelevant to. A short default is no
+        // longer protecting anything — it is expertise the user has to go and
+        // find.
         let db = Db::open_in_memory().expect("open");
         let slugs = enabled_slugs(&db).expect("slugs");
 
-        assert!(!slugs.is_empty());
+        assert_eq!(slugs.len(), selectable().len());
         for slug in &slugs {
             let skill = find(slug).expect("a real skill");
-            assert_eq!(skill.category, SkillCategory::Coding, "`{slug}` is not a coding skill");
             assert!(!skill.essential, "an essential is already always on");
         }
     }

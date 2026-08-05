@@ -6,6 +6,7 @@
 
 pub mod agents;
 pub mod catalog;
+pub mod classify;
 pub mod cloud;
 pub mod db;
 pub mod engine;

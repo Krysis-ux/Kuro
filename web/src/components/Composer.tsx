@@ -10,6 +10,14 @@ import {
 } from '../lib/api'
 import { useUi } from '../store/ui'
 import { ModelPicker } from './ModelPicker'
+import {
+  buildCommands,
+  commandQuery,
+  matchCommands,
+  SlashMenu,
+  useSlashKeys,
+  type SlashCommand,
+} from './SlashCommands'
 import { ThinkingPicker } from './ThinkingPicker'
 import {
   FileIcon,
@@ -44,6 +52,16 @@ export interface ComposerToggle {
   on: boolean
   title: string
   onChange: (on: boolean) => void
+  /**
+   * What to call this in the `/` palette, when the id would collide with a
+   * page of the same name.
+   *
+   * The projects toggle needs one. Its id is `projects` and so is the Projects
+   * page, and the two are genuinely different things — one is "may the model
+   * read my folders this turn", the other is "show me my projects" — so
+   * dropping either would lose something a person will look for.
+   */
+  command?: string
 }
 
 interface ComposerProps {
@@ -132,6 +150,10 @@ export function Composer({
   const [menuOpen, setMenuOpen] = useState(false)
   const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
+  // For the `/` commands, half of which are navigation. The `from` they carry
+  // is what lets the destination offer a way back to a half-written message.
+  const navigate = useNavigate()
+  const location = useLocation()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -209,7 +231,72 @@ export function Composer({
     setAttachError(null)
   }
 
+  // `/` commands. Open while the message is a single slash-prefixed word, which
+  // is what keeps them clear of prose that merely contains a slash.
+  const query = commandQuery(text)
+  const commands = useMemo(
+    () =>
+      buildCommands({
+        toggles,
+        go: (path) => {
+          setText('')
+          navigate(path, { state: { from: location.pathname + location.search } })
+        },
+        onClear: () => setText(''),
+        onHelp: () => {
+          setText('')
+          navigate('/tools', { state: { from: location.pathname + location.search } })
+        },
+      }),
+    [toggles, navigate, location.pathname, location.search, setText],
+  )
+  const matches = useMemo(
+    () => (query === null ? [] : matchCommands(commands, query)),
+    [commands, query],
+  )
+  const slashOpen = query !== null && matches.length > 0
+  const { index, setIndex } = useSlashKeys(slashOpen, matches.length)
+
+  const runCommand = (command: SlashCommand) => {
+    // Cleared first so a command that navigates does not leave `/web` sitting
+    // in the box to be sent later as a message.
+    setText('')
+    command.run()
+    textareaRef.current?.focus()
+  }
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setIndex((current) => (current + 1) % matches.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setIndex((current) => (current - 1 + matches.length) % matches.length)
+        return
+      }
+      // Tab completes rather than running, so a half-typed name can be checked
+      // before it does anything.
+      const highlighted = matches[index]
+      if (event.key === 'Tab' && highlighted) {
+        event.preventDefault()
+        setText(`/${highlighted.name}`)
+        return
+      }
+      if (event.key === 'Enter' && !event.shiftKey && highlighted) {
+        event.preventDefault()
+        runCommand(highlighted)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setText('')
+        return
+      }
+    }
+
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       submit()
@@ -249,6 +336,16 @@ export function Composer({
 
   return (
     <div className={`composer-shell ${centred ? 'is-centred' : ''}`}>
+      {slashOpen && (
+        <SlashMenu
+          commands={matches}
+          query={query ?? ''}
+          index={index}
+          onHover={setIndex}
+          onRun={runCommand}
+        />
+      )}
+
       <div className="composer">
         {attachments.length > 0 && (
           <div className="composer-attachments">
@@ -384,6 +481,22 @@ export function Composer({
  * capability look like a bug. The *reason* it is unusable lives in the tooltip,
  * not on the row: spelling it out inline turned this menu into a wall of
  * apologetic grey text that wrapped over three lines each.
+ *
+ * ## Every enabled row does something
+ *
+ * That is a rule now because it was broken. Images and Audio were enabled
+ * whenever the chosen model was a provider model — `isRemote` alone was taken
+ * as proof of the capability — and neither had a click handler at all. So on
+ * any provider model they lit up, invited a click, and did nothing: no picker,
+ * no error, no attachment. The bug reads as the whole application being broken,
+ * because the part of it the user touched was.
+ *
+ * Both are off until Kuro can actually send them, and the tooltip says which
+ * side the missing piece is on. A message's content is a string end to end —
+ * in storage, in the history sent upstream, and on the wire — so an image has
+ * nowhere to go yet regardless of which model is chosen. Saying "needs a vision
+ * model" would have pointed at the wrong thing entirely: it is not the model
+ * that is missing.
  */
 function AddMenu({
   capabilities,
@@ -402,9 +515,9 @@ function AddMenu({
   // message is a one-way trip through the sidebar.
   const leaving = { state: { from: location.pathname + location.search } }
 
-  // A provider's models are not described by the local capability list, so assume
-  // the common case rather than disabling everything.
-  const has = (capability: string) => isRemote || capabilities.includes(capability)
+  // Kept for the tooltips: whether the *model* could take an image is still
+  // worth saying, even while the answer does not change whether the row works.
+  const modelHandles = (capability: string) => isRemote || capabilities.includes(capability)
 
   const servers = useQuery({
     queryKey: ['mcp', 'servers'],
@@ -434,14 +547,18 @@ function AddMenu({
       <MenuItem
         icon={<ImageIcon />}
         label="Images"
-        enabled={has('vision')}
-        hint="Needs a vision model"
+        enabled={false}
+        hint={
+          modelHandles('vision')
+            ? 'This model can read images, but Kuro cannot send them yet — a message is text from the composer to the provider.'
+            : 'Kuro cannot send images yet, and this model could not read one.'
+        }
       />
       <MenuItem
         icon={<MicIcon />}
         label="Audio"
-        enabled={has('audio')}
-        hint="Needs an audio model"
+        enabled={false}
+        hint="Kuro cannot send audio yet — a message is text from the composer to the provider."
       />
       <MenuItem
         icon={<VideoIcon />}
@@ -554,6 +671,10 @@ export function chatToggles(state: {
     },
     {
       id: 'projects',
+      // `/folders` rather than `/projects`, which is the page. This switch is
+      // about whether the model may read the folders opened on the Code page,
+      // and "folders" is both what it does and what nothing else is called.
+      command: 'folders',
       label: 'Projects',
       icon: <FolderIcon />,
       on: state.projects,

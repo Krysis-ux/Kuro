@@ -226,7 +226,17 @@ cd web && npm install && npm run build && cd ..
 ./target/release/kuro serve
 ```
 
-Put `target/release` on your `PATH` to use `kuro` from anywhere.
+To use `kuro` from anywhere:
+
+```bash
+packaging/install-cli.sh
+```
+
+That links the built binary into the first directory on your `PATH` that you can
+write to — usually `~/.local/bin` — and prints the one line to add to your shell
+profile if none of them are. `Start Kuro.command` runs it for you, and the macOS
+app links its own copy the first time it launches, so this is only needed after
+a manual `cargo build`.
 
 ### Building the installer
 
