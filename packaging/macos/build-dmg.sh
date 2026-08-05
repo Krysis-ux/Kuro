@@ -203,9 +203,26 @@ URL="http://127.0.0.1:${PORT}"
 # Named explicitly rather than left to the search order, so a stray `web`
 # directory in whatever the working directory happens to be cannot win.
 export KURO_WEB_DIR="$RESOURCES/web"
-# So `kuro serve`, if the user puts the command-line binary on their PATH,
-# starts the server that shipped with this app rather than hunting for one.
+# So `kuro serve` starts the server that shipped with this app rather than
+# hunting for one.
 export KURO_SERVER_BIN="$RESOURCES/bin/kuro-server"
+
+# Link the command-line binary the first time the app runs.
+#
+# The bundle has always shipped `kuro` in Resources/bin, and nothing ever put it
+# anywhere a shell would find it — so installing the app gave you the command
+# and also gave you "command not found" when you typed it. Dragging an app to
+# Applications is the whole install on macOS; there is no second step the user
+# is expected to know about.
+#
+# `~/.local/bin` rather than `/usr/local/bin`: the latter needs a root password,
+# and prompting for one on first launch to place a symlink is a worse trade than
+# printing a PATH line. Silent and best-effort, because this is not what the
+# user opened the app to do.
+if ! command -v kuro >/dev/null 2>&1; then
+  mkdir -p "$HOME/.local/bin" 2>/dev/null &&
+    ln -sf "$RESOURCES/bin/kuro" "$HOME/.local/bin/kuro" 2>/dev/null
+fi
 
 # A Finder launch has no terminal, so a failure has to be shown in a dialog or
 # it is invisible.

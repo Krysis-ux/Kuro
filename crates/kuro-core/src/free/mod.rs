@@ -39,6 +39,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::classify::{classify, Speciality};
 use crate::wire::{Auth, Quirks};
 
 /// Prefix marking a model as belonging to the free pool rather than to one
@@ -101,6 +102,20 @@ impl FreeFlavour {
     /// The model id the picker shows.
     pub fn model_id(self) -> String {
         format!("{MODEL_PREFIX}{}", self.as_str())
+    }
+
+    /// What this flavour is looking for in a model it has never seen.
+    ///
+    /// `Auto` maps to nothing on purpose. It is not asking for a speciality —
+    /// it is asking for the best general answer, and matching it against
+    /// [`Speciality::General`] would rule out a strong coder for no reason.
+    pub fn speciality(self) -> Option<Speciality> {
+        match self {
+            Self::Auto => None,
+            Self::Coding => Some(Speciality::Coding),
+            Self::Reasoning => Some(Speciality::Reasoning),
+            Self::Fast => Some(Speciality::Fast),
+        }
     }
 
     pub fn label(self) -> &'static str {
@@ -251,6 +266,22 @@ pub struct FreeProvider {
     pub privacy: Privacy,
     /// How this endpoint departs from the plain OpenAI shape.
     pub quirks: Quirks,
+    /// Where a *single model's* key is generated, when this provider issues
+    /// keys per model rather than one key for the catalogue. `{model}` is
+    /// replaced with the model id.
+    ///
+    /// Only NVIDIA has one, and finding out cost a confusing afternoon. A key
+    /// from build.nvidia.com is described as unlocking "serverless APIs powered
+    /// by NVIDIA NIM", which reads as all of them; in fact several models are
+    /// provisioned individually, and one issued from a model's own page reaches
+    /// that model and not the rest. Asking for an unprovisioned one answers 404
+    /// with a message about an account, so it looks like a broken key rather
+    /// than a missing entitlement.
+    ///
+    /// There is no way to discover this from the API — `/v1/models` lists every
+    /// model whether or not the key reaches it — so the only honest thing Kuro
+    /// can do is point at the page that fixes it.
+    pub model_key_url: Option<&'static str>,
     pub models: &'static [FreeModel],
 }
 
@@ -296,6 +327,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "llama-3.3-70b-versatile",
@@ -320,6 +352,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "llama-3.3-70b",
@@ -345,6 +378,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::SHARED,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "gemini-2.0-flash",
@@ -378,6 +412,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
             ],
             ..Quirks::OPENAI
         },
+        model_key_url: None,
         models: &[FreeModel {
             // Every id curated here before had been retired, which is the
             // failure the live-catalogue check exists to survive. Kept short
@@ -398,6 +433,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "mistral-small-latest",
@@ -427,6 +463,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
             strip_schema_keywords: true,
             ..Quirks::OPENAI
         },
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "command-a-03-2025",
@@ -452,6 +489,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[FreeModel {
             id: "@cf/meta/llama-3.1-8b-instruct",
             flavours: &[FreeFlavour::Fast],
@@ -470,6 +508,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[FreeModel {
             id: "glm-4-flash",
             flavours: &[FreeFlavour::Auto, FreeFlavour::Fast],
@@ -487,6 +526,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[FreeModel {
             id: "Qwen/Qwen2.5-7B-Instruct",
             flavours: &[FreeFlavour::Auto, FreeFlavour::Fast],
@@ -504,6 +544,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "gpt-oss:20b",
@@ -522,7 +563,17 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         name: "NVIDIA NIM",
         base_url: "https://integrate.api.nvidia.com/v1",
         credentials_url: "https://build.nvidia.com/",
-        allowance: "Free API credits for developers, across a large model catalogue.",
+        // Spelled out because the wording on NVIDIA's own page is actively
+        // misleading. A key generated from the account page is described as
+        // unlocking "serverless APIs powered by NVIDIA NIM", which reads as all
+        // of them — and then several models answer 404 with a message about an
+        // account, which reads as a broken key rather than a missing
+        // entitlement. The fix is a second key from the model's own page, and
+        // nothing anywhere says so.
+        allowance: "Free API credits for developers, across a large catalogue. Note that one \
+                    key does not reach every model: some are enabled per key. If a model here \
+                    is greyed out, use the link on its row to generate a key from that model's \
+                    own page, then paste it here.",
         key_hint: Some("nvapi-…"),
         free_marker: FreeMarker::Everything,
         tier: FreeTier::Recurring,
@@ -534,6 +585,10 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
             timeout: Some(Duration::from_secs(180)),
             ..Quirks::OPENAI
         },
+        // The one provider that issues keys per model. See the field's own
+        // note: a general key does not reach every model here, and nothing in
+        // the API says which ones it does reach.
+        model_key_url: Some("https://build.nvidia.com/{model}"),
         models: &[
             FreeModel {
                 id: "meta/llama-3.3-70b-instruct",
@@ -559,6 +614,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "alibaba/qwen-3-32b",
@@ -584,6 +640,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "openai/gpt-oss-20b",
@@ -608,6 +665,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[FreeModel {
             id: "llama-3.3-70b-instruct",
             flavours: &[FreeFlavour::Auto],
@@ -625,6 +683,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[FreeModel {
             id: "meta-llama/Llama-3.3-70B-Instruct",
             flavours: &[FreeFlavour::Auto],
@@ -643,6 +702,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks::OPENAI,
+        model_key_url: None,
         models: &[FreeModel {
             id: "deepseek-v4-flash",
             flavours: &[FreeFlavour::Auto, FreeFlavour::Fast],
@@ -665,6 +725,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
             chat_path: "/chat/",
             ..Quirks::OPENAI
         },
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "qwen7b",
@@ -698,6 +759,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
             auth: Auth::None,
             ..Quirks::OPENAI
         },
+        model_key_url: None,
         models: &[FreeModel {
             id: "inclusionai/ling-3.0-flash:free",
             flavours: &[FreeFlavour::Auto, FreeFlavour::Fast],
@@ -719,6 +781,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
             auth: Auth::None,
             ..Quirks::OPENAI
         },
+        model_key_url: None,
         models: &[
             FreeModel {
                 id: "Qwen3.5-9B",
@@ -757,14 +820,71 @@ fn model_rank(provider: &FreeProvider) -> u8 {
 
 /// Whether a model id names the free pool.
 pub fn is_free_model(model_id: &str) -> bool {
-    model_id
-        .strip_prefix(MODEL_PREFIX)
-        .is_some_and(|rest| FreeFlavour::parse(rest).is_some())
+    parse_selection(model_id).is_some()
 }
 
 /// The flavour a free model id asks for.
 pub fn flavour_of(model_id: &str) -> Option<FreeFlavour> {
-    FreeFlavour::parse(model_id.strip_prefix(MODEL_PREFIX)?)
+    match parse_selection(model_id)? {
+        Selection::Flavour(flavour) => Some(flavour),
+        Selection::Pinned { .. } => None,
+    }
+}
+
+/// What a `free:` id is asking for.
+///
+/// Two shapes behind one prefix, because they are two genuinely different
+/// requests and collapsing them lost one of them. `free:coding` is a
+/// *preference* handed to the pool, which is free to satisfy it from whichever
+/// provider still has allowance. `free:nvidia/meta/llama-3.3-70b-instruct` is a
+/// *choice*: this provider, this model, and no failover to somewhere else that
+/// would answer as a different model without saying so.
+///
+/// The second shape is what makes a provider's own catalogue selectable at all.
+/// Before it, a key that reached sixty models could only ever be addressed
+/// through four pooled rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Selection {
+    /// Let the pool choose, preferring this flavour.
+    Flavour(FreeFlavour),
+    /// This provider's model, named exactly.
+    Pinned {
+        slug: String,
+        /// The provider's own id for the model, which may itself contain `/`.
+        model: String,
+    },
+}
+
+/// The connector id a free provider's models are grouped under in the picker.
+pub fn connector_id(slug: &str) -> String {
+    format!("{MODEL_PREFIX}{slug}")
+}
+
+/// Read a `free:` model id.
+///
+/// Flavours are checked first, so a provider slug that happened to collide with
+/// one could never shadow it. The model half is *not* split further: NVIDIA's
+/// ids contain a slash of their own, and `meta/llama-3.3-70b-instruct` has to
+/// survive the round trip intact.
+pub fn parse_selection(model_id: &str) -> Option<Selection> {
+    let rest = model_id.strip_prefix(MODEL_PREFIX)?;
+
+    if let Some(flavour) = FreeFlavour::parse(rest) {
+        return Some(Selection::Flavour(flavour));
+    }
+
+    let (slug, model) = rest.split_once('/')?;
+    if model.is_empty() {
+        return None;
+    }
+    // An unknown slug is not a free model. Answering otherwise would route a
+    // typo into the pool and report it as an exhausted allowance.
+    let provider = find(slug)?;
+
+    Some(Selection::Pinned {
+        slug: provider.slug.to_string(),
+        model: model.to_string(),
+    })
 }
 
 /// Why a provider is being skipped, and until when.
@@ -895,6 +1015,36 @@ pub struct FreePool {
     /// pool built in a test — or before settings have been read — behaving
     /// exactly as it did before shared endpoints existed.
     allow_keyless: Arc<AtomicBool>,
+    /// Models a provider advertises but will not actually serve on this key.
+    ///
+    /// Separate from `troubled`, which is about the provider, because NVIDIA NIM
+    /// proved the two are not the same thing. A key from build.nvidia.com does
+    /// not reach every model in the catalogue: several are provisioned
+    /// per-model, and asking for one the key was not issued for answers
+    ///
+    /// ```text
+    /// 404 {"detail":"Function '0417…': Not found for account 'p4OU…'"}
+    /// ```
+    ///
+    /// which is about that model and that key, and says nothing at all about
+    /// the provider. Reading it as a provider failure — which is what happened —
+    /// set NVIDIA aside entirely and threw away its catalogue, so one
+    /// unprovisioned model took out eighty-two working ones and the next
+    /// message reported that there was no working NVIDIA key.
+    ///
+    /// Keyed on `slug/model`, and short-lived, because the fix is the user
+    /// generating a key and coming back — which should start working
+    /// immediately rather than after a long cooldown.
+    unavailable: Arc<Mutex<HashMap<String, (Trouble, Instant)>>>,
+    /// Whether a catalogue read is already running.
+    ///
+    /// Reading every provider's model list takes as long as the slowest of
+    /// them, and it now happens in the background rather than in front of the
+    /// first token. That trade only works if a burst of messages starts one
+    /// read rather than one each: twenty concurrent reads of the same twenty
+    /// endpoints is a worse stall than the one being avoided, and it arrives
+    /// exactly when the user is most active.
+    refreshing: Arc<AtomicBool>,
 }
 
 /// What each provider advertises, and when it was asked.
@@ -921,8 +1071,39 @@ impl FreePool {
     }
 
     /// Forget a provider's trouble, after a key is replaced or a test succeeds.
+    ///
+    /// Clears the per-model refusals too. A new key is exactly the thing that
+    /// changes which models are reachable, so holding on to "this one 404'd"
+    /// across a key change would hide the fix the user just applied.
     pub fn clear_trouble(&self, slug: &str) {
         self.troubled.lock().expect("free pool lock").remove(slug);
+
+        let prefix = format!("{slug}/");
+        self.unavailable
+            .lock()
+            .expect("free pool lock")
+            .retain(|key, _| !key.starts_with(&prefix));
+    }
+
+    /// Note that one model will not serve on this key.
+    pub fn note_model_trouble(&self, slug: &str, model: &str, trouble: Trouble) {
+        self.unavailable
+            .lock()
+            .expect("free pool lock")
+            .insert(format!("{slug}/{model}"), (trouble, Instant::now()));
+        tracing::info!(slug, model, kind = trouble.as_str(), "free model set aside");
+    }
+
+    /// Why one model is currently being skipped, if it is.
+    pub fn model_trouble(&self, slug: &str, model: &str) -> Option<Trouble> {
+        let mut held = self.unavailable.lock().expect("free pool lock");
+        let key = format!("{slug}/{model}");
+        let (trouble, since) = *held.get(&key)?;
+        if since.elapsed() >= trouble.cooldown() {
+            held.remove(&key);
+            return None;
+        }
+        Some(trouble)
     }
 
     /// Allow or forbid the shared, unauthenticated endpoints.
@@ -943,9 +1124,70 @@ impl FreePool {
             .insert(slug.to_string(), (models, Instant::now()));
     }
 
+    /// Every catalogue currently held, for writing to storage.
+    pub fn catalogues(&self) -> HashMap<String, Vec<String>> {
+        self.live
+            .lock()
+            .expect("free pool lock")
+            .iter()
+            .map(|(slug, (models, _))| (slug.clone(), models.clone()))
+            .collect()
+    }
+
+    /// Put back catalogues read before a restart.
+    ///
+    /// Marked as read *now* rather than when they were actually fetched, which
+    /// is the deliberate choice: the alternative is storing a wall-clock time
+    /// and comparing it against [`Instant`], which cannot be done, and the
+    /// consequence of being generous is at worst one stale id and a failover.
+    ///
+    /// The reason this exists at all is a cold start showing a lie. A cloud
+    /// connector's models live in the database, so OpenRouter's four hundred
+    /// were there the moment the picker opened; a free provider's lived only in
+    /// this process, so every one of them was missing until a background read
+    /// finished — and the picker had already rendered by then. The result was a
+    /// model list that showed one provider out of five and gave no sign it was
+    /// still filling in.
+    pub fn restore_catalogues(&self, stored: HashMap<String, Vec<String>>) {
+        let mut held = self.live.lock().expect("free pool lock");
+        let now = Instant::now();
+        for (slug, models) in stored {
+            // Anything read during this process is fresher by definition.
+            held.entry(slug).or_insert((models, now));
+        }
+    }
+
     /// Forget a provider's catalogue, so the next request reads it again.
     pub fn forget_live_models(&self, slug: &str) {
         self.live.lock().expect("free pool lock").remove(slug);
+    }
+
+    /// Claim the right to read the catalogues, if nobody else holds it.
+    ///
+    /// `true` means this caller should do the read and must call
+    /// [`FreePool::end_refresh`] when it finishes. `false` means one is already
+    /// running and this caller should carry on with what is cached.
+    pub fn begin_refresh(&self) -> bool {
+        self.refreshing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// Release the claim taken by [`FreePool::begin_refresh`].
+    pub fn end_refresh(&self) {
+        self.refreshing.store(false, Ordering::Release);
+    }
+
+    /// Whether any reachable provider's catalogue is worth re-reading.
+    ///
+    /// Asked before spawning a background read, so the common case — every
+    /// catalogue fresh — costs a few comparisons rather than a task.
+    pub fn needs_any_catalogue(&self, keys: &HashMap<String, String>) -> bool {
+        let allow_keyless = self.allows_keyless();
+        FREE_PROVIDERS
+            .iter()
+            .filter(|provider| provider.is_reachable(keys, allow_keyless))
+            .any(|provider| self.needs_catalogue(provider.slug))
     }
 
     /// Whether this provider's catalogue is missing or too old to trust.
@@ -1006,6 +1248,12 @@ impl FreePool {
                 if !self.advertises(provider.slug, model.id) {
                     continue;
                 }
+                // Refused on this key specifically. Skipping it here is what
+                // turns "one model is not provisioned" into a failover rather
+                // than into a provider that appears to be down.
+                if self.model_trouble(provider.slug, model.id).is_some() {
+                    continue;
+                }
                 if model.flavours.contains(&flavour) {
                     candidates.push((
                         keyless,
@@ -1031,10 +1279,11 @@ impl FreePool {
 
             // And if the curated list has been overtaken entirely — every id
             // Kuro knows about retired, which is what happened to OpenRouter —
-            // take whatever the provider is advertising. A model chosen this way
-            // loses its flavour, which is a real loss and a much smaller one
-            // than refusing to use a key that works.
-            if let Some(model) = self.first_live_model(provider) {
+            // take whatever the provider is advertising. The flavour survives
+            // this now: the live list is read rather than merely counted, so a
+            // provider Kuro has no hand-written entry for can still answer
+            // `free:coding` with a coder.
+            if let Some(model) = self.best_live_model(provider, flavour) {
                 candidates.push((keyless, Quality::Live, model_rank(provider), provider, model));
             }
         }
@@ -1060,23 +1309,124 @@ impl FreePool {
         })
     }
 
-    /// The first *free* model a provider advertises, when nothing curated survives.
+    /// The best *free* model a provider advertises, when nothing curated survives.
     ///
-    /// Filtered by the provider's marker, which is the line between a fallback
-    /// and a bill: OpenRouter advertises three hundred and thirty-seven models to
-    /// this key and fourteen of them are free. Sorted, so the same key picks the
-    /// same model across restarts rather than whichever one the provider happened
-    /// to list first today.
-    fn first_live_model(&self, provider: &FreeProvider) -> Option<String> {
+    /// Three filters, in the order that matters.
+    ///
+    /// The provider's marker comes first, because it is the line between a
+    /// fallback and a bill: OpenRouter advertises three hundred and thirty-seven
+    /// models to this key and fourteen of them are free.
+    ///
+    /// Then [`classify`], because a provider's model list is not a list of chat
+    /// models. NVIDIA's sixty-odd entries include embedding models, rerankers,
+    /// speech recognisers and safety classifiers, and this used to sort the lot
+    /// alphabetically and take the first — which on that catalogue is not a
+    /// model you can hold a conversation with. Every message routed there failed,
+    /// and the failure looked like the key was wrong.
+    ///
+    /// Then the flavour, which this could not honour at all before. A provider
+    /// with no hand-written entry can now still answer `free:coding` with
+    /// something named like a coder, instead of losing the request's intent
+    /// the moment the curated table runs out.
+    fn best_live_model(&self, provider: &FreeProvider, flavour: FreeFlavour) -> Option<String> {
         let held = self.live.lock().expect("free pool lock");
         let (models, _) = held.get(provider.slug)?;
 
-        let mut free: Vec<&String> = models
+        let wanted = flavour.speciality();
+
+        let mut usable: Vec<(bool, &String)> = models
             .iter()
             .filter(|model| provider.free_marker.covers(model))
+            .filter_map(|model| {
+                let classified = classify(model);
+                if !classified.kind.is_chat() {
+                    return None;
+                }
+                // A model that refused is deliberately still listed. Hiding it
+                // would answer "why can't I find the model I was using
+                // yesterday" with silence; greying it out and saying why is the
+                // whole point. Routing skips it separately, in `best_live_model`.
+                // A tiny model is a poor answer to "whatever is best", so on
+                // `Auto` the preference runs the other way.
+                let matches = match wanted {
+                    Some(speciality) => classified.has(speciality),
+                    None => !classified.has(Speciality::Fast),
+                };
+                Some((!matches, model))
+            })
             .collect();
-        free.sort();
-        free.first().map(|model| (*model).clone())
+
+        // Sorted on the match first and the name second, so the same key picks
+        // the same model across restarts rather than whichever one the provider
+        // happened to list first today.
+        usable.sort();
+        usable.first().map(|(_, model)| (*model).clone())
+    }
+
+    /// Route to one named provider and model, with no failover.
+    ///
+    /// The absence of failover is the point rather than a shortcoming. Somebody
+    /// who picked a model by name asked for that model; quietly answering as a
+    /// different one from a different company because the first was rate-limited
+    /// is the behaviour the flavour rows exist to provide, and doing it here
+    /// would make the two indistinguishable.
+    ///
+    /// A cooldown is still honoured, because sending a request to a key that
+    /// was rejected two minutes ago is not failover — it is a round trip whose
+    /// answer is already known.
+    pub fn pinned(
+        &self,
+        slug: &str,
+        model: &str,
+        keys: &HashMap<String, String>,
+    ) -> Option<Choice> {
+        let provider = find(slug)?;
+        if !provider.is_reachable(keys, self.allows_keyless()) {
+            return None;
+        }
+        if self.trouble(provider.slug).is_some() {
+            return None;
+        }
+
+        Some(Choice {
+            slug: provider.slug.to_string(),
+            name: provider.name.to_string(),
+            base_url: provider.base_url.to_string(),
+            authorization: provider
+                .quirks
+                .auth
+                .authorization(keys.get(provider.slug).map(String::as_str)),
+            model: model.to_string(),
+            quirks: provider.quirks,
+        })
+    }
+
+    /// Every chat model a provider currently advertises inside its allowance.
+    ///
+    /// For the picker, which wants the whole list rather than one choice from
+    /// it: somebody who has added an NVIDIA key wants to see what that key
+    /// reaches, and until now the only thing Kuro would show them was four
+    /// pooled rows that hid every one of them.
+    ///
+    /// Empty when the catalogue has not been read yet. That is deliberately
+    /// different from [`FreePool::advertises`], which treats unknown as "try
+    /// it": proposing a model is a guess worth making, and listing one under a
+    /// heading that says these are available is a claim.
+    pub fn advertised_chat_models(&self, provider: &FreeProvider) -> Vec<String> {
+        let held = self.live.lock().expect("free pool lock");
+        let Some((models, _)) = held.get(provider.slug) else {
+            return Vec::new();
+        };
+
+        let mut usable: Vec<String> = models
+            .iter()
+            .filter(|model| provider.free_marker.covers(model))
+            .filter(|model| classify(model).kind.is_chat())
+            .cloned()
+            .collect();
+        usable.sort();
+        usable.dedup();
+        usable
     }
 
     /// Providers that could serve a request right now.
@@ -1344,6 +1694,212 @@ mod tests {
 
         let chosen = pool.choose(FreeFlavour::Auto, &keys(&["groq"])).expect("a model");
         assert_eq!(chosen.model, "some-new-groq-model");
+    }
+
+    /// A slice of NVIDIA NIM's catalogue, in the shape it actually arrives in.
+    ///
+    /// The point of the sample is that most of it cannot hold a conversation.
+    /// `/v1/models` on that endpoint is not a list of chat models — it is every
+    /// model the platform hosts, and the embedding models, rerankers, speech
+    /// recognisers and safety classifiers sit in it unlabelled beside the
+    /// Llamas.
+    fn nvidia_catalogue() -> Vec<String> {
+        [
+            // Alphabetically first, and an embedding model.
+            "baai/bge-m3",
+            "black-forest-labs/flux.1-dev",
+            "meta/llama-3.3-70b-instruct",
+            "meta/llama-guard-4-12b",
+            "nvidia/llama-3.2-nv-embedqa-1b-v2",
+            "nvidia/llama-3.2-nv-rerankqa-1b-v2",
+            "nvidia/parakeet-ctc-1.1b-asr",
+            "qwen/qwen2.5-coder-32b-instruct",
+        ]
+        .iter()
+        .map(|id| (*id).to_string())
+        .collect()
+    }
+
+    #[test]
+    fn a_catalogue_full_of_things_that_are_not_chat_models_still_yields_a_chat_model() {
+        // The NVIDIA bug. The fallback sorted the advertised ids and took the
+        // first, which on this catalogue is `baai/bge-m3` — an embedding model
+        // that answers a conversation with a 400. Every message routed to
+        // NVIDIA failed, and the failure read as a bad key.
+        let pool = FreePool::new();
+        pool.set_live_models("nvidia", nvidia_catalogue());
+
+        // Curated ids removed from the advertised list, so only the fallback
+        // path can answer. This is the state a provider rename leaves behind.
+        let live_only: Vec<String> = nvidia_catalogue()
+            .into_iter()
+            .filter(|id| id != "meta/llama-3.3-70b-instruct" && !id.contains("coder"))
+            .collect();
+        pool.set_live_models("nvidia", live_only);
+
+        assert!(
+            pool.choose(FreeFlavour::Auto, &keys(&["nvidia"])).is_none(),
+            "nothing in that list can hold a conversation, and inventing one \
+             would mean every message failing"
+        );
+    }
+
+    #[test]
+    fn the_live_fallback_keeps_the_flavour_it_was_asked_for() {
+        // It used to lose it: the fallback took one model per provider and the
+        // request's intent went with it, so `free:coding` on a provider with no
+        // hand-written entry got whatever sorted first.
+        let pool = FreePool::new();
+        pool.set_live_models("nvidia", nvidia_catalogue());
+
+        let coding = pool
+            .choose(FreeFlavour::Coding, &keys(&["nvidia"]))
+            .expect("a provider");
+        assert_eq!(coding.model, "qwen/qwen2.5-coder-32b-instruct");
+
+        let auto = pool
+            .choose(FreeFlavour::Auto, &keys(&["nvidia"]))
+            .expect("a provider");
+        assert_eq!(auto.model, "meta/llama-3.3-70b-instruct");
+    }
+
+    #[test]
+    fn only_one_catalogue_read_runs_at_a_time() {
+        // Reading the catalogues moved off the path the user waits on, which
+        // only helps if a burst of messages starts one sweep rather than one
+        // each. Twenty concurrent reads of the same twenty endpoints would be a
+        // worse stall than the one being avoided, arriving exactly when the
+        // user is most active.
+        let pool = FreePool::new();
+
+        assert!(pool.begin_refresh(), "the first caller does the work");
+        assert!(!pool.begin_refresh(), "the second finds one already running");
+
+        pool.end_refresh();
+        assert!(pool.begin_refresh(), "and the next one after it finishes may go");
+    }
+
+    #[test]
+    fn a_fresh_catalogue_does_not_start_a_read_at_all() {
+        let pool = FreePool::new();
+        let held = keys(&["groq"]);
+
+        assert!(
+            pool.needs_any_catalogue(&held),
+            "nothing has been read yet, so there is work to do"
+        );
+
+        pool.set_live_models("groq", vec!["llama-3.3-70b-versatile".to_string()]);
+        assert!(
+            !pool.needs_any_catalogue(&held),
+            "the only reachable provider was just read"
+        );
+    }
+
+    #[test]
+    fn a_model_id_naming_one_provider_and_model_survives_the_round_trip() {
+        // The provider's own id contains a slash, so a naive split would hand
+        // the pool `meta` and ask NVIDIA for `llama-3.3-70b-instruct` — a model
+        // it does not have under that name.
+        let parsed = parse_selection("free:nvidia/meta/llama-3.3-70b-instruct");
+
+        assert_eq!(
+            parsed,
+            Some(Selection::Pinned {
+                slug: "nvidia".to_string(),
+                model: "meta/llama-3.3-70b-instruct".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_flavour_is_still_read_as_a_flavour_and_not_as_a_provider() {
+        assert_eq!(
+            parse_selection("free:coding"),
+            Some(Selection::Flavour(FreeFlavour::Coding))
+        );
+        assert_eq!(flavour_of("free:coding"), Some(FreeFlavour::Coding));
+        // A pinned id has no flavour: it named a model rather than a preference.
+        assert_eq!(flavour_of("free:nvidia/meta/llama-3.3-70b-instruct"), None);
+    }
+
+    #[test]
+    fn an_id_naming_a_provider_kuro_does_not_have_is_not_a_free_model() {
+        // Otherwise a typo routes into the pool and comes back reported as an
+        // exhausted allowance, which sends somebody to check a key that is fine.
+        assert_eq!(parse_selection("free:notaprovider/some-model"), None);
+        assert!(!is_free_model("free:notaprovider/some-model"));
+        assert!(!is_free_model("free:nvidia/"));
+        assert!(!is_free_model("free:nvidia"));
+    }
+
+    #[test]
+    fn a_pinned_choice_does_not_fail_over_to_another_company() {
+        // The whole difference between picking `Kuro Free · coding` and picking
+        // a model by name. One is a preference, the other is a choice, and a
+        // choice that silently answered as a different vendor's model would
+        // make the two indistinguishable.
+        let pool = FreePool::new();
+        let chosen = pool
+            .pinned("nvidia", "meta/llama-3.3-70b-instruct", &keys(&["nvidia", "groq"]))
+            .expect("a key for nvidia");
+
+        assert_eq!(chosen.slug, "nvidia");
+        assert_eq!(chosen.model, "meta/llama-3.3-70b-instruct");
+
+        // With no key for that provider it refuses rather than borrowing one.
+        assert!(pool
+            .pinned("nvidia", "meta/llama-3.3-70b-instruct", &keys(&["groq"]))
+            .is_none());
+    }
+
+    #[test]
+    fn only_chat_models_are_offered_as_a_providers_catalogue() {
+        let pool = FreePool::new();
+        pool.set_live_models("nvidia", nvidia_catalogue());
+
+        let listed = pool.advertised_chat_models(find("nvidia").expect("nvidia"));
+
+        assert_eq!(
+            listed,
+            vec![
+                "meta/llama-3.3-70b-instruct".to_string(),
+                "qwen/qwen2.5-coder-32b-instruct".to_string(),
+            ],
+            "the embedding, rerank, guard, speech and image entries are not \
+             models anybody can talk to"
+        );
+    }
+
+    #[test]
+    fn a_catalogue_nobody_has_read_yet_is_listed_as_nothing_rather_than_guessed_at() {
+        // Distinct from `advertises`, which treats unknown as "worth trying".
+        // Proposing a model is a guess; listing one under a heading saying the
+        // key reaches it is a claim.
+        let pool = FreePool::new();
+        assert!(pool
+            .advertised_chat_models(find("nvidia").expect("nvidia"))
+            .is_empty());
+    }
+
+    #[test]
+    fn a_guard_model_is_never_offered_as_a_conversation() {
+        // `meta/llama-guard-4-12b` sorts before `meta/llama-3.3-70b`? No — but
+        // it is a Llama, it is free, and nothing but the classifier keeps it
+        // out of a failover.
+        let pool = FreePool::new();
+        pool.set_live_models(
+            "nvidia",
+            vec![
+                "meta/llama-guard-4-12b".to_string(),
+                "meta/llama-3.3-70b-instruct".to_string(),
+            ],
+        );
+
+        let chosen = pool
+            .choose(FreeFlavour::Auto, &keys(&["nvidia"]))
+            .expect("a provider");
+        assert_eq!(chosen.model, "meta/llama-3.3-70b-instruct");
     }
 
     #[test]

@@ -57,15 +57,34 @@ pub async fn resolve_target(state: &SharedState, requested: Option<&str>) -> Res
 /// that Kuro supplies no keys and this person has not added one yet. A generic
 /// not-found sends them looking for a model that was never missing.
 async fn resolve_free_target(state: &SharedState, model_id: &str) -> Result<ChatTarget> {
-    let flavour = free::flavour_of(model_id)
+    let selection = free::parse_selection(model_id)
         .ok_or_else(|| KuroError::not_found(format!("model `{model_id}`")))?;
 
     let keys = crate::routes::free::stored_keys(state);
 
-    // Find out what these providers currently offer before choosing from them.
-    // Cached for half an hour, so this is one round trip after a restart and
-    // nothing at all thereafter.
-    crate::routes::free::refresh_catalogues(state, &keys).await;
+    // A model picked by name needs no catalogue: the user already said which
+    // provider and which model, so reading a list to discover that is a round
+    // trip spent confirming what was passed in.
+    let flavour = match selection {
+        free::Selection::Flavour(flavour) => flavour,
+        free::Selection::Pinned { slug, model } => {
+            let choice = state.free.pinned(&slug, &model, &keys).ok_or_else(|| {
+                KuroError::bad_request(format!(
+                    "`{model}` needs a {slug} key, and there is not a working one yet. Add it on \
+                     the Free models screen."
+                ))
+            })?;
+            return Ok(free_target(model_id, choice));
+        }
+    };
+
+    // Find out what these providers currently offer — but not while the user
+    // waits. This used to be awaited here, which put the slowest of twenty
+    // catalogue reads in front of the first token on every restart and again
+    // every half hour. Choosing from a stale catalogue costs at worst one 404
+    // and a failover; choosing fifteen seconds late costs a message that looks
+    // like it never sent.
+    crate::routes::free::refresh_catalogues_in_background(state, &keys);
 
     let Some(choice) = state.free.choose(flavour, &keys) else {
         return Err(if keys.is_empty() {
@@ -84,7 +103,12 @@ async fn resolve_free_target(state: &SharedState, model_id: &str) -> Result<Chat
 
     tracing::debug!(provider = %choice.slug, model = %choice.model, "free pool chose a provider");
 
-    Ok(ChatTarget::Remote {
+    Ok(free_target(model_id, choice))
+}
+
+/// Turn a pool choice into somewhere to send the request.
+fn free_target(model_id: &str, choice: free::Choice) -> ChatTarget {
+    ChatTarget::Remote {
         // The connector id is the pool's own model id rather than a provider,
         // so the conversation records "this was Kuro Free" rather than pinning
         // it to whichever provider happened to answer that minute.
@@ -100,7 +124,7 @@ async fn resolve_free_target(state: &SharedState, model_id: &str) -> Result<Chat
         // not be attributed and a failure had to guess at the provider to
         // blame.
         upstream: Some(choice.slug),
-    })
+    }
 }
 
 /// Work out which local model to run.
