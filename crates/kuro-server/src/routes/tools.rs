@@ -97,6 +97,24 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
                     "blurb": skill.blurb,
                 }))
                 .collect::<Vec<_>>(),
+            // The user's own, listed separately from the catalogue they also
+            // appear in. Same skills, different question: the catalogue answers
+            // "what can Kuro do", and this answers "what did I add, where did
+            // it come from, and how do I take it back out".
+            "custom": state
+                .db
+                .list_user_skills()?
+                .into_iter()
+                .map(|held| json!({
+                    "slug": held.slug,
+                    "name": held.name,
+                    "blurb": held.blurb,
+                    "category": held.category,
+                    "approxTokens": held.approx_tokens,
+                    "source": held.source,
+                    "updatedAt": held.updated_at,
+                }))
+                .collect::<Vec<_>>(),
         },
         "surfaces": {
             "chat": {
@@ -330,6 +348,153 @@ pub async fn delete_memory(
 #[derive(Debug, Deserialize)]
 pub struct SkillsRequest {
     pub enabled: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UploadSkillRequest {
+    /// The file's name, used only when its contents do not say what it is.
+    pub filename: String,
+    pub content: String,
+}
+
+/// Add a skill from a `SKILL.md` the user picked.
+///
+/// The file is read here rather than uploaded as a multipart form: it is a few
+/// kilobytes of text, the client already has it as a string, and a JSON body is
+/// one fewer thing to get wrong in both directions.
+pub async fn upload_skill(
+    State(state): State<SharedState>,
+    Json(request): Json<UploadSkillRequest>,
+) -> AppResult<Json<Value>> {
+    let parsed = skills::custom::parse_skill_md(&request.content, &request.filename)?;
+
+    if skills::is_builtin(&parsed.slug) {
+        return Err(KuroError::bad_request(format!(
+            "`/{}` is already a built-in skill. Rename this one — the slug is what you type \
+             after the slash, so two of them would be ambiguous.",
+            parsed.slug
+        ))
+        .into());
+    }
+
+    let record = kuro_core::db::UserSkillRecord {
+        slug: parsed.slug.clone(),
+        name: parsed.name.clone(),
+        blurb: parsed.blurb.clone(),
+        category: parsed.category.as_str().to_string(),
+        approx_tokens: skills::custom::estimate_tokens(&parsed.instructions),
+        instructions: parsed.instructions.clone(),
+        source: "upload".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+
+    state.db.put_user_skill(&record)?;
+    // Loaded before it is switched on, not after. `set_enabled` drops slugs it
+    // cannot resolve — which is the right rule and made the wrong thing happen
+    // here: the skill was stored, the enable was silently filtered out, and it
+    // arrived switched off with nothing to say why.
+    skills::custom::reload(&state.db)?;
+    enable_new(&state, &parsed.slug)?;
+
+    overview(State(state)).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportSkillsRequest {
+    /// A GitHub repository, in any of the shapes people paste.
+    pub url: String,
+}
+
+/// Pull every `SKILL.md` out of a GitHub repository.
+///
+/// Built-in slugs are skipped rather than failing the import: a repository of
+/// forty skills that happens to contain one called `rust` should still deliver
+/// the other thirty-nine, and the response says which were left.
+pub async fn import_skills(
+    State(state): State<SharedState>,
+    Json(request): Json<ImportSkillsRequest>,
+) -> AppResult<Json<Value>> {
+    let repo = skills::import::parse_repo(&request.url)?;
+    let found = skills::import::fetch_skills(&state.outbound, &repo).await?;
+
+    let source = format!("https://github.com/{}", repo.slug());
+    let mut added: Vec<String> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    let mut needs_scripts: Vec<String> = Vec::new();
+
+    for entry in &found {
+        if skills::is_builtin(&entry.parsed.slug) {
+            skipped.push(entry.parsed.slug.clone());
+            continue;
+        }
+        state.db.put_user_skill(&skills::import::to_record(entry, &source))?;
+        if entry.wants_scripts {
+            needs_scripts.push(entry.parsed.slug.clone());
+        }
+        added.push(entry.parsed.slug.clone());
+    }
+
+    // Loaded before enabling, for the same reason as an upload: `set_enabled`
+    // cannot keep a slug it cannot resolve.
+    skills::custom::reload(&state.db)?;
+    for slug in &added {
+        enable_new(&state, slug)?;
+    }
+
+    let mut body = overview(State(state)).await?;
+    if let Some(map) = body.0.as_object_mut() {
+        map.insert(
+            "imported".to_string(),
+            json!({
+                "repo": repo.slug(),
+                "added": added,
+                // Named rather than counted: "3 skipped" is a mystery, and
+                // "rust, go, python were already built in" is an answer.
+                "skipped": skipped,
+                // Said out loud, because a skill whose instructions tell the
+                // model to run `scripts/convert.py` will not work and the
+                // reason is not visible from the card.
+                "needsScripts": needs_scripts,
+            }),
+        );
+    }
+    Ok(body)
+}
+
+/// Remove a skill the user added. Built-ins are refused.
+pub async fn delete_skill(
+    State(state): State<SharedState>,
+    Path(slug): Path<String>,
+) -> AppResult<Json<Value>> {
+    if skills::is_builtin(&slug) {
+        return Err(KuroError::bad_request(format!(
+            "`{slug}` is part of Kuro rather than something you added, so it cannot be \
+             removed. Switch it off instead."
+        ))
+        .into());
+    }
+
+    if !state.db.delete_user_skill(&slug)? {
+        return Err(KuroError::not_found(format!("skill `{slug}`")).into());
+    }
+
+    skills::custom::reload(&state.db)?;
+    overview(State(state)).await
+}
+
+/// Switch a newly added skill on.
+///
+/// Adding a skill and then having to go and find it in a list of sixty to turn
+/// it on is a second step nobody wants and everybody forgets. Enabling it is
+/// what asking for it meant.
+fn enable_new(state: &SharedState, slug: &str) -> Result<(), KuroError> {
+    let mut enabled = skills::enabled_slugs(&state.db)?;
+    if !enabled.iter().any(|held| held == slug) {
+        enabled.push(slug.to_string());
+        skills::set_enabled(&state.db, &enabled)?;
+    }
+    Ok(())
 }
 
 /// Replace the set of active skills.

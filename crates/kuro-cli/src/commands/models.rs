@@ -5,6 +5,83 @@ use serde_json::{json, Value};
 
 use crate::client::{format_bytes, KuroClient};
 
+/// Every installed model's id, in the order `kuro list` numbers them.
+///
+/// One place, because the numbers are only useful if `rm 2` means the second
+/// row of the list somebody is looking at. Two functions with their own idea of
+/// the order would be a command that deletes the wrong model.
+pub async fn installed_ids(client: &KuroClient) -> Result<Vec<String>> {
+    let response = client.get("/api/models").await?;
+    Ok(response["models"]
+        .as_array()
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|entry| entry["model"]["id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Print just the ids, for a shell completion script to read.
+pub async fn list_ids(client: &KuroClient) -> Result<()> {
+    client.ensure_running().await?;
+    for id in installed_ids(client).await? {
+        println!("{id}");
+    }
+    Ok(())
+}
+
+/// Turn what somebody typed into a model id.
+///
+/// Three things are accepted, because three things get typed: the number from
+/// the last `kuro list`, the whole id, or enough of the id to be unambiguous.
+/// Typing `qwen3-embedding-0.6b:q8_0` in full is a lot of keystrokes to delete
+/// something, and `kuro rm 1` is the command people reach for once they have
+/// seen a numbered list.
+///
+/// An ambiguous prefix is refused with the candidates listed, rather than
+/// resolved to the first match — a wrong guess here deletes a file.
+pub async fn resolve_installed(client: &KuroClient, input: &str) -> Result<String> {
+    let ids = installed_ids(client).await?;
+
+    if ids.is_empty() {
+        bail!("no models are installed");
+    }
+
+    // A number is a position in the list, one-based to match what was printed.
+    if let Ok(index) = input.trim().parse::<usize>() {
+        return match index.checked_sub(1).and_then(|at| ids.get(at)) {
+            Some(id) => Ok(id.clone()),
+            None => bail!(
+                "there is no model {index}. `kuro list` shows {} of them, numbered 1 to {}.",
+                ids.len(),
+                ids.len()
+            ),
+        };
+    }
+
+    if ids.iter().any(|id| id == input) {
+        return Ok(input.to_string());
+    }
+
+    let matching: Vec<&String> = ids.iter().filter(|id| id.starts_with(input)).collect();
+    match matching.len() {
+        1 => Ok(matching[0].clone()),
+        0 => bail!(
+            "no installed model is called `{input}`. `kuro list` shows what is here."
+        ),
+        _ => {
+            let mut message = format!("`{input}` matches {} models:\n", matching.len());
+            for (position, id) in matching.iter().enumerate() {
+                message.push_str(&format!("  {}. {id}\n", position + 1));
+            }
+            message.push_str("Type more of the name, or use its number from `kuro list`.");
+            bail!(message)
+        }
+    }
+}
+
 pub async fn list(client: &KuroClient) -> Result<()> {
     client.ensure_running().await?;
     let response = client.get("/api/models").await?;
@@ -17,11 +94,13 @@ pub async fn list(client: &KuroClient) -> Result<()> {
         return Ok(());
     }
 
-    println!("MODEL                             SIZE      QUANT     STATUS    LOADED");
-    for entry in models {
+    // Numbered, so every other command can be given a number instead of a name.
+    println!("  #  MODEL                             SIZE      QUANT     STATUS    LOADED");
+    for (position, entry) in models.iter().enumerate() {
         let model = &entry["model"];
         println!(
-            "{:<34}{:<10}{:<10}{:<10}{}",
+            "{:>3}  {:<34}{:<10}{:<10}{:<10}{}",
+            position + 1,
             truncate(model["id"].as_str().unwrap_or("-"), 33),
             format_bytes(model["file_size_bytes"].as_u64().unwrap_or(0)),
             model["quant"].as_str().unwrap_or("-"),
@@ -33,6 +112,9 @@ pub async fn list(client: &KuroClient) -> Result<()> {
             },
         );
     }
+
+    println!();
+    println!("Any command taking a model takes its number: `kuro run 1`, `kuro rm 2`.");
 
     Ok(())
 }
@@ -109,8 +191,11 @@ pub async fn ps(client: &KuroClient) -> Result<()> {
 
 pub async fn remove(client: &KuroClient, model_id: &str) -> Result<()> {
     client.ensure_running().await?;
-    client.delete(&format!("/api/models/{model_id}")).await?;
-    println!("Removed {model_id}.");
+    let resolved = resolve_installed(client, model_id).await?;
+    client.delete(&format!("/api/models/{resolved}")).await?;
+    // Said explicitly. `rm 2` is a number going in and a file leaving the disk,
+    // and the only way to know the right one went is to be told which.
+    println!("Removed {resolved} and deleted its weights.");
     Ok(())
 }
 
@@ -233,9 +318,13 @@ pub async fn show(client: &KuroClient, requested: Option<String>) -> Result<()> 
 }
 
 /// Resolve which model to talk to when the user did not name one.
+///
+/// A name that *was* given goes through [`resolve_installed`], so every command
+/// taking a model takes a number or a prefix as well. `kuro run 2` should not
+/// mean something different from `kuro rm 2`.
 pub async fn resolve_model(client: &KuroClient, requested: Option<String>) -> Result<String> {
     if let Some(requested) = requested {
-        return Ok(requested);
+        return resolve_installed(client, &requested).await;
     }
 
     let response = client.get("/api/models").await?;
@@ -259,6 +348,96 @@ pub async fn resolve_model(client: &KuroClient, requested: Option<String>) -> Re
         ),
     }
 }
+
+/// A shell script that completes model names.
+///
+/// Written out rather than generated by a completions crate, because the part
+/// that matters here is not the subcommand list — it is that the *values* are
+/// the models on this machine right now, which a static script cannot know. The
+/// script asks `kuro list --ids` for them, so it is correct the moment something
+/// is pulled or removed rather than the next time it is regenerated.
+///
+/// Tab cycling is the shell's, not ours: zsh's `menu complete` walks the
+/// candidates on repeated Tab, and bash lists them on the second press.
+pub fn completions(shell: &str) -> Result<()> {
+    let script = match shell {
+        "zsh" => ZSH_COMPLETIONS,
+        "bash" => BASH_COMPLETIONS,
+        other => bail!(
+            "no completions for `{other}`. Kuro can write them for `zsh` or `bash`."
+        ),
+    };
+    print!("{script}");
+    Ok(())
+}
+
+const ZSH_COMPLETIONS: &str = r#"# Kuro completions for zsh.
+#
+#   kuro completions zsh > ~/.kuro-completions.zsh
+#   echo 'source ~/.kuro-completions.zsh' >> ~/.zshrc
+#
+# Then `kuro rm qw<Tab>` completes, and Tab again cycles when several match.
+
+_kuro_models() {
+  local -a models
+  models=(${(f)"$(kuro list --ids 2>/dev/null)"})
+  compadd -a models
+}
+
+_kuro() {
+  local -a commands
+  commands=(
+    'list:List installed models'
+    'run:Chat with a model'
+    'rm:Remove a model and delete its weights'
+    'show:Show everything known about one model'
+    'stop:Unload a model from memory'
+    'pull:Download a model'
+    'ps:Show what is loaded'
+    'free:Free provider pool'
+    'serve:Start the server'
+    'status:Show server status'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+  fi
+
+  case "${words[2]}" in
+    rm|run|show|stop) _kuro_models ;;
+  esac
+}
+
+compdef _kuro kuro
+# Cycle through matches on repeated Tab rather than only listing them.
+zstyle ':completion:*:*:kuro:*' menu select
+"#;
+
+const BASH_COMPLETIONS: &str = r#"# Kuro completions for bash.
+#
+#   kuro completions bash > ~/.kuro-completions.bash
+#   echo 'source ~/.kuro-completions.bash' >> ~/.bashrc
+
+_kuro() {
+  local current previous
+  current="${COMP_WORDS[COMP_CWORD]}"
+  previous="${COMP_WORDS[1]}"
+
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=($(compgen -W "list run rm show stop pull ps free serve status recommended launch completions" -- "$current"))
+    return
+  fi
+
+  case "$previous" in
+    rm|run|show|stop)
+      COMPREPLY=($(compgen -W "$(kuro list --ids 2>/dev/null)" -- "$current"))
+      ;;
+  esac
+}
+
+complete -F _kuro kuro
+"#;
 
 fn truncate(text: &str, width: usize) -> String {
     if text.chars().count() <= width {

@@ -100,6 +100,14 @@ async fn main() -> anyhow::Result<()> {
     // And which providers were refusing when this last ran, so a rejected key
     // is not silently retried and shown as available by a restart.
     free.restore_troubles(routes::free::stored_troubles(&db));
+    // Skills the user added themselves, made usable before the first request.
+    // Loading them lazily would mean the first `/` palette of every run was
+    // missing whatever they imported yesterday.
+    match kuro_core::skills::custom::reload(&db) {
+        Ok(0) => {}
+        Ok(count) => tracing::info!(count, "loaded skills you added"),
+        Err(error) => tracing::warn!(%error, "could not load your own skills"),
+    }
 
     let app_state = Arc::new(AppState {
         db,

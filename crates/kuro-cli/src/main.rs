@@ -47,7 +47,17 @@ enum Command {
 
     /// List installed models.
     #[command(visible_alias = "ls")]
-    List,
+    List {
+        /// Print only the ids, one per line. Used by shell completions.
+        #[arg(long)]
+        ids: bool,
+    },
+
+    /// Print a shell script that completes model names on Tab.
+    Completions {
+        /// `zsh` or `bash`.
+        shell: String,
+    },
 
     /// Show the models Kuro recommends for this machine.
     #[command(visible_alias = "rec")]
@@ -145,7 +155,14 @@ async fn dispatch() -> Result<()> {
         Command::Serve { .. } | Command::Version => unreachable!("handled above"),
         Command::Pull { model } => commands::pull::pull(&client, &model).await,
         Command::Preview { model } => commands::pull::preview(&client, &model).await,
-        Command::List => commands::models::list(&client).await,
+        Command::List { ids } => {
+            if ids {
+                commands::models::list_ids(&client).await
+            } else {
+                commands::models::list(&client).await
+            }
+        }
+        Command::Completions { shell } => commands::models::completions(&shell),
         Command::Recommended => commands::models::recommended(&client).await,
         Command::Run {
             model,
