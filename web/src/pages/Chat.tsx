@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Composer } from '../components/Composer'
+import { Composer, chatToggles } from '../components/Composer'
 import { MessageList, type StreamingState } from '../components/MessageList'
 import { Logo } from '../components/Logo'
 import {
@@ -17,7 +17,17 @@ export function ChatPage() {
   const params = useParams<{ id?: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { selectedModel, effort, webSearch, memory } = useUi()
+  const {
+    selectedModel,
+    setSelectedModel,
+    effort,
+    setEffort,
+    webSearch,
+    setWebSearch,
+    memory,
+    projects,
+    setProjects,
+  } = useUi()
 
   const [streaming, setStreaming] = useState<StreamingState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -54,7 +64,7 @@ export function ChatPage() {
    * match before the optimistic row goes in — otherwise the old replies stay on
    * screen underneath the new question until the refetch lands.
    */
-  const send = async (content: string, editing?: string) => {
+  const send = async (content: string, skills: string[] = [], editing?: string) => {
     setError(null)
     setNotices([])
 
@@ -87,8 +97,9 @@ export function ChatPage() {
         content,
         model: selectedModel ?? undefined,
         effort,
-        tools: activeToolGroups({ webSearch, memory }),
+        tools: activeToolGroups({ webSearch, memory, projects }),
         web_search: webSearch,
+        skills,
       }
       const events = editing
         ? streamEditMessage(targetId, editing, request, controller.signal)
@@ -137,6 +148,9 @@ export function ChatPage() {
       // brings in the usage, timing and tool numbers.
       void queryClient.invalidateQueries({ queryKey: ['messages', targetId] })
       void queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      // And the models, so a provider that just refused shows as greyed with
+      // its reason rather than being offered again from a stale list.
+      void queryClient.invalidateQueries({ queryKey: ['models'] })
     }
   }
 
@@ -163,10 +177,17 @@ export function ChatPage() {
     <Composer
       models={models.data?.models ?? []}
       remote={models.data?.remote ?? []}
-      onSend={(content) => void send(content)}
+      draftKey={`chat:${conversationId ?? 'new'}`}
+      onSend={(content, skills) => void send(content, skills)}
       onStop={stop}
       isStreaming={streaming !== null}
       centred={centred}
+      selectedModel={selectedModel}
+      onSelectModel={setSelectedModel}
+      effort={effort}
+      onEffortChange={setEffort}
+      effortNote="More effort means longer answers and more room to search before replying."
+      toggles={chatToggles({ webSearch, setWebSearch, projects, setProjects })}
     />
   )
 
@@ -188,7 +209,7 @@ export function ChatPage() {
               error={error}
               notices={notices}
               onFork={(messageId) => void fork(messageId)}
-              onEdit={(messageId, content) => void send(content, messageId)}
+              onEdit={(messageId, content) => void send(content, [], messageId)}
             />
           </div>
           {composer(false)}

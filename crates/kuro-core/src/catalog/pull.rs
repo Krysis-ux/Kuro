@@ -276,9 +276,7 @@ mod tests {
     #[test]
     fn removing_an_unknown_model_is_an_error_not_a_silent_success() {
         let db = Db::open_in_memory().expect("db");
-        let paths = Paths {
-            root: std::env::temp_dir().join(format!("kuro-rm-{}", uuid::Uuid::new_v4())),
-        };
+        let paths = Paths::for_root(std::env::temp_dir().join(format!("kuro-rm-{}", uuid::Uuid::new_v4())));
         let error = remove_model(&db, &paths, "nope").unwrap_err();
         assert!(matches!(error, KuroError::NotFound(_)));
     }

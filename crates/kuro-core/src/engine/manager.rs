@@ -392,9 +392,7 @@ mod tests {
 
     fn manager() -> (EngineManager, Db) {
         let db = Db::open_in_memory().expect("db");
-        let paths = Paths {
-            root: std::env::temp_dir().join(format!("kuro-mgr-{}", uuid::Uuid::new_v4())),
-        };
+        let paths = Paths::for_root(std::env::temp_dir().join(format!("kuro-mgr-{}", uuid::Uuid::new_v4())));
         paths.create_all().expect("dirs");
         let manager =
             EngineManager::new(db.clone(), paths, hardware::detect()).expect("manager");

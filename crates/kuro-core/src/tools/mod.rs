@@ -27,6 +27,7 @@ pub mod files;
 pub mod html;
 pub mod intent;
 pub mod memory;
+pub mod projects;
 pub mod web_search;
 
 use serde::Serialize;
@@ -38,14 +39,19 @@ use crate::Result;
 
 /// Tools that ship with Kuro.
 ///
-/// All four are read-only with respect to this machine: they reach the network
-/// or Kuro's own database, and nothing else.
+/// Every one is read-only with respect to this machine: they reach the network,
+/// Kuro's own database, or — through [`projects`] — the *contents* of a folder
+/// the user already chose on the Code page. None of them writes a file, and the
+/// three project tools cannot, structurally rather than by convention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     WebSearch,
     FetchUrl,
     Remember,
     Recall,
+    ListProjects,
+    ReadProjectFile,
+    SearchProjects,
 }
 
 impl Builtin {
@@ -54,6 +60,9 @@ impl Builtin {
         Builtin::FetchUrl,
         Builtin::Remember,
         Builtin::Recall,
+        Builtin::ListProjects,
+        Builtin::ReadProjectFile,
+        Builtin::SearchProjects,
     ];
 
     pub fn name(self) -> &'static str {
@@ -62,6 +71,9 @@ impl Builtin {
             Self::FetchUrl => "fetch_url",
             Self::Remember => "remember",
             Self::Recall => "recall",
+            Self::ListProjects => "list_projects",
+            Self::ReadProjectFile => "read_project_file",
+            Self::SearchProjects => "search_projects",
         }
     }
 
@@ -78,6 +90,9 @@ impl Builtin {
         match self {
             Self::WebSearch | Self::FetchUrl => ToolGroup::Web,
             Self::Remember | Self::Recall => ToolGroup::Memory,
+            Self::ListProjects | Self::ReadProjectFile | Self::SearchProjects => {
+                ToolGroup::Projects
+            }
         }
     }
 
@@ -98,6 +113,21 @@ impl Builtin {
             Self::Recall => {
                 "Look up facts saved earlier with remember. Use this when the user refers to \
                  something they told you before."
+            }
+            Self::ListProjects => {
+                "List the user's coding workspaces — the folders they opened on the Code \
+                 page. Call this first when they mention their project, their app, or a \
+                 codebase, so you know which ones exist and what they are called."
+            }
+            Self::ReadProjectFile => {
+                "Read a file out of one of the user's coding workspaces. This is read-only: \
+                 you can quote it, explain it and propose changes, and you cannot edit it. \
+                 Say so plainly if they ask you to make the change."
+            }
+            Self::SearchProjects => {
+                "Search inside one coding workspace for a literal string, or leave the query \
+                 out to see its file layout. Use this to find where something lives before \
+                 reading it."
             }
         }
     }
@@ -152,6 +182,44 @@ impl Builtin {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 25 },
                 },
             }),
+            Self::ListProjects => json!({
+                "type": "object",
+                "properties": {},
+            }),
+            Self::ReadProjectFile => json!({
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "The workspace name, as list_projects gave it.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Path relative to that project's folder, such as src/main.rs.",
+                    },
+                },
+                "required": ["project", "path"],
+            }),
+            Self::SearchProjects => json!({
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "The workspace name, as list_projects gave it.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description":
+                            "The exact text to look for. Not a regular expression. Leave it \
+                             out to see the project's file layout instead.",
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Match case exactly. Defaults to false.",
+                    },
+                },
+                "required": ["project"],
+            }),
         }
     }
 
@@ -171,15 +239,39 @@ impl Builtin {
 pub enum ToolGroup {
     Web,
     Memory,
+    /// Reading the user's coding workspaces. Read-only, always — see
+    /// [`projects`] for why that is structural rather than a promise.
+    Projects,
 }
 
 impl ToolGroup {
-    pub const ALL: &'static [ToolGroup] = &[Self::Web, Self::Memory];
+    pub const ALL: &'static [ToolGroup] = &[Self::Web, Self::Memory, Self::Projects];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Web => "web",
             Self::Memory => "memory",
+            Self::Projects => "projects",
+        }
+    }
+
+    /// The words next to the switch.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Web => "Web",
+            Self::Memory => "Memory",
+            Self::Projects => "Projects",
+        }
+    }
+
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Self::Web => "Search the web before answering. Queries leave this machine.",
+            Self::Memory => "Read and save durable facts. Never leaves this machine.",
+            Self::Projects => {
+                "Read the folders you opened on the Code page. Reading only — chat can never \
+                 change a file."
+            }
         }
     }
 
@@ -187,6 +279,7 @@ impl ToolGroup {
         match raw.trim().to_ascii_lowercase().as_str() {
             "web" => Some(Self::Web),
             "memory" => Some(Self::Memory),
+            "projects" | "project" | "code" => Some(Self::Projects),
             _ => None,
         }
     }
@@ -298,6 +391,9 @@ pub async fn run_builtin(tool: Builtin, arguments: &Value, context: &BuiltinCont
         Builtin::FetchUrl => run_fetch(arguments, context).await,
         Builtin::Remember => run_remember(arguments, context),
         Builtin::Recall => run_recall(arguments, context),
+        Builtin::ListProjects => projects::list(context.db),
+        Builtin::ReadProjectFile => projects::read_file(context.db, arguments),
+        Builtin::SearchProjects => projects::search_project(context.db, arguments),
     }
 }
 
@@ -520,26 +616,48 @@ mod tests {
         assert!(web.contains(&Builtin::FetchUrl));
         assert!(!web.contains(&Builtin::Remember));
 
-        let all = builtins_for_groups(&[ToolGroup::Web, ToolGroup::Memory]);
+        let projects = builtins_for_groups(&[ToolGroup::Projects]);
+        assert!(projects.contains(&Builtin::ReadProjectFile));
+        assert!(
+            !projects.contains(&Builtin::WebSearch),
+            "reading a project does not imply reaching the network"
+        );
+
+        let all = builtins_for_groups(ToolGroup::ALL);
         assert_eq!(all.len(), Builtin::ALL.len());
 
         assert!(builtins_for_groups(&[]).is_empty());
     }
 
     #[test]
-    fn no_builtin_can_reach_the_filesystem() {
-        // The guarantee the chat surface rests on. File access lives in a coding
-        // workspace, where there is a folder to scope it to; a chat has none, so
-        // a tool here that touched disk would be scoped to the whole machine.
+    fn no_builtin_can_change_a_file() {
+        // The guarantee the chat surface rests on, and it is narrower than it
+        // used to be. A chat can now *read* a folder the user opened on the Code
+        // page, because refusing to answer a question about code the user is
+        // plainly looking at helped nobody. It still cannot write one: there is
+        // no builtin that takes file contents, and the read tools construct
+        // their permissions at Plan tier regardless of the workspace's own mode
+        // — see `tools::projects`.
         for tool in Builtin::ALL {
             let name = tool.name();
             assert!(
-                !name.contains("file") && !name.contains("path") && !name.contains("dir"),
-                "`{name}` looks like a filesystem tool, which does not belong in chat"
+                !name.starts_with("write") && !name.starts_with("edit") && !name.contains("delete"),
+                "`{name}` sounds like it changes a file, which chat must never do"
+            );
+            let takes_contents = tool.spec().parameters["properties"]
+                .as_object()
+                .is_some_and(|properties| properties.contains_key("content"));
+            assert!(
+                !takes_contents || *tool == Builtin::Remember,
+                "`{name}` accepts contents, which only makes sense for a tool that writes"
             );
         }
-        assert_eq!(Builtin::parse("read_file"), None);
+
+        // The workspace's own write tools are not reachable through this enum,
+        // so a chat naming one gets "no such tool" rather than a write.
         assert_eq!(Builtin::parse("write_file"), None);
+        assert_eq!(Builtin::parse("edit_file"), None);
+        assert_eq!(Builtin::parse("run_command"), None);
     }
 
     #[test]

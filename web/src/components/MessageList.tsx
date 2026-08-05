@@ -3,9 +3,20 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { isOptimistic, type Message } from '../lib/api'
 import type { StreamingState } from '../lib/useTurn'
+import { CodeBlock, MarkdownPre } from './CodeBlock'
 import { CheckIcon, ChevronIcon, ExternalIcon, GlobeIcon, InfoIcon, ToolIcon } from './icons'
 import { Logo } from './Logo'
 import { MessageActions } from './MessageActions'
+
+/**
+ * How a reply's markdown is rendered.
+ *
+ * Defined once, at module scope, because react-markdown compares this object by
+ * identity — building it inside the component would rebuild every code block on
+ * every streamed token, which both flickers and loses the "Copied" state of a
+ * button somebody has just pressed.
+ */
+const MARKDOWN_COMPONENTS = { pre: MarkdownPre } as const
 
 // Defined with the streaming loop that produces them, and re-exported here
 // because this is where callers already import the transcript from.
@@ -134,7 +145,9 @@ function MessageRow({ message, actionable, onFork, onEdit }: MessageRowProps) {
         {message.reasoning_content && <Reasoning text={message.reasoning_content} />}
 
         <div className="prose">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+            {message.content}
+          </ReactMarkdown>
         </div>
 
         {sources.length > 0 && <Sources sources={sources} />}
@@ -272,7 +285,9 @@ function StreamingRow({ state }: { state: StreamingState }) {
 
         {state.content ? (
           <div className="prose">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{state.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+              {state.content}
+            </ReactMarkdown>
           </div>
         ) : (
           <div className="thinking">
@@ -347,7 +362,15 @@ function ToolActivity({
                 <code className="mono">{step.name}</code>
                 {step.query && <span className="faint tool-step-query">{step.query}</span>}
               </div>
-              {step.detail && <pre className="tool-step-detail">{step.detail}</pre>}
+              {step.detail && (
+                <CodeBlock
+                  text={step.detail}
+                  className="is-inline"
+                  label={`Copy what ${step.name} returned`}
+                >
+                  <pre className="tool-step-detail">{step.detail}</pre>
+                </CodeBlock>
+              )}
             </li>
           ))}
         </ol>
