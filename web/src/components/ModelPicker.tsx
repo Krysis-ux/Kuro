@@ -24,6 +24,15 @@ import {
 const MENU_HEIGHT = 460
 /** Kept clear of the window edge so the menu never sits flush against it. */
 const VIEWPORT_MARGIN = 12
+/**
+ * Shortest the menu is allowed to be.
+ *
+ * A floor rather than a target: in a window too short for anything better, a
+ * scrollable stub is more use than a menu clipped to one row. It should not be
+ * what the menu usually gets, and when it was, the cause was a stale
+ * measurement rather than a genuinely small window.
+ */
+const MIN_MENU_HEIGHT = 200
 
 /**
  * How many models a provider may list before the list is cut short.
@@ -202,10 +211,17 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
               <ModelGroup
                 key={group.key}
                 group={group}
-                // The heading that introduces the provider sections, shown once
-                // above the first of them.
+                // One heading per half of the list, each shown once above the
+                // first group in it. The local half never had one, so the maker
+                // names sat at the top of the menu with nothing saying they
+                // were the models on this computer — while the provider half
+                // said so plainly.
                 sectionHead={
-                  group.remote && !groups[index - 1]?.remote ? 'API providers' : null
+                  index === 0 && !group.remote
+                    ? 'On this machine'
+                    : group.remote && !groups[index - 1]?.remote
+                      ? 'API providers'
+                      : null
                 }
                 open={isOpen(group)}
                 onToggle={() => toggle(group.key)}
@@ -406,28 +422,68 @@ function usePlacement(anchor: React.RefObject<HTMLElement | null>, open: boolean
 
   useLayoutEffect(() => {
     if (!open) return
-    const trigger = anchor.current?.getBoundingClientRect()
-    if (!trigger) return
 
-    const below = window.innerHeight - trigger.bottom - VIEWPORT_MARGIN
-    const above = trigger.top - VIEWPORT_MARGIN
+    const measure = () => {
+      const trigger = anchor.current?.getBoundingClientRect()
+      if (!trigger) return
 
-    // Below when it fits there, and otherwise whichever side has more room.
-    // Preferring below on a tie is what makes a header-mounted picker behave
-    // like every other dropdown a person has used.
-    const side = below >= MENU_HEIGHT || below >= above ? 'below' : 'above'
+      const below = window.innerHeight - trigger.bottom - VIEWPORT_MARGIN
+      const above = trigger.top - VIEWPORT_MARGIN
 
-    // The menu is right-aligned by default, which pushes it off-screen when the
-    // trigger sits near the left edge — a narrow window, or a picker in a
-    // sidebar.
-    const menuWidth = Math.min(360, window.innerWidth - VIEWPORT_MARGIN * 2)
-    const align = trigger.right - menuWidth < VIEWPORT_MARGIN ? 'left' : 'right'
+      // Below when it fits there, and otherwise whichever side has more room.
+      // Preferring below on a tie is what makes a header-mounted picker behave
+      // like every other dropdown a person has used.
+      const side = below >= MENU_HEIGHT || below >= above ? 'below' : 'above'
 
-    setPlacement({
-      side,
-      align,
-      maxHeight: Math.max(200, Math.min(MENU_HEIGHT, side === 'below' ? below : above)),
-    })
+      // The menu is right-aligned by default, which pushes it off-screen when
+      // the trigger sits near the left edge — a narrow window, or a picker in a
+      // sidebar.
+      const menuWidth = Math.min(360, window.innerWidth - VIEWPORT_MARGIN * 2)
+      const align = trigger.right - menuWidth < VIEWPORT_MARGIN ? 'left' : 'right'
+
+      const room = side === 'below' ? below : above
+      setPlacement((current) => {
+        const next: Placement = {
+          side,
+          align,
+          maxHeight: Math.max(MIN_MENU_HEIGHT, Math.min(MENU_HEIGHT, room)),
+        }
+        // Only when something moved. Writing the same object every frame would
+        // re-render the menu under the cursor for no reason.
+        return current.side === next.side &&
+          current.align === next.align &&
+          current.maxHeight === next.maxHeight
+          ? current
+          : next
+      })
+    }
+
+    measure()
+
+    // Measured again once the menu has actually been laid out, and thereafter
+    // whenever anything moves.
+    //
+    // Measuring only on open was the bug: the composer is centred on an empty
+    // chat and settles a frame later as the model list arrives, so the reading
+    // taken at open time was of a trigger near the top of the window. `above`
+    // came out under the floor, the floor won, and the menu was pinned to
+    // 200px — eleven provider sections inside a box the height of three rows,
+    // with 488px of content and 114px to show it in.
+    const frame = requestAnimationFrame(measure)
+
+    const observer = new ResizeObserver(measure)
+    if (anchor.current) observer.observe(anchor.current)
+    observer.observe(document.documentElement)
+
+    window.addEventListener('resize', measure)
+    window.addEventListener('scroll', measure, true)
+
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measure, true)
+    }
   }, [anchor, open])
 
   return placement
@@ -469,6 +525,28 @@ interface Group {
  * weights and Anthropic as a provider you pay are different things, and merging
  * them would hide exactly the distinction the picker exists to make.
  */
+/**
+ * Which family a local model belongs to, for the heading it sits under.
+ *
+ * Version numbers are stripped from the leading word, which is the whole point:
+ * `qwen3-embedding-0.6b` and `qwen2.5-0.5b` are both Qwen, and grouping them as
+ * `QWEN3` and `QWEN2.5` put two models from one maker under two headings — with
+ * one of them additionally landing in a bucket called `Installed`, because it
+ * had no publisher prefix and no family recorded. Three headings, two models,
+ * and no way to see that they came from the same place.
+ */
+function brandOf(id: string, family: string | null | undefined): string {
+  const publisher = publisherOf(id)
+  if (publisher) return publisher
+
+  const leading = friendlyModelName(id).split(/[\/:]/)[0] ?? id
+  const word = leading.split('-')[0] ?? leading
+  // `qwen2.5` -> `qwen`, `llama3` -> `llama`, `gemma` -> `gemma`.
+  const stripped = word.replace(/[\d.]+$/, '')
+
+  return stripped.length >= 2 ? stripped : (family ?? word ?? 'Local')
+}
+
 function buildGroups(
   installed: InstalledModel[],
   remote: RemoteModel[],
@@ -483,7 +561,7 @@ function buildGroups(
     const id = entry.model.id
     if (!matches(id) && !matches(entry.model.display_name)) continue
 
-    const publisher = publisherOf(id) ?? entry.model.family ?? 'Installed'
+    const publisher = brandOf(id, entry.model.family)
     const name = friendlyModelName(id)
 
     const option: Option = {
@@ -495,7 +573,11 @@ function buildGroups(
       quant: quantOf(id) ?? entry.model.quant?.toUpperCase() ?? null,
       size: entry.model.file_size_bytes ? formatBytes(entry.model.file_size_bytes) : null,
       loaded: entry.loaded,
-      specialities: [],
+      specialities: entry.kind && entry.kind !== 'chat' ? [entry.kind] : [],
+      // Greyed with the reason rather than hidden. A model you downloaded and
+      // then cannot find in the picker is a worse puzzle than one that says
+      // what it is for.
+      unavailable: entry.chat === false ? `This is an ${entry.kind} model, not a chat model` : undefined,
     }
 
     const held = local.get(publisher) ?? []

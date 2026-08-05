@@ -14,6 +14,7 @@ import {
   buildCommands,
   commandTokenAt,
   matchCommands,
+  skillsNamedIn,
   SlashMenu,
   useSlashKeys,
   type SlashCommand,
@@ -172,14 +173,20 @@ export function Composer({
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
-  /**
-   * Skills named with `/` for this message.
+  /*
+   * There is no separate list of attached skills any more.
    *
-   * Held here rather than in settings because that is the distinction: the
-   * store says what Kuro *may* use, and this says what it *will*, once, for
-   * this message. Cleared on send along with the text.
+   * There was, and it was the wrong model: picking `/rust` deleted the word and
+   * put a chip above the box, so the message that reached the model said
+   * nothing about Rust and the skill arrived as an unexplained block of
+   * instructions with no anchor in the question. "Use /brainstorming on the
+   * second half" lost the half it was about.
+   *
+   * The text is the record. A `/name` written anywhere in the message attaches
+   * that skill and stays where it was written, so the model reads the request
+   * and the reason for the guidance in the same sentence — and typing one by
+   * hand works as well as picking one, which it did not before.
    */
-  const [attachedSkills, setAttachedSkills] = useState<string[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -251,10 +258,9 @@ export function Composer({
       .map((file) => `--- ${file.name} ---\n${file.content}`)
       .join('\n\n')
 
-    onSend(preamble ? `${preamble}\n\n${trimmed}` : trimmed, attachedSkills)
+    onSend(preamble ? `${preamble}\n\n${trimmed}` : trimmed, namedSkills)
     setText('')
     setAttachments([])
-    setAttachedSkills([])
     setAttachError(null)
   }
 
@@ -275,18 +281,17 @@ export function Composer({
     [catalogue.data],
   )
 
+  /** Skills this message names, read back out of what has been typed. */
+  const namedSkills = useMemo(() => skillsNamedIn(text, skillList), [text, skillList])
+
   const commands = useMemo(
     () =>
       buildCommands({
         toggles,
         skills: skillList,
-        attached: attachedSkills,
-        onAttach: (slug) =>
-          setAttachedSkills((held) =>
-            held.includes(slug) ? held.filter((have) => have !== slug) : [...held, slug],
-          ),
+        attached: namedSkills,
       }),
-    [toggles, skillList, attachedSkills],
+    [toggles, skillList, namedSkills],
   )
   const matches = useMemo(
     () => (query === null ? [] : matchCommands(commands, query)),
@@ -325,12 +330,29 @@ export function Composer({
     })
   }
 
+  /** Take one `/name` back out of the message, leaving the rest of it alone. */
+  const removeSkillWord = (slug: string) => {
+    const next = text
+      .replace(new RegExp(`(^|[\\s([{])/${slug}\\b[^\\S\\n]?`, 'gi'), '$1')
+      .replace(/[^\S\n]{2,}/g, ' ')
+    setText(next)
+    setCaret(Math.min(caret, next.length))
+  }
+
   const runCommand = (command: SlashCommand) => {
-    // Taken out of the text first, so `/web` is never sent to the model as
-    // part of the message it was used to configure.
-    replaceToken('')
+    if (command.kind === 'skill') {
+      // Completed where it was typed, with a space so the sentence can carry
+      // on. The name is the attachment — it stays in the message and tells the
+      // model which part of the request the guidance is for.
+      replaceToken(`/${command.name} `)
+    } else {
+      // A switch is not context. `/web` configures the turn and would only be
+      // noise in the sentence it configures, and the button lighting up is
+      // already the receipt.
+      replaceToken('')
+      command.run?.()
+    }
     setDismissed(null)
-    command.run?.()
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -418,20 +440,20 @@ export function Composer({
       )}
 
       <div className="composer">
-        {attachedSkills.length > 0 && (
-          // Shown as chips rather than left invisible: a `/rust` that vanished
-          // into thin air would give no way to tell whether it took, and no way
-          // to take it back.
+        {namedSkills.length > 0 && (
+          // A reading of the message rather than a separate list. A textarea
+          // cannot colour the `/rust` inside it, so this is the only way to see
+          // that the name registered as a skill before the message is sent —
+          // and removing a chip removes the word, because the word is the
+          // thing.
           <div className="composer-attachments">
-            {attachedSkills.map((slug) => (
+            {namedSkills.map((slug) => (
               <span key={slug} className="tag tag-live">
                 /{slug}
                 <button
                   className="attachment-remove"
-                  aria-label={`Remove ${slug}`}
-                  onClick={() =>
-                    setAttachedSkills((held) => held.filter((have) => have !== slug))
-                  }
+                  aria-label={`Remove /${slug} from the message`}
+                  onClick={() => removeSkillWord(slug)}
                 >
                   ×
                 </button>

@@ -41,6 +41,17 @@ export interface InstalledModel {
   model: ModelRecord
   loaded: boolean
   fit: FitEstimate | null
+  /** `chat`, `embedding`, `reranker` and so on, read off the name. */
+  kind: string
+  /**
+   * Whether this model can hold a conversation.
+   *
+   * False for embedding models and rerankers. Worth knowing rather than
+   * assuming: picking an embedding model for a chat does not fail, it answers —
+   * with whatever the decoder makes of a vector, which reads as a stuck model
+   * rather than as the wrong one.
+   */
+  chat: boolean
 }
 
 /**

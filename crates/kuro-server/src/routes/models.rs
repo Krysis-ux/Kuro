@@ -72,10 +72,25 @@ pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Val
                 .file_size_bytes
                 .map(|bytes| estimate_fit(bytes as u64, &state.hardware));
 
+            // The same classifier the provider catalogues go through. It was
+            // only ever applied to those, which left an embedding model sitting
+            // in the local list as an ordinary choice — and picking one does
+            // not fail, it answers. `qwen3-embedding-0.6b` asked "hi" replies
+            // with several hundred repetitions of the word "lines", because an
+            // embedding model handed a chat prompt produces whatever the
+            // decoder makes of a vector.
+            let classified = kuro_core::classify::classify(&model.id);
+
             json!({
                 "model": model,
                 "loaded": is_loaded,
                 "fit": fit,
+                "kind": classified.kind.as_str(),
+                // False for embedding models, rerankers and the rest. The
+                // picker greys these rather than hiding them: a model you
+                // downloaded and cannot find is a worse puzzle than one that
+                // says why it is not for this.
+                "chat": classified.kind.is_chat(),
             })
         })
         .collect();
