@@ -7,8 +7,10 @@
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
+use kuro_core::orchestrate::{budget_for, Surface};
+use kuro_core::settings::Effort;
 use kuro_core::settings::{
-    default_tool_groups, memory_preload_enabled, SearchSettings, KEY_SEARCH_BASE_URL,
+    self, default_tool_groups, memory_preload_enabled, SearchSettings, KEY_SEARCH_BASE_URL,
     KEY_SEARCH_PROVIDER,
 };
 use kuro_core::tools::web_search::{self, SearchProvider};
@@ -20,6 +22,29 @@ use serde_json::{json, Value};
 
 use crate::error::AppResult;
 use crate::state::SharedState;
+
+/// What one turn will actually carry, at each surface and effort.
+///
+/// The screen's honest headline. Switching a skill on adds it to the pool a
+/// turn chooses from; these are the ceilings on what any turn spends out of
+/// that pool, which is the number a user is really asking about when they look
+/// at the token count and start switching things off.
+fn budget_summary() -> Value {
+    let describe = |surface: Surface| {
+        [Effort::Low, Effort::Balanced, Effort::High, Effort::Max, Effort::Ultra]
+            .iter()
+            .map(|effort| json!({
+                "effort": effort.as_str(),
+                "tokens": budget_for(*effort, surface),
+            }))
+            .collect::<Vec<_>>()
+    };
+
+    json!({
+        "chat": describe(Surface::Chat),
+        "code": describe(Surface::Code),
+    })
+}
 
 /// Everything the tools screen needs in one call.
 pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>> {
@@ -35,11 +60,54 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
     Ok(Json(json!({
         "builtins": describe_builtins(),
         "defaultGroups": groups,
+        "groups": ToolGroup::ALL
+            .iter()
+            .map(|group| json!({
+                "id": group.as_str(),
+                "label": group.label(),
+                "blurb": group.blurb(),
+            }))
+            .collect::<Vec<_>>(),
         "skills": {
-            "catalogue": skills::SKILLS,
+            // Only what is a real choice. The essentials are in every coding
+            // brief already, and rendering them with a switch would say they
+            // were optional.
+            "catalogue": skills::selectable(),
             "enabled": enabled_skills,
-            // Shown so a user turning on six skills at once understands the cost.
+            // What every enabled skill would cost if they all went in at once.
+            //
+            // Kept, but no longer the number the screen leads with, because it
+            // stopped being what a turn spends. Skills used to be concatenated
+            // into every prompt, so this total *was* the cost; a turn now ranks
+            // the enabled set against what was asked and sends what fits
+            // `budgetTokens`. Showing forty thousand as the running cost of
+            // leaving switches on would be describing a version of Kuro that no
+            // longer exists — and it is precisely the number that made people
+            // switch skills off to protect a context window that was never
+            // actually at risk.
             "approxTokens": skills::approx_tokens(&active),
+            // What one turn will really carry, per surface and effort. The
+            // honest headline.
+            "budgets": budget_summary(),
+            "essentials": skills::essentials()
+                .iter()
+                .map(|skill| json!({
+                    "slug": skill.slug,
+                    "name": skill.name,
+                    "blurb": skill.blurb,
+                }))
+                .collect::<Vec<_>>(),
+        },
+        "surfaces": {
+            "chat": {
+                "autoOrchestrate": settings::auto_orchestrate(&state.db, Surface::Chat)?,
+                "defaultEffort": settings::default_effort(&state.db, Surface::Chat)?.as_str(),
+            },
+            "code": {
+                "autoOrchestrate": settings::auto_orchestrate(&state.db, Surface::Code)?,
+                "defaultEffort": settings::default_effort(&state.db, Surface::Code)?.as_str(),
+                "defaultMode": settings::default_workspace_mode(&state.db)?.as_str(),
+            },
         },
         "memory": {
             "preload": memory_preload_enabled(&state.db)?,

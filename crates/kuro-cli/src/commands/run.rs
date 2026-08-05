@@ -1,6 +1,6 @@
 //! `kuro run` — chat with a model from the terminal.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use anyhow::{bail, Result};
 use futures::StreamExt;
@@ -14,6 +14,57 @@ use crate::commands::models::resolve_model;
 /// Dim text, used for anything that is not model output.
 const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
+
+/// Frames of the waiting spinner.
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// A spinner covering the wait before the first token.
+///
+/// That gap is not small and it is not always short. A local model has to load,
+/// a reasoning model thinks for a while before it says anything, and a free
+/// provider may be failing over between two endpoints — and until now every one
+/// of those looked identical from the terminal: a cursor on an empty line, with
+/// no way to tell a slow answer from a hung one.
+///
+/// On stderr, so that `kuro run qwen "…" > out.txt` still writes clean output.
+/// Skipped entirely when stderr is not a terminal, because escape codes in a
+/// log file are noise nobody asked for.
+struct Thinking(Option<tokio::task::JoinHandle<()>>);
+
+impl Thinking {
+    fn start() -> Self {
+        if !std::io::stderr().is_terminal() {
+            return Self(None);
+        }
+
+        Self(Some(tokio::spawn(async move {
+            let mut frame = 0usize;
+            loop {
+                eprint!("\r{DIM}{} thinking…{RESET}", SPINNER[frame % SPINNER.len()]);
+                let _ = std::io::stderr().flush();
+                frame += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            }
+        })))
+    }
+
+    /// Stop and wipe the line, so the answer starts at column zero.
+    fn stop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+            eprint!("\r\x1b[2K");
+            let _ = std::io::stderr().flush();
+        }
+    }
+}
+
+// A `?` anywhere in the streaming loop would otherwise leave the spinner
+// running over whatever error is printed next.
+impl Drop for Thinking {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
 
 pub async fn run(
     client: &KuroClient,
@@ -112,6 +163,9 @@ async fn send(
     let mut buffer: Vec<u8> = Vec::new();
     let mut stream = response.bytes_stream();
     let mut wrote_output = false;
+    // Runs until the first thing worth showing arrives, and is wiped by `Drop`
+    // on any path out of this loop.
+    let mut thinking = Thinking::start();
 
     while let Some(chunk) = stream.next().await {
         buffer.extend_from_slice(&chunk?);
@@ -124,18 +178,21 @@ async fn send(
             match event.event.as_deref() {
                 Some("token") => {
                     if let Some(text) = payload["content"].as_str() {
+                        thinking.stop();
                         print!("{text}");
                         let _ = std::io::stdout().flush();
                         wrote_output = true;
                     }
                 }
                 Some("done") => {
+                    thinking.stop();
                     if wrote_output {
                         println!();
                     }
                     print_stats(&payload);
                 }
                 Some("error") => {
+                    thinking.stop();
                     if wrote_output {
                         println!();
                     }

@@ -72,6 +72,20 @@ pub async fn create_workspace(
     let created = state
         .db
         .create_workspace(request.name.trim(), &root.to_string_lossy())?;
+
+    // The stored default rather than the type's default: a new workspace should
+    // open in whichever mode this person actually works in, and having to change
+    // it on every new folder is the sort of friction that makes a setting feel
+    // like a decoration.
+    let preferred = kuro_core::settings::default_workspace_mode(&state.db)?;
+    let created = if preferred == WorkspaceMode::parse(&created.mode).unwrap_or_default() {
+        created
+    } else {
+        state
+            .db
+            .update_workspace(&created.id, None, Some(preferred), None)?
+    };
+
     Ok(Json(json!(created)))
 }
 
@@ -257,6 +271,103 @@ pub async fn undo_change(
         "path": change.path,
         "removed": change.before.is_none(),
     })))
+}
+
+/* ---------- Background processes ---------- */
+
+/// Lines of a process's output returned at once.
+const LOG_LINES: usize = 400;
+
+/// What is running in this workspace, and what each one is serving.
+///
+/// The preview panel polls this. It is deliberately cheap — the registry is in
+/// memory, and the log is read separately — because a panel that costs a
+/// filesystem walk on every tick is a panel that gets a longer interval and then
+/// feels dead.
+pub async fn list_processes(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    load(&state, &id)?;
+    Ok(Json(json!({ "processes": state.processes.list(&id) })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StartProcessRequest {
+    pub command: String,
+}
+
+/// Start a command from the interface rather than from a model.
+///
+/// Vetted against the workspace's own mode, exactly as a model's call would be.
+/// The user typing the command is not a reason to skip the check: the mode is
+/// what they set, and a button that quietly outranked it would make the mode
+/// meaningless.
+pub async fn start_process(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(request): Json<StartProcessRequest>,
+) -> AppResult<Json<Value>> {
+    let record = load(&state, &id)?;
+    let mode = WorkspaceMode::parse(&record.mode).unwrap_or_default();
+
+    if !mode.allows(kuro_core::workspace::ToolRisk::Execute) {
+        return Err(KuroError::bad_request(format!(
+            "{} mode does not run commands. Switch to Agent to run build and test commands.",
+            mode.label()
+        ))
+        .into());
+    }
+
+    kuro_core::workspace::exec::vet(&request.command, mode.restricts_commands())
+        .map_err(|refusal| KuroError::bad_request(refusal.to_string()))?;
+
+    let root = PathBuf::from(&record.root_path);
+    if !root.is_dir() {
+        return Err(KuroError::not_found(format!("the folder `{}`", record.root_path)).into());
+    }
+
+    let started = state
+        .processes
+        .start(&id, &root, request.command.trim())
+        .await
+        .map_err(KuroError::bad_request)?;
+
+    Ok(Json(json!({ "process": started })))
+}
+
+pub async fn process_log(
+    State(state): State<SharedState>,
+    Path((id, process_id)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    load(&state, &id)?;
+
+    let found = state
+        .processes
+        .get(&process_id)
+        .filter(|held| held.workspace_id == id)
+        .ok_or_else(|| KuroError::not_found(format!("process `{process_id}`")))?;
+
+    Ok(Json(json!({
+        "process": found,
+        "lines": state.processes.log(&process_id, LOG_LINES).unwrap_or_default(),
+    })))
+}
+
+pub async fn stop_process(
+    State(state): State<SharedState>,
+    Path((id, process_id)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    load(&state, &id)?;
+
+    let found = state
+        .processes
+        .get(&process_id)
+        .filter(|held| held.workspace_id == id)
+        .ok_or_else(|| KuroError::not_found(format!("process `{process_id}`")))?;
+
+    let stopped = state.processes.stop(&process_id);
+    Ok(Json(json!({ "stopped": stopped, "command": found.command })))
 }
 
 fn load(state: &SharedState, id: &str) -> Result<kuro_core::db::WorkspaceRecord, KuroError> {

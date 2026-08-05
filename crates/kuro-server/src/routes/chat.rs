@@ -34,11 +34,11 @@ use axum::Json;
 use futures::StreamExt;
 use kuro_core::cloud::ChatTarget;
 use kuro_core::db::{MessageCompletion, NewMessage};
-use kuro_core::settings::{default_tool_groups, memory_preload_enabled, Effort};
+use kuro_core::settings::{self, default_tool_groups, memory_preload_enabled, Effort};
 use kuro_core::sse::{drain_events, is_done};
 use kuro_core::tools::{fetch, intent, memory, web_search, ToolGroup, WebSource};
 use kuro_core::workspace::{Workspace, WorkspaceMode};
-use kuro_core::{prompt, skills};
+use kuro_core::{orchestrate, prompt, skills};
 use kuro_core::KuroError;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -47,9 +47,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::error::AppResult;
 use crate::routes::common::{history_to_messages, resolve_target, title_from_first_line};
-use crate::routes::tools_runtime::{
-    self as runtime, PartialToolCall, ToolSet, MAX_TOOL_ROUNDS,
-};
+use crate::routes::tools_runtime::{self as runtime, PartialToolCall, ToolSet};
 use crate::state::SharedState;
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +65,15 @@ pub struct SendMessageRequest {
     /// Search before answering, regardless of whether the model would have asked.
     #[serde(default)]
     pub web_search: Option<bool>,
+    /// Skills the user named for this message, by slug.
+    ///
+    /// What `/rust` in the composer actually does. Distinct from the enabled
+    /// set in settings, which says what Kuro *may* use: this says what it
+    /// *will*, for this turn only, and the orchestrator is not allowed to trim
+    /// one away to fit a budget. Somebody who typed the name of a skill has
+    /// been more specific than any ranking heuristic can be.
+    #[serde(default)]
+    pub skills: Option<Vec<String>>,
 }
 
 /// Send a message and stream the reply.
@@ -93,11 +100,7 @@ pub async fn send_message(
     let target = resolve_target(&state, requested_model).await?;
     let model_id = target.recorded_id();
 
-    let effort = request
-        .effort
-        .as_deref()
-        .and_then(Effort::parse)
-        .unwrap_or_default();
+    let effort = resolve_effort(&state, request.effort.as_deref(), &conversation)?;
 
     let groups = resolve_groups(&state, &request)?;
     // The switch being on is what makes a search happen up front; a model may
@@ -127,7 +130,10 @@ pub async fn send_message(
     let memory_count = state.db.count_memories()?;
     if groups.contains(&ToolGroup::Memory) && memory_preload_enabled(&state.db)? {
         let saved = state.db.list_memories(memory::MAX_PRELOADED)?;
-        if let Some(preamble) = memory::preamble(&saved) {
+        // What the user wrote about themselves goes in even when nothing has
+        // been saved yet — it is the whole point of having written it.
+        let about_you = settings::about_you(&state.db).unwrap_or(None);
+        if let Some(preamble) = memory::preamble_with(about_you.as_deref(), &saved) {
             messages.push(json!({ "role": "system", "content": preamble }));
         }
     }
@@ -142,6 +148,11 @@ pub async fn send_message(
             role: "assistant".to_string(),
             content: String::new(),
             model_id: Some(model_id.clone()),
+            // Which provider's allowance this turn spends. Known here because
+            // `resolve_target` above already chose one, and fixed for the whole
+            // turn: a provider that refuses is set aside for the *next*
+            // message rather than swapped mid-reply.
+            provider_slug: target.upstream().map(str::to_string),
             ..Default::default()
         },
     )?;
@@ -166,6 +177,7 @@ pub async fn send_message(
                 search_first,
                 memory_count,
                 query: &request.content,
+                pinned_skills: request.skills.as_deref().unwrap_or(&[]),
                 workspace,
             },
             messages,
@@ -231,6 +243,8 @@ struct Turn<'a> {
     memory_count: i64,
     /// The user's message, used as the up-front search query.
     query: &'a str,
+    /// Skills named on this message with `/`, which the brief must carry.
+    pinned_skills: &'a [String],
     /// The coding workspace this conversation belongs to. `None` for an ordinary
     /// chat, which is what makes a chat unable to reach a file.
     workspace: Option<TurnWorkspace>,
@@ -250,6 +264,35 @@ struct TurnWorkspace {
 /// gets `None` — and therefore no file tools. That is the safe direction, and
 /// the only one: the alternative would be a turn holding file access with
 /// nothing left to scope it to.
+/// How hard to think this turn.
+///
+/// What the request asked for, and otherwise the starting effort configured for
+/// this surface in Settings. That fallback used to be a bare `Effort::default()`,
+/// which meant the two "Starting effort" controls in Settings were written to the
+/// database and then read by nothing — a coding workspace configured to start at
+/// Extended still ran every turn at Balanced. A control that does nothing is
+/// worse than an absent one, because it is also a claim.
+///
+/// The surface is decided by whether the conversation belongs to a workspace,
+/// exactly as the orchestrator decides it later, so the effort and the tool
+/// budget it buys are never derived from two different answers.
+fn resolve_effort(
+    state: &SharedState,
+    requested: Option<&str>,
+    conversation: &kuro_core::db::Conversation,
+) -> Result<Effort, KuroError> {
+    if let Some(effort) = requested.and_then(Effort::parse) {
+        return Ok(effort);
+    }
+
+    let surface = match conversation.workspace_id {
+        Some(_) => orchestrate::Surface::Code,
+        None => orchestrate::Surface::Chat,
+    };
+
+    Ok(settings::default_effort(&state.db, surface).unwrap_or_default())
+}
+
 fn resolve_workspace(state: &SharedState, conversation: &kuro_core::db::Conversation) -> Option<TurnWorkspace> {
     let workspace_id = conversation.workspace_id.as_deref()?;
     let record = state.db.get_workspace(workspace_id).ok().flatten()?;
@@ -337,7 +380,44 @@ async fn run_turn(
     // index 0 so it is the first thing the model reads.
     let tool_names: Vec<String> = tool_set.names().into_iter().map(str::to_string).collect();
     let mcp_servers = tool_set.mcp_server_names();
-    let active_skills = skills::enabled(&state.db).unwrap_or_default();
+
+    // What the effort dial actually buys this turn: a tool budget, and the
+    // expertise this particular project justifies. The user's own selection
+    // comes first in the brief, so anything added reads as supplementary.
+    let chosen_skills = skills::enabled(&state.db).unwrap_or_default();
+    let surface = match &turn.workspace {
+        Some(_) => orchestrate::Surface::Code,
+        None => orchestrate::Surface::Chat,
+    };
+    let orchestration = orchestrate::plan(
+        &orchestrate::Request {
+            effort: turn.effort,
+            surface,
+            workspace: turn
+                .workspace
+                .as_ref()
+                .map(|held| (held.workspace.root.as_path(), held.workspace.mode)),
+            auto: settings::auto_orchestrate(&state.db, surface).unwrap_or(true),
+            // What was asked, so a skill about the subject at hand outranks one
+            // that merely happens to be switched on when the brief runs out of
+            // room.
+            message: turn.query,
+            // And what was asked for by name, which outranks everything.
+            pinned: turn.pinned_skills,
+        },
+        &chosen_skills,
+    );
+    tracing::debug!(plan = %orchestration.summary, "effort resolved");
+
+    // The plan's own list, rather than the user's selection plus additions.
+    //
+    // Those used to be the same thing, and that is what made the store's token
+    // counter a warning rather than a number: every enabled skill went into
+    // every prompt, so switching on all forty-odd meant carrying all forty-odd
+    // into a question about none of them. The plan now ranks the enabled set
+    // against what was actually asked and sends what fits — so a switch means
+    // "Kuro may use this", not "put this in front of every message".
+    let active_skills = orchestration.skills.clone();
 
     // The workspace, if this conversation belongs to one. Described to the model
     // exactly as it is enforced, so the brief never claims an access the tools
@@ -365,6 +445,11 @@ async fn run_turn(
         tool_names: &tool_names,
         mcp_servers: &mcp_servers,
         workspace: workspace_brief,
+        // Only says something new in an ordinary chat. Inside a workspace the
+        // file line already describes access to that folder, and mentioning a
+        // second, weaker way to read files would just be confusing.
+        projects_readable: workspace_brief.is_none()
+            && turn.groups.contains(&ToolGroup::Projects),
         skills: &active_skills,
         project: project.as_ref().map(|held| prompt::ProjectBrief {
             name: &held.name,
@@ -377,10 +462,11 @@ async fn run_turn(
     let mut reasoning = String::new();
     let mut aggregate = Aggregate::default();
 
-    for round in 0..=MAX_TOOL_ROUNDS {
+    let max_rounds = orchestration.max_tool_rounds;
+    for round in 0..=max_rounds {
         // The last permitted round withholds the tools, which forces an answer
         // rather than another call the loop has no room to service.
-        let offer_tools = round < MAX_TOOL_ROUNDS;
+        let offer_tools = round < max_rounds;
 
         let step = stream_once(
             state,
@@ -421,6 +507,8 @@ async fn run_turn(
                 &tool_set,
                 turn.conversation_id,
                 turn.workspace.as_ref().map(|held| &held.workspace),
+                &turn.target,
+                &base_url,
                 call,
             )
             .await;
@@ -611,6 +699,8 @@ impl Step {
 struct Aggregate {
     finish_reason: Option<String>,
     prompt_tokens: Option<i64>,
+    /// Every round's prompt, summed. What the allowance paid for.
+    prompt_tokens_total: Option<i64>,
     completion_tokens: Option<i64>,
     first_token_at: Option<Instant>,
     /// Summed across rounds, excluding the gaps in which tools were running.
@@ -626,6 +716,13 @@ impl Aggregate {
         // The prompt grows every round as tool results are appended, so the last
         // round's count is the one that describes what was actually processed.
         self.prompt_tokens = step.prompt_tokens.or(self.prompt_tokens);
+        // And every round's prompt was sent and charged for, which is a
+        // different number and the one an allowance actually paid. Keeping only
+        // the last round understated a five-round agentic turn by most of it.
+        self.prompt_tokens_total = match (self.prompt_tokens_total, step.prompt_tokens) {
+            (Some(held), Some(new)) => Some(held + new),
+            (held, new) => new.or(held),
+        };
         self.completion_tokens = match (self.completion_tokens, step.completion_tokens) {
             (Some(held), Some(new)) => Some(held + new),
             (held, new) => new.or(held),
@@ -658,7 +755,17 @@ async fn stream_once(
         "stream_options": { "include_usage": true },
     });
 
-    if let Some(tools) = tools {
+    let quirks = turn.target.quirks();
+
+    if let Some(mut tools) = tools {
+        // Some providers reject a schema keyword every Kuro built-in emits, and
+        // reject the whole request for it rather than ignoring the field.
+        if quirks.strip_schema_keywords {
+            kuro_core::wire::strip_schema_keywords(&mut tools);
+        }
+        if quirks.no_parallel_tool_calls {
+            body["parallel_tool_calls"] = json!(false);
+        }
         body["tools"] = tools;
         body["tool_choice"] = json!("auto");
     }
@@ -668,13 +775,27 @@ async fn stream_once(
             .engines
             .loopback_client()
             .post(format!("{base_url}/v1/chat/completions")),
-        ChatTarget::Remote { api_key, .. } => state
-            .outbound
-            .post(format!("{base_url}/chat/completions"))
-            .bearer_auth(api_key)
-            // Anthropic's compatibility endpoint wants its version header even in
-            // OpenAI shape.
-            .header("anthropic-version", "2023-06-01"),
+        ChatTarget::Remote { authorization, .. } => {
+            let mut request = state
+                .outbound
+                .post(quirks.chat_url(base_url))
+                // Anthropic's compatibility endpoint wants its version header
+                // even in OpenAI shape.
+                .header("anthropic-version", "2023-06-01");
+
+            // Absent rather than empty. A shared endpoint that takes no key
+            // reads `Bearer ` as a malformed one and refuses.
+            if let Some(value) = authorization {
+                request = request.header(reqwest::header::AUTHORIZATION, value);
+            }
+            for (name, value) in quirks.headers {
+                request = request.header(*name, *value);
+            }
+            if let Some(timeout) = quirks.timeout {
+                request = request.timeout(timeout);
+            }
+            request
+        }
     };
 
     let response = request.json(&body).send().await?;
@@ -687,10 +808,24 @@ async fn stream_once(
                 "the engine rejected the request ({status}): {}",
                 detail.trim()
             )),
-            ChatTarget::Remote { label, .. } => KuroError::other(format!(
-                "{label} rejected the request ({status}): {}",
-                preview(detail.trim())
-            )),
+            ChatTarget::Remote { label, connector_id, model, .. } => {
+                // A free provider that refuses is set aside so the *next*
+                // message goes somewhere else. Doing it here rather than
+                // retrying now is deliberate: the stream is already open on the
+                // client, and swapping providers mid-turn would produce a reply
+                // half from each.
+                note_free_trouble(state, turn.target.upstream(), model, status.as_u16());
+                // The same, one level down: a single free model on a provider
+                // that has run out of allowance, so that provider's pool moves
+                // to the next one rather than sending every later message to a
+                // model that has already said no.
+                state.providers.note_trouble(connector_id, model, status.as_u16());
+
+                KuroError::other(format!(
+                    "{label} rejected the request ({status}): {}",
+                    preview(detail.trim())
+                ))
+            }
         });
     }
 
@@ -767,6 +902,52 @@ async fn stream_once(
     Ok(step)
 }
 
+/// Remember that a free provider refused, when the target was one.
+///
+/// The connector id on a free target is the pool's own model id, which does not
+/// name the provider that answered — so the provider is looked up the same way
+/// the request found it. That costs one credential read on a path that has just
+/// failed anyway, and keeps the pool from having to thread its choice through
+/// the whole turn.
+fn note_free_trouble(
+    state: &SharedState,
+    upstream: Option<&str>,
+    model: &str,
+    status: u16,
+) {
+    let Some(trouble) = kuro_core::free::Trouble::from_status(status) else {
+        return;
+    };
+    // The provider the request actually went to, carried on the target itself.
+    // This used to re-read the credential store and re-run `choose` to work it
+    // out, which could name a *different* provider than the one that failed —
+    // the pool's state moves between the request and the failure, so a
+    // concurrent turn troubling the original pick made the guess wrong, and the
+    // innocent provider got set aside instead.
+    let Some(slug) = upstream.filter(|slug| kuro_core::free::find(slug).is_some()) else {
+        return;
+    };
+
+    // A 404 is about the *model*, not the provider, and conflating the two was
+    // expensive. NVIDIA NIM issues several of its models per-key: asking for one
+    // the key was not provisioned for answers `404 Function '…': Not found for
+    // account '…'`, which used to set the whole provider aside and discard its
+    // catalogue. One unprovisioned model took out the other eighty-two, and the
+    // next message reported there was no working NVIDIA key at all.
+    //
+    // So the model is set aside and the provider is left alone, which makes this
+    // message fail over to another model on the *same* key rather than
+    // abandoning a key that works perfectly.
+    if trouble.stale_catalogue() {
+        state.free.note_model_trouble(slug, model, trouble);
+    } else {
+        state.free.note_trouble(slug, trouble);
+    }
+
+    // Written through, so the picker still greys this row after a restart.
+    crate::routes::free::save_troubles(state);
+}
+
 struct Finished {
     content: String,
     reasoning: String,
@@ -811,6 +992,7 @@ async fn persist_and_finish(
         content: content.clone(),
         reasoning_content: (!reasoning.is_empty()).then_some(reasoning),
         usage_prompt_tokens: aggregate.prompt_tokens,
+        usage_prompt_tokens_total: aggregate.prompt_tokens_total,
         usage_completion_tokens: aggregate.completion_tokens,
         timing_ttft_ms: ttft_ms,
         timing_total_ms: Some(elapsed_ms),

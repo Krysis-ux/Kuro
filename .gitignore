@@ -32,3 +32,6 @@ kuro.sqlite3*
 # The credential store. Never committed — it holds provider API keys and MCP
 # bearer tokens in plain text, deliberately outside the database.
 credentials.json
+
+# Personal scratch notes, not source.
+*.rtf

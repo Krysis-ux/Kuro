@@ -247,3 +247,90 @@ export const BranchIcon = (props: IconProps) => (
     <path d="M6 7.2v9.6M8.2 17.6A8 8 0 0 0 15.9 12.6" />
   </Svg>
 )
+
+export const GiftIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="3" y="8" width="18" height="4" rx="1" />
+    <path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8M12 8v13" />
+    <path d="M12 8C12 8 10.5 3 8 3a2.5 2.5 0 0 0 0 5M12 8c0 0 1.5-5 4-5a2.5 2.5 0 0 1 0 5" />
+  </Svg>
+)
+
+export const TerminalIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M7 9l3 3-3 3M13 15h4" />
+  </Svg>
+)
+
+export const PlayIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M6 4l14 8-14 8V4z" />
+  </Svg>
+)
+
+export const EyeIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+)
+
+export const SlidersIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h10M18 18h2" />
+    <circle cx="16" cy="6" r="2" />
+    <circle cx="10" cy="12" r="2" />
+    <circle cx="16" cy="18" r="2" />
+  </Svg>
+)
+
+export const BoltIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
+  </Svg>
+)
+
+export const CloseIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M18 6 6 18M6 6l12 12" />
+  </Svg>
+)
+
+/** A checklist, for Plan mode. */
+export const ListIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" />
+  </Svg>
+)
+
+/** A shield with a line through it, for the mode with no allowlist. */
+export const ShieldOffIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M19.7 14A8.4 8.4 0 0 0 20 12V5l-8-3-3.3 1.2M6.3 6.3 4 5v7c0 5 8 10 8 10a20 20 0 0 0 4.6-3.3" />
+    <path d="M2 2l20 20" />
+  </Svg>
+)
+
+/** Bars, for the panel that counts what has been spent. */
+export const ChartIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+  </Svg>
+)
+
+/**
+ * A pane, with the side rail marked.
+ *
+ * The standard icon for "show or hide the panel beside this" — the same shape
+ * every editor uses for it. It reads as a layout rather than as a direction,
+ * which is what the sidebar toggle wants: a chevron promises movement one way
+ * and then has to flip, and a flipping chevron is the part that never quite
+ * looks right.
+ */
+export const PanelIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M10 4v16" />
+  </Svg>
+)

@@ -136,6 +136,12 @@ CREATE TABLE IF NOT EXISTS messages (
     -- what powers the per-message request inspector.
     usage_prompt_tokens     INTEGER,
     usage_completion_tokens INTEGER,
+    -- Prompt tokens across every tool round, where the column above holds only
+    -- the last round's — which is what the inspector wants and understates
+    -- what an allowance actually paid for.
+    usage_prompt_tokens_total INTEGER,
+    -- Which provider's allowance this turn spent. NULL for a local model.
+    provider_slug           TEXT,
     timing_ttft_ms          INTEGER,
     timing_total_ms         INTEGER,
     timing_tokens_per_sec   REAL,

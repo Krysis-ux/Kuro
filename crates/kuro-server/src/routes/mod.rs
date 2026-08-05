@@ -7,36 +7,37 @@
 //! * `/v1/*` is OpenAI-compatible, so existing tools work by changing a base
 //!   URL.
 
-use axum::routing::{delete, get, patch, post};
+use axum::http::{header, HeaderValue, Method};
+use axum::routing::{delete, get, patch, post, put};
 use axum::Router;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::state::SharedState;
 
+pub mod browse;
 pub mod chat;
 pub mod common;
 pub mod conversations;
 pub mod downloads;
+pub mod free;
 pub mod mcp;
 pub mod models;
 pub mod openai;
 pub mod projects;
 pub mod providers;
 pub mod settings;
+pub mod subagent;
 pub mod system;
 pub mod tools;
 pub mod tools_runtime;
 pub mod workspaces;
 
+/// The port the Vite dev server runs on, and the only other origin allowed.
+const DEV_SERVER_PORT: u16 = 5173;
+
 pub fn router(state: SharedState) -> Router {
-    // The API is bound to loopback, and the browser UI is served from the same
-    // origin. CORS exists only so the Vite dev server on another port can talk
-    // to it during development.
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = cors_layer(state.port);
 
     Router::new()
         .merge(native_routes())
@@ -45,6 +46,57 @@ pub fn router(state: SharedState) -> Router {
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// Who is allowed to call this server from a browser.
+///
+/// This used to be `allow_origin(Any)` with a comment saying CORS existed only
+/// for the Vite dev server. The comment was right about the intent and the code
+/// did something much larger: it told every browser that any website in the
+/// world could call this API and read the reply. Kuro has no authentication, so
+/// "can call it" is the whole of the access check — and the API includes
+/// `POST /api/workspaces/{id}/processes`, which runs a command. Any page you
+/// visited while Kuro was running could list your workspaces and then execute
+/// something in one.
+///
+/// So the allow-list is now what the comment always claimed: this server's own
+/// origin, and the dev server. A page on any other origin gets no
+/// `Access-Control-Allow-Origin` header back, and the browser refuses both the
+/// preflight and the read.
+///
+/// ## What this does not fix
+///
+/// CORS governs what a *browser* will allow a page to do. It is not
+/// authentication: anything that can make an HTTP request without a browser —
+/// another program on this machine — is unaffected, and a page can still fire a
+/// "simple" cross-origin request it cannot read the answer to. The real fix is
+/// a key on every request, which changes every caller and belongs in its own
+/// change. This closes the hole that is reachable from a web page today.
+fn cors_layer(port: u16) -> CorsLayer {
+    // Both spellings of loopback, because a browser treats them as different
+    // origins and people reach the UI by whichever the address bar holds.
+    let origins: Vec<HeaderValue> = [
+        format!("http://127.0.0.1:{port}"),
+        format!("http://localhost:{port}"),
+        format!("http://127.0.0.1:{DEV_SERVER_PORT}"),
+        format!("http://localhost:{DEV_SERVER_PORT}"),
+    ]
+    .iter()
+    .filter_map(|origin| origin.parse().ok())
+    .collect();
+
+    CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        // Everything Kuro's own client sends. `Any` here would also have let a
+        // page name whatever header it liked in a preflight.
+        .allow_headers([header::CONTENT_TYPE, header::ACCEPT])
 }
 
 fn native_routes() -> Router<SharedState> {
@@ -90,6 +142,11 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/projects/{id}", get(projects::get_project))
         .route("/api/projects/{id}", patch(projects::update_project))
         .route("/api/projects/{id}", delete(projects::delete_project))
+        // Walking this machine's folders, so nothing in the interface has to ask
+        // somebody to type a path.
+        .route("/api/fs/browse", get(browse::browse))
+        // The operating system's own dialog, which is the one people know.
+        .route("/api/fs/choose", post(browse::native_picker))
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings", patch(settings::patch_settings))
         .route("/api/settings/reset", post(settings::reset_settings))
@@ -129,6 +186,27 @@ fn native_routes() -> Router<SharedState> {
             "/api/workspaces/{id}/conversations",
             post(workspaces::create_conversation),
         )
+        // Dev servers and other long-running commands, so the preview panel can
+        // show what is running and the user can stop it without asking a model.
+        .route("/api/workspaces/{id}/processes", get(workspaces::list_processes))
+        .route("/api/workspaces/{id}/processes", post(workspaces::start_process))
+        .route(
+            "/api/workspaces/{id}/processes/{process_id}/log",
+            get(workspaces::process_log),
+        )
+        .route(
+            "/api/workspaces/{id}/processes/{process_id}/stop",
+            post(workspaces::stop_process),
+        )
+        // Providers with a free tier, pooled behind one model id.
+        .route("/api/free", get(free::overview))
+        .route("/api/free/keyless", post(free::set_keyless))
+        .route("/api/free/usage", get(free::usage))
+        .route("/api/free/{slug}/key", post(free::set_key))
+        .route("/api/free/{slug}/key", delete(free::delete_key))
+        .route("/api/free/{slug}/test", post(free::test_key))
+        .route("/api/free/{slug}/allowance", put(free::set_allowance))
+        .route("/api/free/{slug}/allowance", delete(free::delete_allowance))
         // Remote model providers.
         .route("/api/providers", get(providers::list_providers))
         .route("/api/providers", post(providers::add_provider))

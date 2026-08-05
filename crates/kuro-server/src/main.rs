@@ -43,6 +43,22 @@ async fn main() -> anyhow::Result<()> {
 
     let paths = Paths::resolve_and_create().context("preparing the Kuro data directory")?;
     let db = Db::open(&paths.database_file()).context("opening the Kuro database")?;
+
+    // Weights can be sent to another disk. Read once, here, so a directory that
+    // has become unwritable is a startup error rather than a download that fails
+    // several gigabytes in.
+    let paths = match db
+        .get_setting(kuro_core::settings::KEY_MODELS_DIRECTORY)
+        .ok()
+        .flatten()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .filter(|dir| !dir.trim().is_empty())
+    {
+        Some(dir) => paths
+            .with_models_dir(dir.trim())
+            .context("preparing the models directory")?,
+        None => paths,
+    };
     let hardware = hardware::detect();
 
     // A duplicate built-in tool name would make dispatch ambiguous, which is a
@@ -69,6 +85,22 @@ async fn main() -> anyhow::Result<()> {
         outbound.clone(),
     ));
 
+    // The pool keeps this in memory because it is read on a path that must not
+    // touch the database; the database is where it is decided.
+    let free = kuro_core::free::FreePool::new();
+    free.set_allow_keyless(kuro_core::settings::allow_keyless(&db).unwrap_or(true));
+    // What the last run learned about each provider's catalogue.
+    //
+    // A cloud connector's models are in the database, so OpenRouter's four
+    // hundred are in the picker the moment it opens. A free provider's were in
+    // this process only — so after every restart the picker rendered with none
+    // of them, and since the model list is fetched once rather than polled, it
+    // stayed that way. Four working keys looked like four broken ones.
+    free.restore_catalogues(routes::free::stored_catalogues(&db));
+    // And which providers were refusing when this last ran, so a rejected key
+    // is not silently retried and shown as available by a restart.
+    free.restore_troubles(routes::free::stored_troubles(&db));
+
     let app_state = Arc::new(AppState {
         db,
         paths: paths.clone(),
@@ -78,6 +110,8 @@ async fn main() -> anyhow::Result<()> {
         secrets,
         mcp,
         providers,
+        free,
+        processes: kuro_core::workspace::ProcessRegistry::new(),
         started_at: chrono::Utc::now(),
         port,
         download_cancels: Mutex::new(HashMap::new()),
