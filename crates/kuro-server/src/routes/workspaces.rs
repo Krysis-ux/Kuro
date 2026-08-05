@@ -228,6 +228,40 @@ pub async fn list_changes(
     Ok(Json(json!({ "changes": summarised })))
 }
 
+/// One change, with the contents on both sides of it.
+///
+/// Separate from the list on purpose: the list is a summary because whole file
+/// contents on every row would be megabytes, and this is the request that says
+/// "that one, in full". Which is also the only shape a diff can take — a line
+/// count tells you a file grew by nine lines and nothing about which nine.
+pub async fn change_diff(
+    State(state): State<SharedState>,
+    Path((id, change_id)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    load(&state, &id)?;
+
+    let change = state
+        .db
+        .list_workspace_changes(&id, CHANGE_HISTORY)?
+        .into_iter()
+        .find(|held| held.id == change_id)
+        .ok_or_else(|| KuroError::not_found(format!("change `{change_id}`")))?;
+
+    Ok(Json(json!({
+        "id": change.id,
+        "path": change.path,
+        "kind": change.kind,
+        "createdAt": change.created_at,
+        "undone": change.undone,
+        "created": change.before.is_none(),
+        // Null rather than empty when the snapshot was skipped for size. The
+        // difference matters: an empty string is a file that was empty, and a
+        // viewer that showed the whole file as added would be lying about it.
+        "before": change.before,
+        "after": change.after,
+    })))
+}
+
 /// Put a change back.
 ///
 /// Refused when the file has been touched since, which is the property that
@@ -368,6 +402,44 @@ pub async fn stop_process(
 
     let stopped = state.processes.stop(&process_id);
     Ok(Json(json!({ "stopped": stopped, "command": found.command })))
+}
+
+/// Take a finished process off the list.
+///
+/// The list used to be append-only for the lifetime of the daemon, so a morning
+/// of builds left twenty dead rows above the one server actually running. A
+/// still-running process is refused rather than dropped: forgetting one would
+/// leave a bound port with nothing tracking it.
+pub async fn forget_process(
+    State(state): State<SharedState>,
+    Path((id, process_id)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    load(&state, &id)?;
+
+    let found = state
+        .processes
+        .get(&process_id)
+        .filter(|held| held.workspace_id == id)
+        .ok_or_else(|| KuroError::not_found(format!("process `{process_id}`")))?;
+
+    if found.running {
+        return Err(KuroError::other(format!(
+            "`{}` is still running. Stop it before clearing it.",
+            found.command
+        ))
+        .into());
+    }
+
+    Ok(Json(json!({ "forgotten": state.processes.forget(&process_id) })))
+}
+
+/// Take every finished process off one workspace's list.
+pub async fn clear_processes(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    load(&state, &id)?;
+    Ok(Json(json!({ "cleared": state.processes.forget_finished(&id) })))
 }
 
 fn load(state: &SharedState, id: &str) -> Result<kuro_core::db::WorkspaceRecord, KuroError> {

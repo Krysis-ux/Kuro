@@ -98,6 +98,17 @@ interface UiState {
   runningOpen: boolean
   setRunningOpen: (open: boolean) => void
 
+  /**
+   * Which half of the running panel is showing.
+   *
+   * The terminal and the browser were one scrolling column with the frame
+   * underneath the log, so looking at the page you had just built meant
+   * scrolling past the record of it being built. They are two things people
+   * want at two different moments, so they get a button each.
+   */
+  runningView: 'terminal' | 'browser'
+  setRunningView: (view: UiState['runningView']) => void
+
   /** Panel widths, in pixels, as the user last dragged them. */
   filesWidth: number
   setFilesWidth: (width: number) => void
@@ -182,6 +193,9 @@ export const useUi = create<UiState>()(
 
       runningOpen: false,
       setRunningOpen: (runningOpen) => set({ runningOpen }),
+
+      runningView: 'terminal',
+      setRunningView: (runningView) => set({ runningView }),
 
       filesWidth: PANEL_DEFAULTS.files,
       setFilesWidth: (width) => set({ filesWidth: clampPanel(width) }),

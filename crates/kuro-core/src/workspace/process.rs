@@ -148,7 +148,8 @@ impl ProcessRegistry {
 
         let (program, flag) = super::exec::shell();
 
-        let mut child = tokio::process::Command::new(program)
+        let mut builder = tokio::process::Command::new(program);
+        builder
             .arg(flag)
             .arg(command)
             .current_dir(root)
@@ -157,7 +158,13 @@ impl ProcessRegistry {
             .stderr(Stdio::piped())
             .env("NO_COLOR", "1")
             .env("TERM", "dumb")
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        // `npm run dev` is a shell running a package manager running a bundler,
+        // and stopping it has to mean all three. Killing only the shell is what
+        // leaves a port bound by something the interface can no longer see.
+        super::exec::own_group(&mut builder);
+
+        let mut child = builder
             .spawn()
             .map_err(|error| format!("could not start `{command}`: {error}"))?;
 
@@ -188,6 +195,12 @@ impl ProcessRegistry {
                 let status = tokio::select! {
                     status = child.wait() => status,
                     _ = stop_signal.changed() => {
+                        // The group first, so the bundler and its workers go
+                        // too; then the shell itself, so `wait` returns rather
+                        // than blocking on a child that outlived it.
+                        if let Some(pid) = pid {
+                            super::exec::kill_group(pid);
+                        }
                         let _ = child.start_kill();
                         child.wait().await
                     }
@@ -289,6 +302,40 @@ impl ProcessRegistry {
         // A send failure means the owning task is already gone, which means the
         // process has already exited — the same answer as "nothing to stop".
         entry.stop.send(true).is_ok()
+    }
+
+    /// Drop a finished process from the list.
+    ///
+    /// Only a finished one. A registry that let a running server be forgotten
+    /// would be a registry that could lose track of a bound port, which is the
+    /// state this whole module exists to make impossible.
+    ///
+    /// Returns false when the id is unknown or still running, so the caller can
+    /// say which rather than reporting a success that did nothing.
+    pub fn forget(&self, id: &str) -> bool {
+        let mut entries = self.entries.lock().expect("registry lock");
+        let Some(position) = entries.iter().position(|entry| entry.id == id) else {
+            return false;
+        };
+        if entries[position].shared.lock().expect("process state lock").running {
+            return false;
+        }
+        entries.remove(position);
+        true
+    }
+
+    /// Drop every finished process belonging to one workspace.
+    ///
+    /// Returns how many went, because "clear" that silently clears nothing is
+    /// indistinguishable from a broken button.
+    pub fn forget_finished(&self, workspace_id: &str) -> usize {
+        let mut entries = self.entries.lock().expect("registry lock");
+        let before = entries.len();
+        entries.retain(|entry| {
+            entry.workspace_id != workspace_id
+                || entry.shared.lock().expect("process state lock").running
+        });
+        before - entries.len()
     }
 
     /// Stop everything belonging to one workspace.

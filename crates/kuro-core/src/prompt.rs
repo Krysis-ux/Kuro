@@ -218,6 +218,7 @@ fn files_line(context: &PromptContext<'_>) -> String {
     let root = workspace.root;
     let name = workspace.name;
     let shell = crate::workspace::exec::shell_description();
+    let platform = crate::workspace::exec::platform_note();
 
     match workspace.mode {
         WorkspaceMode::Ask => format!(
@@ -246,6 +247,7 @@ fn files_line(context: &PromptContext<'_>) -> String {
                  can be undone, so say plainly what you changed.\n\
                  - `run_command` runs {commands} there, through {shell}. Check your work by \
                  running it — do not describe a command instead of calling it.\n\
+                 - {platform}\n\
                  - `start_server` runs a dev server in the background and the user sees the \
                  page in a preview panel. `check_server` reads its output, `stop_server` \
                  ends it.\n"

@@ -599,8 +599,16 @@ export interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   reasoning_content: string | null
-  /** The tool trail for this turn, as recorded by the server. */
-  tool_calls: { name: string; ok: boolean; preview: string }[] | null
+  /**
+   * The tool trail for this turn, as recorded by the server.
+   *
+   * `arguments` has always been stored and was simply not declared here, so a
+   * reopened conversation showed `edit_file` where a live one showed which file
+   * was edited. The same turn should not read differently tomorrow.
+   */
+  tool_calls:
+    | { name: string; ok: boolean; preview: string; arguments?: Record<string, unknown> }[]
+    | null
   used_web_search: boolean
   web_sources: { title: string; url: string }[] | null
   model_id: string | null
@@ -796,6 +804,19 @@ export const api = {
       ),
     changes: (id: string) =>
       request<{ changes: WorkspaceChange[] }>(`/api/workspaces/${id}/changes`),
+    /** One change with both sides of it, for the diff view. */
+    change: (id: string, changeId: string) =>
+      request<{
+        id: string
+        path: string
+        kind: 'edit' | 'write'
+        createdAt: string
+        undone: boolean
+        created: boolean
+        /** Null when the file did not exist, or was too large to snapshot. */
+        before: string | null
+        after: string | null
+      }>(`/api/workspaces/${id}/changes/${changeId}`),
     undo: (id: string, changeId: string) =>
       post<{ undone: boolean; path: string; removed: boolean }>(
         `/api/workspaces/${id}/changes/${changeId}/undo`,
@@ -811,6 +832,14 @@ export const api = {
       request<{ process: RunningProcess; lines: string[] }>(
         `/api/workspaces/${id}/processes/${processId}/log`,
       ),
+    /** Take one finished process off the list. Running ones are refused. */
+    forgetProcess: (id: string, processId: string) =>
+      request<{ forgotten: boolean }>(`/api/workspaces/${id}/processes/${processId}`, {
+        method: 'DELETE',
+      }),
+    /** Take every finished process off the list at once. */
+    clearProcesses: (id: string) =>
+      request<{ cleared: number }>(`/api/workspaces/${id}/processes`, { method: 'DELETE' }),
     stopProcess: (id: string, processId: string) =>
       post<{ stopped: boolean; command: string }>(
         `/api/workspaces/${id}/processes/${processId}/stop`,
