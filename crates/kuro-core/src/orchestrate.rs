@@ -105,6 +105,13 @@ pub struct Request<'a> {
     /// the user did not ask for — which is the property that makes matching on
     /// a message defensible at all.
     pub message: &'a str,
+    /// Skills the user named for this turn, by slug.
+    ///
+    /// The `/rust` in a composer. These are outside the budget and outside the
+    /// ranking: somebody who typed a skill's name has been more specific than
+    /// any heuristic here can be, and trimming one to make room would be this
+    /// module overruling a direct instruction.
+    pub pinned: &'a [String],
 }
 
 /// How many tokens of skill guidance a turn may carry, over and above the
@@ -194,9 +201,21 @@ pub fn plan(request: &Request<'_>, already_enabled: &[&'static Skill]) -> Plan {
         // Orchestration off means the user's own list goes in verbatim, budget
         // and all. They asked for exactly these and switched off the thing that
         // would have second-guessed them.
+        //
+        // A skill named on the message still goes in. Switching off automatic
+        // selection is a statement about guessing, not a refusal to be told.
+        let mut skills = already_enabled.to_vec();
+        for slug in request.pinned {
+            if let Some(skill) = skills::find(slug) {
+                if !skills.iter().any(|have| have.slug == skill.slug) {
+                    skills.push(skill);
+                }
+            }
+        }
+
         return Plan {
             max_tool_rounds: rounds,
-            skills: already_enabled.to_vec(),
+            skills,
             added_skills: Vec::new(),
             trimmed_skills: Vec::new(),
             budget_tokens: budget,
@@ -276,6 +295,15 @@ pub fn plan(request: &Request<'_>, already_enabled: &[&'static Skill]) -> Plan {
         // that measurably helps a small model on anything with arithmetic or
         // several constraints in it.
         if let Some(skill) = skills::find("step-by-step") {
+            push_new(&mut added, already_enabled, skill);
+        }
+    }
+
+    // A named skill is a candidate whether or not it is switched on. Typing
+    // `/rust` should work without first going to the store to enable Rust —
+    // that would be answering a direct instruction with an errand.
+    for slug in request.pinned {
+        if let Some(skill) = skills::find(slug) {
             push_new(&mut added, already_enabled, skill);
         }
     }
@@ -372,7 +400,7 @@ fn fit_to_budget(
         }
         seen.push(skill.slug);
 
-        let tier = if skill.essential {
+        let tier = if skill.essential || request.pinned.iter().any(|slug| slug == skill.slug) {
             0
         } else if mentions(skill, &words) {
             1
@@ -590,6 +618,7 @@ mod tests {
             workspace: Some((root, mode)),
             auto: true,
             message: "",
+            pinned: &[],
         }
     }
 
@@ -759,6 +788,7 @@ mod tests {
                 workspace: None,
                 auto: true,
                 message: "",
+                pinned: &[],
             },
             &[],
         );
@@ -812,6 +842,7 @@ mod tests {
                 workspace: None,
                 auto: true,
                 message: "",
+                pinned: &[],
             },
             &[],
         );
@@ -971,6 +1002,50 @@ mod tests {
         // And the ones it plainly is not about lost their place.
         assert!(!kept("ruby"));
         assert!(!kept("accessibility"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_skill_named_on_the_message_survives_any_budget() {
+        // What `/rust` in the composer has to mean. Somebody who typed a
+        // skill's name has been more specific than any ranking heuristic, so
+        // the budget does not get to overrule them — even at the tightest
+        // setting with everything else competing for room.
+        let root = project(&[("package.json", "{}")]);
+
+        let pinned = vec!["rust".to_string(), "security".to_string()];
+        let mut asked = request(Effort::Low, &root, WorkspaceMode::Agent);
+        asked.pinned = &pinned;
+        asked.message = "make this page prettier";
+
+        let planned = plan(&asked, &everything());
+
+        for slug in &pinned {
+            assert!(
+                planned.skills.iter().any(|skill| skill.slug == *slug),
+                "`{slug}` was named and still got trimmed: {}",
+                planned.summary
+            );
+        }
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn naming_a_skill_works_without_switching_it_on_first() {
+        // Otherwise `/rust` answers a direct instruction with an errand to the
+        // settings screen.
+        let root = project(&[("package.json", "{}")]);
+
+        let pinned = vec!["ruby".to_string()];
+        let mut asked = request(Effort::Balanced, &root, WorkspaceMode::Agent);
+        asked.pinned = &pinned;
+
+        // Nothing enabled at all.
+        let planned = plan(&asked, &[]);
+
+        assert!(planned.skills.iter().any(|skill| skill.slug == "ruby"));
 
         std::fs::remove_dir_all(&root).ok();
     }
