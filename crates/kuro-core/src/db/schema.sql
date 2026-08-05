@@ -261,3 +261,21 @@ CREATE TABLE IF NOT EXISTS memories (
 
 CREATE INDEX IF NOT EXISTS idx_memories_created
     ON memories (created_at DESC);
+
+-- Skills the user added themselves: uploaded as a SKILL.md, or pulled out of a
+-- GitHub repository. Kept apart from the built-in catalogue rather than merged
+-- into it, because the two have different rules — a built-in is part of the
+-- build and cannot be deleted, and one of these can be removed the moment it
+-- turns out to be wrong.
+CREATE TABLE IF NOT EXISTS user_skills (
+    slug          TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    blurb         TEXT NOT NULL,
+    category      TEXT NOT NULL,
+    instructions  TEXT NOT NULL,
+    approx_tokens INTEGER NOT NULL,
+    -- Where it came from, shown on the card: `upload`, or the repository URL.
+    source        TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);

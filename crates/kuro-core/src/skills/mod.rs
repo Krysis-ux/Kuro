@@ -29,6 +29,9 @@ use serde::Serialize;
 use crate::db::Db;
 use crate::Result;
 
+pub mod custom;
+pub mod import;
+
 /// Settings key holding the slugs the user switched on.
 pub const KEY_ENABLED: &str = "skills.enabled";
 
@@ -46,6 +49,17 @@ pub enum SkillCategory {
 }
 
 impl SkillCategory {
+    /// The stored spelling, which is what a user skill's row holds.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Language => "language",
+            Self::Coding => "coding",
+            Self::Practice => "practice",
+            Self::Design => "design",
+            Self::Writing => "writing",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Language => "Languages",
@@ -1079,8 +1093,24 @@ For any question involving arithmetic, logic, dates, counting, or several constr
     },
 ];
 
+/// Find a skill by slug, built-in or added by the user.
+///
+/// Built-ins win a collision. A downloaded file should not be able to quietly
+/// replace `/rust` with something else — the slug is what the user types, and
+/// what it resolves to should not depend on what was imported last.
 pub fn find(slug: &str) -> Option<&'static Skill> {
-    SKILLS.iter().find(|skill| skill.slug == slug)
+    SKILLS
+        .iter()
+        .find(|skill| skill.slug == slug)
+        .or_else(|| custom::find(slug))
+}
+
+/// Whether a slug belongs to the built-in catalogue.
+///
+/// The one thing the two kinds differ on outside this module: a built-in cannot
+/// be deleted, so the interface must not offer to.
+pub fn is_builtin(slug: &str) -> bool {
+    SKILLS.iter().any(|skill| skill.slug == slug)
 }
 
 /// The skills a coding workspace always gets, whatever the user has switched on.
@@ -1092,8 +1122,13 @@ pub fn essentials() -> Vec<&'static Skill> {
 }
 
 /// The skills the store offers, which is everything that is a real choice.
+///
+/// The user's own come first. They were added on purpose and there are a few of
+/// them; the built-in catalogue is long and was not chosen by anybody.
 pub fn selectable() -> Vec<&'static Skill> {
-    SKILLS.iter().filter(|skill| !skill.essential).collect()
+    let mut all = custom::loaded();
+    all.extend(SKILLS.iter().filter(|skill| !skill.essential));
+    all
 }
 
 /// Slugs the user has switched on.

@@ -165,6 +165,28 @@ export interface SkillBudget {
   tokens: number
 }
 
+/** A skill the user uploaded or imported. */
+export interface CustomSkill {
+  slug: string
+  name: string
+  blurb: string
+  category: string
+  approxTokens: number
+  /** `upload`, or the repository it came from. */
+  source: string
+  updatedAt: string
+}
+
+/** What one import of a repository turned up. */
+export interface SkillImport {
+  repo: string
+  added: string[]
+  /** Names that clashed with a built-in, so were left alone. */
+  skipped: string[]
+  /** Skills whose instructions expect `scripts/` that were not imported. */
+  needsScripts: string[]
+}
+
 export interface ToolsOverview {
   builtins: BuiltinTool[]
   defaultGroups: ToolGroup[]
@@ -187,6 +209,15 @@ export interface ToolsOverview {
     }
     /** Shown as a note, not as switches — these cannot be turned off. */
     essentials: EssentialSkill[]
+    /**
+     * The ones the user added themselves.
+     *
+     * These also appear in `catalogue`, because to everything downstream they
+     * are ordinary skills. They are listed again here because the question
+     * this answers is different: not "what can Kuro do" but "what did I add,
+     * where did it come from, and how do I take it back out".
+     */
+    custom: CustomSkill[]
   }
   surfaces: { chat: SurfaceSettings; code: SurfaceSettings }
   memory: { preload: boolean; count: number }
@@ -941,6 +972,17 @@ export const api = {
       post<ToolsOverview>('/api/tools/defaults', patch),
     /** The whole set is sent, not a diff, so concurrent toggles cannot disagree. */
     setSkills: (enabled: string[]) => post<ToolsOverview>('/api/tools/skills', { enabled }),
+    /** Add a skill from a SKILL.md the user picked off their disk. */
+    uploadSkill: (filename: string, content: string) =>
+      post<ToolsOverview>('/api/tools/skills/upload', { filename, content }),
+    /** Pull every SKILL.md out of a GitHub repository. */
+    importSkills: (url: string) =>
+      post<ToolsOverview & { imported: SkillImport }>('/api/tools/skills/import', { url }),
+    /** Remove one the user added. Built-ins are refused by the server. */
+    deleteSkill: (slug: string) =>
+      request<ToolsOverview>(`/api/tools/skills/${encodeURIComponent(slug)}`, {
+        method: 'DELETE',
+      }),
     configureSearch: (patch: { provider?: string; baseUrl?: string; apiKey?: string }) =>
       post<ToolsOverview>('/api/tools/search', patch),
     /** Run a real search, so a user never has to send a message to find out. */

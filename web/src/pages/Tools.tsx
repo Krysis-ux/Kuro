@@ -1,16 +1,21 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { BackLink } from '../components/BackLink'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   api,
+  type CustomSkill,
   type McpRegistryEntry,
   type McpServer,
   type SearchResult,
+  type SkillImport,
+  type ToolsOverview,
 } from '../lib/api'
 import { AddServerDialog } from '../components/AddServerDialog'
 import {
   BrainIcon,
   CheckIcon,
+  ChevronIcon,
+  GitHubIcon,
   ExternalIcon,
   GlobeIcon,
   KeyIcon,
@@ -452,6 +457,173 @@ function BuiltinSection({
  * small model's usable prompt, and a user should be able to see that adding up
  * rather than discover it as a mysterious drop in answer quality.
  */
+/**
+ * Adding skills of your own.
+ *
+ * Two ways in, because there are two things people have: a file they wrote, and
+ * a repository somebody else wrote. Both land in the same place and become
+ * ordinary skills — the same `/slug`, the same switch, the same budget — which
+ * is the point. A skill you added should not be a second-class thing living in
+ * its own corner of the interface.
+ */
+function AddSkills({ custom }: { custom: CustomSkill[] }) {
+  const queryClient = useQueryClient()
+  const [url, setUrl] = useState('')
+  const [note, setNote] = useState<SkillImport | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const settle = (data: ToolsOverview) => {
+    queryClient.setQueryData(['tools'], data)
+    setFailed(null)
+  }
+  const blame = (caught: unknown) =>
+    setFailed(caught instanceof Error ? caught.message : 'That could not be added.')
+
+  const upload = useMutation({
+    mutationFn: ({ name, text }: { name: string; text: string }) =>
+      api.tools.uploadSkill(name, text),
+    onSuccess: (data) => {
+      settle(data)
+      setNote(null)
+      setOpen(true)
+    },
+    onError: blame,
+  })
+
+  const importRepo = useMutation({
+    mutationFn: (repo: string) => api.tools.importSkills(repo),
+    onSuccess: (data) => {
+      settle(data)
+      setNote(data.imported)
+      setUrl('')
+      setOpen(true)
+    },
+    onError: blame,
+  })
+
+  const remove = useMutation({
+    mutationFn: (slug: string) => api.tools.deleteSkill(slug),
+    onSuccess: settle,
+    onError: blame,
+  })
+
+  const busy = upload.isPending || importRepo.isPending
+
+  return (
+    <div className="skill-add">
+      <div className="skill-add-row">
+        <input
+          className="input mono"
+          placeholder="github.com/anthropics/skills"
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && url.trim()) importRepo.mutate(url.trim())
+          }}
+          disabled={busy}
+        />
+        <button
+          className="btn btn-solid btn-sm"
+          onClick={() => url.trim() && importRepo.mutate(url.trim())}
+          disabled={!url.trim() || busy}
+          title="Read every SKILL.md in this repository"
+        >
+          <GitHubIcon size={13} />
+          {importRepo.isPending ? 'Reading…' : 'Import'}
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          title="Add a SKILL.md from this computer"
+        >
+          <PlusIcon size={13} />
+          {upload.isPending ? 'Adding…' : 'Upload'}
+        </button>
+      </div>
+
+      <p className="faint panel-note">
+        A repository is read rather than cloned: Kuro looks for `SKILL.md` files and takes the
+        instructions in them. Scripts a skill ships alongside are not imported, and any skill
+        that expects them is named below.
+      </p>
+
+      {failed && <p className="form-error">{failed}</p>}
+
+      {note && (
+        <div className="skill-import-note">
+          <strong>{note.repo}</strong>
+          <span className="faint">
+            {note.added.length} added
+            {note.skipped.length > 0 &&
+              ` · ${note.skipped.join(', ')} already built in`}
+          </span>
+          {note.needsScripts.length > 0 && (
+            <span className="faint">
+              These expect scripts that were not imported, so they may not work as written:{' '}
+              <span className="mono">{note.needsScripts.join(', ')}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {custom.length > 0 && (
+        <div className="skill-mine">
+          <button className="skill-group-head skill-mine-head" onClick={() => setOpen(!open)}>
+            <ChevronIcon size={12} className={open ? 'is-open' : ''} />
+            {custom.length} skill{custom.length === 1 ? '' : 's'} you added
+          </button>
+
+          {open && (
+            <ul className="skill-mine-list">
+              {custom.map((skill) => (
+                <li key={skill.slug}>
+                  <div className="skill-mine-main">
+                    <span className="skill-mine-name">{skill.name}</span>
+                    <span className="faint mono skill-mine-slug">/{skill.slug}</span>
+                  </div>
+                  <span className="faint skill-mine-source">
+                    {skill.source === 'upload' ? 'uploaded' : shortSource(skill.source)}
+                  </span>
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    onClick={() => remove.mutate(skill.slug)}
+                    disabled={remove.isPending}
+                    aria-label={`Remove ${skill.name}`}
+                    title="Remove this skill"
+                  >
+                    <TrashIcon size={13} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".md,.markdown,text/markdown"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (!file) return
+          void file.text().then((text) => upload.mutate({ name: file.name, text }))
+        }}
+      />
+    </div>
+  )
+}
+
+/** `https://github.com/owner/name` reads better as `owner/name`. */
+function shortSource(source: string): string {
+  return source.replace(/^https?:\/\/github\.com\//, '')
+}
+
 function SkillsSection({
   overview,
 }: {
@@ -553,6 +725,8 @@ function SkillsSection({
         Expertise you switch on. Each one adds specific instructions to the model's brief — the
         same lever a hosted assistant uses, and the one that helps a small local model most.
       </p>
+
+      <AddSkills custom={overview.skills.custom ?? []} />
 
       {overview.skills.essentials.length > 0 && (
         <div className="skill-essentials">
