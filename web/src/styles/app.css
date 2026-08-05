@@ -672,6 +672,58 @@
   align-items: center;
   gap: var(--space-2);
   font-size: var(--text-sm);
+  padding-top: 2px;
+}
+
+/* Three dots rather than a spinner. A spinner is a *blocking* signal — it says
+   wait, nothing else is happening — and this sits under a reply that is already
+   half-written and readable. */
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.thinking-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  animation: thinking-pulse 1.25s var(--ease) infinite;
+}
+
+.thinking-dots i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.thinking-dots i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes thinking-pulse {
+  0%,
+  70%,
+  100% {
+    opacity: 0.28;
+    transform: translateY(0);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dots i {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* Only appears once the wait is long enough to wonder about. */
+.thinking-elapsed {
+  font-size: var(--text-xs);
+  opacity: 0.7;
 }
 
 /* ---------- Prose ---------- */
@@ -747,10 +799,32 @@
   text-align: left;
 }
 
-.prose a {
+.prose a,
+.rich-link {
   text-decoration: underline;
   text-underline-offset: 2px;
-  color: var(--text-muted);
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--link) 45%, transparent);
+  color: var(--link);
+}
+
+.prose a:hover,
+.rich-link:hover {
+  text-decoration-color: var(--link);
+}
+
+/* A `/command` the composer recognised, kept in the message it was used on.
+   Tinted rather than merely coloured, so it reads as a token that did
+   something rather than as a word someone chose to emphasise. */
+.rich-command {
+  padding: 1px 5px;
+  margin: 0 -1px;
+  border-radius: var(--radius-sm);
+  background: var(--command-bg);
+  color: var(--command);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  white-space: nowrap;
 }
 
 /* ---------- Reasoning + inspector ---------- */
@@ -2851,12 +2925,15 @@
 
 /* ---------- Tool activity ---------- */
 
+/* What the model did, as a list of lines rather than as a panel.
+
+   It was a bordered, filled card with another bordered, filled card inside it
+   for every result, which on a coding turn meant fifteen nested boxes between
+   the question and the answer. The information was right and the framing was
+   wrong: these are steps in a sequence, and a sequence wants a rule down the
+   side, not fifteen rectangles. */
 .tool-activity {
   margin-bottom: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-inset);
-  overflow: hidden;
 }
 
 .tool-activity-head {
@@ -2864,19 +2941,22 @@
   align-items: center;
   gap: 7px;
   width: 100%;
-  padding: 7px var(--space-3);
+  padding: 3px 0;
   font-size: var(--text-xs);
   color: var(--text-muted);
   text-align: left;
+  border-radius: var(--radius-sm);
 }
 
 .tool-activity-head:hover {
   color: var(--text);
-  background: var(--bg-hover);
 }
 
 .tool-activity-summary {
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-activity-caret {
@@ -2889,39 +2969,104 @@
 }
 
 .tool-activity-steps {
-  margin: 0;
-  padding: 0 var(--space-3) var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding: 0 0 0 var(--space-3);
+  border-left: 1px solid var(--border);
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 5px;
 }
 
 .tool-step-head {
   display: flex;
   align-items: baseline;
-  gap: 7px;
+  gap: 6px;
   font-size: var(--text-xs);
+  min-width: 0;
 }
 
-.tool-step-head code {
-  font-size: var(--text-xs);
+/* Fixed width so the verbs line up down the list. A ragged left edge makes a
+   sequence of fifteen steps unreadable at a glance, which is the only way
+   anybody reads it. */
+.tool-step-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  flex: none;
+  color: var(--text-faint);
+}
+
+.tool-step.is-done .tool-step-mark {
+  color: var(--text-muted);
+}
+
+.tool-step.is-failed .tool-step-mark {
+  color: var(--danger);
+}
+
+.tool-step-icon {
+  display: inline-flex;
+  flex: none;
+  transform: translateY(1px);
+}
+
+.tool-step-verb {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.tool-step.is-edit .tool-step-verb,
+.tool-step.is-write .tool-step-verb {
   color: var(--text);
 }
 
-.tool-step.is-failed .tool-step-head code {
+.tool-step-target,
+.tool-step-path {
+  font-size: var(--text-xs);
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A path is a destination. The underline is the only affordance available on a
+   line this small, and it is the one people already read as "clickable". */
+.tool-step-path {
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--border-strong);
+  color: var(--text);
+}
+
+.tool-step-path:hover {
+  text-decoration-color: var(--link);
+  color: var(--link);
+}
+
+.tool-step.is-failed .tool-step-target,
+.tool-step.is-failed .tool-step-path {
   color: var(--danger);
 }
 
 .tool-step-cross {
   color: var(--danger);
   font-weight: 500;
+  line-height: 1;
 }
 
-.tool-step-query {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.tool-step-more {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--text-xs);
+  padding: 0 2px;
+}
+
+.tool-step-more:hover {
+  color: var(--text);
 }
 
 /* The raw tool result. Monospaced and scrollable, because it is data the user is
@@ -2932,14 +3077,179 @@
   max-height: 200px;
   overflow: auto;
   border-radius: var(--radius-sm);
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--bg-inset);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: 1.5;
   color: var(--text-muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.tool-step.is-failed .tool-step-detail {
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  color: var(--text);
+}
+
+/* ---------- Diff ---------- */
+
+.diff-view {
+  margin-top: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-inset);
+}
+
+.diff-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px var(--space-2) 5px var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  /* The interesting end of a path is the right end. */
+  direction: rtl;
+  text-align: left;
+}
+
+.diff-counts {
+  display: flex;
+  gap: 6px;
+  font-size: var(--text-xs);
+}
+
+.diff-added {
+  color: var(--command);
+}
+
+.diff-removed {
+  color: var(--danger);
+}
+
+.diff-body {
+  max-height: 420px;
+  overflow: auto;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  padding: var(--space-2) 0;
+}
+
+.diff-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  padding: 0 var(--space-2);
+  white-space: pre;
+}
+
+/* Tinted rather than only signed, because a plus and a minus at the start of a
+   monospace line are two characters wide and the eye does not find them at
+   speed. The tints are the same two hues used everywhere else. */
+.diff-row.is-added {
+  background: var(--command-bg);
+}
+
+.diff-row.is-removed {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.diff-row.is-gap {
+  background: var(--bg);
+  font-size: var(--text-xs);
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+/* Line numbers from both sides, so a hunk can be found in the real file. */
+.diff-gutter {
+  flex: none;
+  width: 3.2em;
+  text-align: right;
+  padding-right: var(--space-2);
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.diff-sign {
+  flex: none;
+  width: 1.2em;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.diff-row.is-added .diff-sign {
+  color: var(--command);
+}
+
+.diff-row.is-removed .diff-sign {
+  color: var(--danger);
+}
+
+/* Not wrapped. A wrapped diff turns one changed line into six rows of ragged
+   text and loses the thing a diff is for, which is that the shape of the change
+   is visible at a glance. The body scrolls sideways instead, and the panel is
+   draggable when a line is worth reading in full. */
+.diff-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre;
+}
+
+.diff-body {
+  overflow-x: auto;
+}
+
+.diff-row {
+  min-width: max-content;
+}
+
+/* A change path is a button now, because clicking it opens the diff. It should
+   still read as the path it is, not as a control bolted next to one. */
+.code-change-path {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--border-strong);
+  color: inherit;
+}
+
+.code-change-path:hover {
+  text-decoration-color: var(--link);
+  color: var(--link);
+}
+
+/* A skill attached with `/`, waiting on the message it will be sent with. It
+   carries the same colour as the command in the transcript, because it is the
+   same fact: this one registered. */
+.composer-attachments .tag-live {
+  background: var(--command-bg);
+  color: var(--command);
+  border-color: color-mix(in srgb, var(--command) 30%, transparent);
+}
+
+/* A clear-all that only exists when there is something to clear, so it never
+   sits there advertising a list that is already empty. */
+.preview-clear {
+  align-self: flex-start;
+  color: var(--text-muted);
+}
+
+.preview-clear:hover {
+  color: var(--text);
 }
 
 /* ---------- Skills ---------- */

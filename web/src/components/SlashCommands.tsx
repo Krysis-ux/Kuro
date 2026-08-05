@@ -34,19 +34,48 @@ export interface SlashCommand {
   run?: () => void
 }
 
+/** A `/command` being typed, and where in the text it sits. */
+export interface CommandToken {
+  /** What follows the slash, lowercased. */
+  query: string
+  /** Index of the `/`. */
+  start: number
+  /** Index just past the last character of the word. */
+  end: number
+}
+
 /**
- * Whether what has been typed is a command being written.
+ * The command the caret is inside, if it is inside one.
  *
- * A single leading slash and no whitespace yet. The whitespace rule is what
- * keeps the palette out of the way of ordinary prose: "/usr/local/bin is on my
- * PATH" opens it on the first character and closes it on the space, and
- * "and/or" never opens it at all because the slash is not at the start.
+ * This used to only look at the very first character of the message, which made
+ * `/` a thing you could use to *start* a message and nothing else. That is not
+ * how anyone writes: the moment you realise you want the Rust guidance is
+ * usually three sentences in, and by then the only way to ask for it was to
+ * delete what you had written, type `/rust`, and start again.
+ *
+ * A command is a word that begins with a slash, so the check is on the start of
+ * the word the caret is in rather than on the character before it. That is what
+ * keeps it clear of ordinary prose containing slashes: in `https://example.com`
+ * and `and/or` the slash is mid-word, so neither opens anything.
  */
-export function commandQuery(text: string): string | null {
-  if (!text.startsWith('/')) return null
-  const rest = text.slice(1)
-  if (/\s/.test(rest)) return null
-  return rest.toLowerCase()
+export function commandTokenAt(text: string, caret: number): CommandToken | null {
+  const position = Math.max(0, Math.min(caret, text.length))
+
+  let start = position
+  while (start > 0 && !/\s/.test(text[start - 1] as string)) start -= 1
+
+  if (text[start] !== '/') return null
+
+  let end = position
+  while (end < text.length && !/\s/.test(text[end] as string)) end += 1
+
+  const query = text.slice(start + 1, end)
+  // No command name contains a slash, and a path is the thing most likely to be
+  // pasted into a coding message. Without this, `/usr/local/bin` would open the
+  // palette on every keystroke of a filename.
+  if (query.includes('/')) return null
+
+  return { query: query.toLowerCase(), start, end }
 }
 
 /** Commands matching what has been typed so far, best first. */

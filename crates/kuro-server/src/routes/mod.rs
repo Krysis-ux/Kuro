@@ -189,8 +189,17 @@ fn native_routes() -> Router<SharedState> {
         )
         // Dev servers and other long-running commands, so the preview panel can
         // show what is running and the user can stop it without asking a model.
+        .route(
+            "/api/workspaces/{id}/changes/{change_id}",
+            get(workspaces::change_diff),
+        )
         .route("/api/workspaces/{id}/processes", get(workspaces::list_processes))
         .route("/api/workspaces/{id}/processes", post(workspaces::start_process))
+        .route("/api/workspaces/{id}/processes", delete(workspaces::clear_processes))
+        .route(
+            "/api/workspaces/{id}/processes/{process_id}",
+            delete(workspaces::forget_process),
+        )
         .route(
             "/api/workspaces/{id}/processes/{process_id}/log",
             get(workspaces::process_log),

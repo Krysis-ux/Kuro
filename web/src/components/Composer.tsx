@@ -12,7 +12,7 @@ import { useUi } from '../store/ui'
 import { ModelPicker } from './ModelPicker'
 import {
   buildCommands,
-  commandQuery,
+  commandTokenAt,
   matchCommands,
   SlashMenu,
   useSlashKeys,
@@ -154,6 +154,22 @@ export function Composer({
     [draftKey, setDraftText],
   )
   const [menuOpen, setMenuOpen] = useState(false)
+  /**
+   * Where the caret is, so `/` can be recognised mid-sentence.
+   *
+   * Tracked rather than read from the DOM on demand because the palette is
+   * rendered from it: a value read during an event handler would be one render
+   * behind whatever the menu was showing.
+   */
+  const [caret, setCaret] = useState(0)
+  /**
+   * A command the user dismissed with Escape.
+   *
+   * Held as the text of the token rather than a flag, so the menu comes back
+   * the moment they type something different — dismissing `/ru` should not also
+   * dismiss the `/rust` it becomes.
+   */
+  const [dismissed, setDismissed] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
   /**
@@ -242,9 +258,10 @@ export function Composer({
     setAttachError(null)
   }
 
-  // `/` commands. Open while the message is a single slash-prefixed word, which
-  // is what keeps them clear of prose that merely contains a slash.
-  const query = commandQuery(text)
+  // `/` commands. Recognised wherever the caret is, so a command can be reached
+  // from the middle of a half-written message rather than only from its start.
+  const token = commandTokenAt(text, caret)
+  const query = token?.query ?? null
 
   // Every skill this build knows about, so `/rust` finds Rust without the user
   // having gone to the store first.
@@ -275,14 +292,45 @@ export function Composer({
     () => (query === null ? [] : matchCommands(commands, query)),
     [commands, query],
   )
-  const slashOpen = query !== null && matches.length > 0
+  const slashOpen = query !== null && matches.length > 0 && dismissed !== query
   const { index, setIndex } = useSlashKeys(slashOpen, matches.length)
 
+  /**
+   * Swap the `/command` under the caret for something else.
+   *
+   * Only that word. Running a command used to clear the entire message, which
+   * was survivable while `/` had to be the first thing typed and destructive the
+   * moment it did not have to be.
+   */
+  const replaceToken = (replacement: string) => {
+    if (!token) return
+
+    const before = text.slice(0, token.start)
+    let after = text.slice(token.end)
+    // Removing a word from between two spaces leaves two spaces behind.
+    if (replacement === '' && /\s$/.test(before)) after = after.replace(/^[^\S\n]/, '')
+
+    const next = before + replacement + after
+    const position = before.length + replacement.length
+    setText(next)
+    setCaret(position)
+
+    // The textarea is controlled, so its value lands on the next render and the
+    // caret has to be placed after that or the browser parks it at the end.
+    requestAnimationFrame(() => {
+      const node = textareaRef.current
+      if (!node) return
+      node.focus()
+      node.setSelectionRange(position, position)
+    })
+  }
+
   const runCommand = (command: SlashCommand) => {
-    // Cleared first, so `/web` never ends up sent to the model as a message.
-    setText('')
+    // Taken out of the text first, so `/web` is never sent to the model as
+    // part of the message it was used to configure.
+    replaceToken('')
+    setDismissed(null)
     command.run?.()
-    textareaRef.current?.focus()
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -302,7 +350,7 @@ export function Composer({
       const highlighted = matches[index]
       if (event.key === 'Tab' && highlighted) {
         event.preventDefault()
-        setText(`/${highlighted.name}`)
+        replaceToken(`/${highlighted.name}`)
         return
       }
       if (event.key === 'Enter' && !event.shiftKey && highlighted) {
@@ -312,7 +360,10 @@ export function Composer({
       }
       if (event.key === 'Escape') {
         event.preventDefault()
-        setText('')
+        // Closes the menu and leaves the message alone. It used to delete
+        // everything that had been typed, which is a lot to lose to the key
+        // people press to mean "never mind".
+        setDismissed(query)
         return
       }
     }
@@ -416,8 +467,14 @@ export function Composer({
           placeholder={placeholder ?? defaultPlaceholder}
           rows={1}
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => {
+            setText(event.target.value)
+            setCaret(event.target.selectionStart ?? event.target.value.length)
+          }}
           onKeyDown={handleKeyDown}
+          // Arrow keys, clicks and drags all move the caret without changing the
+          // text, and each one can move it into or out of a command.
+          onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
         />
 
         <div className="composer-actions">

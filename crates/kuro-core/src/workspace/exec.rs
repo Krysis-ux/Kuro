@@ -216,10 +216,33 @@ pub fn shell() -> (&'static str, &'static str) {
 
 /// A one-line description of how commands run here, for the model's brief.
 pub fn shell_description() -> &'static str {
-    if cfg!(windows) {
+    if cfg!(target_os = "windows") {
         "Windows `cmd`"
     } else {
         "`/bin/sh`"
+    }
+}
+
+/// What the model needs to know about the machine it is actually running on.
+///
+/// A model writes commands from whatever its training data was densest in,
+/// which is GNU/Linux, and then runs them on somebody's Mac. The observed
+/// failures are exactly the ones you would predict: `cat -A` answering `cat:
+/// illegal option -- A`, `sed -i` eating the next argument as a filename. Each
+/// one costs a tool round and, worse, is *silently wrong* rather than loud —
+/// `sed -i` on macOS creates a backup file named after the expression.
+///
+/// None of that is the model being careless. It is being asked to guess which
+/// operating system it is on, when the answer is a compile-time constant.
+pub fn platform_note() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "Windows: `dir` not `ls`, `type` not `cat`, `findstr` not `grep`, backslashes in \
+         paths. For what cmd cannot do, call `powershell -NoProfile -Command \"...\"`."
+    } else if cfg!(target_os = "macos") {
+        "macOS, so BSD tools: `sed -i '' ...` needs the empty argument, `cat` has no \
+         `-A`, `grep` no `-P`."
+    } else {
+        "Linux, with GNU coreutils: `sed -i ...` takes no backup argument."
     }
 }
 
@@ -369,6 +392,131 @@ fn program_name(word: &str) -> &str {
         .unwrap_or(without_dir)
 }
 
+/// Whether a command is a server rather than a task, and should not be waited on.
+///
+/// `run_command` waits for what it starts. Handed `npm run dev` it therefore
+/// waits three minutes, kills it, and reports a timeout — and the model, having
+/// been told only that the command failed, tries it again. The transcript that
+/// prompted this has exactly that shape: `python3 -m http.server 8000` run as a
+/// foreground command, reported as "exited with an unknown code", with a live
+/// server on port 8000 as the only trace it had ever worked.
+///
+/// `start_server` is the tool for this and already exists. The failure was that
+/// nothing ever said so at the moment it mattered, so the fix is to say so —
+/// matched conservatively, because a false positive refuses a command that
+/// would have worked, which is worse than waiting for one that will not.
+pub fn looks_like_a_server(command: &str) -> Option<&'static str> {
+    let lowered = command.to_lowercase();
+
+    const SERVERS: &[&str] = &[
+        "http.server",
+        "npm run dev",
+        "npm start",
+        "yarn dev",
+        "pnpm dev",
+        "bun dev",
+        "next dev",
+        "vite dev",
+        "ng serve",
+        "nuxt dev",
+        "astro dev",
+        "webpack serve",
+        "webpack-dev-server",
+        "manage.py runserver",
+        "flask run",
+        "uvicorn ",
+        "gunicorn ",
+        "rails server",
+        "rails s ",
+        "php -s",
+        "hugo server",
+        "jekyll serve",
+        "serve -s",
+        "http-server",
+        "live-server",
+    ];
+
+    if SERVERS.iter().any(|needle| lowered.contains(needle)) {
+        return Some("it starts a server");
+    }
+
+    // A watcher never returns either, and for the same reason: it is waiting for
+    // the next change rather than finishing.
+    //
+    // Only the long spelling, and only where a watcher is the thing being run.
+    // A bare `-w` was tried first and matched `ls -w`, which is a real command
+    // somebody would type and which finishes instantly — a good reminder that
+    // the cost of guessing wrong here is refusing work that would have done.
+    if lowered.contains("--watch") || lowered.contains("tsc -w") {
+        return Some("it watches for changes and never exits");
+    }
+
+    None
+}
+
+/// Put a child in its own process group, so its whole tree can be killed.
+///
+/// Without this, killing a command kills the shell that was asked to run it and
+/// nothing else. `sh -c "cd site && python3 -m http.server 8000"` does not
+/// `exec` — the `&&` makes it fork — so the shell dies, Python does not, and
+/// port 8000 stays bound by a process with no parent, no entry in the running
+/// list, and no way to stop it from inside Kuro. That is not a hypothetical: it
+/// is what a timed-out `run_command` did every time it was handed a server.
+pub fn own_group(command: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    {
+        // A group id of zero means "make one, named after this child", which is
+        // what lets the negative-pid kill below reach every descendant.
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = command;
+    }
+}
+
+/// Kill a child and everything it started.
+///
+/// Best effort by design: every reason this can fail — the group is already
+/// gone, the pid was reused, the platform disagrees — has the same remedy,
+/// which is to carry on and let the caller report what it saw.
+pub fn kill_group(pid: u32) {
+    #[cfg(unix)]
+    {
+        let group = -(pid as i32);
+        // SAFETY: `kill` with a negative pid signals a process group and cannot
+        // corrupt this process's memory whatever it finds. A group that has
+        // already exited answers ESRCH, which is the outcome being aimed for.
+        unsafe {
+            // Asked to stop first. A dev server given SIGTERM closes its port
+            // and flushes; one given SIGKILL leaves both to the kernel.
+            libc::kill(group, libc::SIGTERM);
+        }
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            // SAFETY: as above.
+            unsafe {
+                libc::kill(group, libc::SIGKILL);
+            }
+        });
+        drop(handle);
+    }
+    #[cfg(windows)]
+    {
+        // Windows has no process groups in the POSIX sense; `taskkill /T` walks
+        // the tree by parent id, which is the equivalent guarantee.
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+    }
+}
+
 /// Run a command in a workspace and wait for it.
 ///
 /// The caller has already vetted it; this only runs it. Stdin is closed rather
@@ -382,7 +530,8 @@ pub async fn run(
     let (program, flag) = shell();
     let started = std::time::Instant::now();
 
-    let child = tokio::process::Command::new(program)
+    let mut builder = tokio::process::Command::new(program);
+    builder
         .arg(flag)
         .arg(command)
         .current_dir(root)
@@ -394,9 +543,16 @@ pub async fn run(
         .env("CI", "1")
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    own_group(&mut builder);
+
+    let child = builder
         .spawn()
         .map_err(|error| format!("could not start `{program}`: {error}"))?;
+
+    // Held before the child is consumed by `wait_with_output`, because that is
+    // the only thing that still knows which group to kill on a timeout.
+    let pid = child.id();
 
     let capped = timeout.min(MAX_TIMEOUT);
 
@@ -412,17 +568,24 @@ pub async fn run(
             duration_ms: started.elapsed().as_millis() as u64,
         }),
         Ok(Err(error)) => Err(format!("`{command}` could not be run: {error}")),
-        Err(_) => Ok(CommandOutcome {
+        Err(_) => {
+            // `kill_on_drop` reaches the shell and stops there, which for
+            // anything that forked is the difference between a stopped command
+            // and an orphan holding a port for the rest of the session.
+            if let Some(pid) = pid {
+                kill_group(pid);
+            }
+            Ok(CommandOutcome {
             command: command.to_string(),
             exit_code: None,
-            // The child is killed by `kill_on_drop` when the future is dropped.
-            // Its output is lost with it, which is the cost of not holding the
-            // pipes open; the timeout itself is the useful information.
+            // Output is lost with the child, which is the cost of not holding
+            // the pipes open; the timeout itself is the useful information.
             stdout: String::new(),
             stderr: String::new(),
             timed_out: true,
             duration_ms: started.elapsed().as_millis() as u64,
-        }),
+            })
+        }
     }
 }
 
@@ -614,6 +777,91 @@ mod tests {
         assert!(!failing.succeeded());
         assert_eq!(failing.exit_code, Some(3));
         assert!(failing.describe().contains("exit code 3"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_platform_note_says_which_machine_this_is() {
+        let note = platform_note();
+
+        // Not a tautology: the point is that the note is *specific*, because a
+        // generic one is what the model already assumes and gets wrong.
+        if cfg!(target_os = "macos") {
+            assert!(note.contains("sed -i ''"), "the BSD sed difference is the common trap");
+        } else if cfg!(target_os = "windows") {
+            assert!(note.contains("powershell"), "Windows needs a way out of cmd");
+        } else {
+            assert!(note.contains("GNU"));
+        }
+    }
+
+    #[test]
+    fn a_server_is_sent_to_the_tool_that_can_hold_it() {
+        for command in [
+            "python3 -m http.server 8000",
+            "cd site && npm run dev",
+            "npx next dev --port 3000",
+            "uvicorn app:api --reload",
+            "tsc --watch",
+        ] {
+            assert!(
+                looks_like_a_server(command).is_some(),
+                "`{command}` would have been waited on until it timed out"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_command_is_not_mistaken_for_a_server() {
+        // The cost of a false positive is refusing something that works, so
+        // these are the cases the matcher has to leave alone.
+        for command in [
+            "npm test",
+            "npm run build",
+            "cargo build --release",
+            "git status",
+            "ls -w",
+            "python3 script.py",
+            "npm run start:build",
+        ] {
+            assert!(
+                looks_like_a_server(command).is_none(),
+                "`{command}` was refused as a server"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_timed_out_command_takes_what_it_started_with_it() {
+        // The bug this exists for, exactly as it happened: a model ran
+        // `python3 -m http.server 8000` through `run_command`, the command timed
+        // out, the shell was killed, and the server went on holding port 8000
+        // with nothing in the running list and no way to stop it.
+        //
+        // The `&` is what makes it a fork rather than an exec, which is the
+        // whole difference between killing a child and killing a tree.
+        let root = std::env::temp_dir().join(format!("kuro-orphan-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+
+        let outcome = run(
+            &root,
+            "(sleep 1; touch orphan.txt) & sleep 30",
+            Duration::from_millis(300),
+        )
+        .await
+        .expect("ran");
+        assert!(outcome.timed_out, "the command should have hit the timeout");
+
+        // Long enough for the backgrounded subshell to have written the file, if
+        // anything were still alive to write it.
+        tokio::time::sleep(Duration::from_millis(1800)).await;
+
+        assert!(
+            !root.join("orphan.txt").exists(),
+            "killing the shell left its child running"
+        );
 
         std::fs::remove_dir_all(&root).ok();
     }

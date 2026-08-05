@@ -7,8 +7,9 @@ import { Composer } from '../components/Composer'
 import { FolderField } from '../components/FolderPicker'
 import { PanelDivider } from '../components/PanelDivider'
 import { PreviewPanel } from '../components/PreviewPanel'
+import { DiffView } from '../components/DiffView'
 import { api, type WorkspaceChange, type WorkspaceMode } from '../lib/api'
-import { useTurn } from '../lib/useTurn'
+import { forkTurn, runTurn, stopTurn, useTurn } from '../lib/turns'
 import { useUi } from '../store/ui'
 import {
   BoltIcon,
@@ -16,6 +17,7 @@ import {
   ChevronIcon,
   CloseIcon,
   EyeIcon,
+  GlobeIcon,
   ListIcon,
   ShieldOffIcon,
   FileIcon,
@@ -24,6 +26,7 @@ import {
   PlusIcon,
   RefreshIcon,
   SearchIcon,
+  TerminalIcon,
   TrashIcon,
 } from '../components/icons'
 
@@ -185,6 +188,8 @@ function WorkspaceView({ id }: { id: string }) {
     setFilesWidth,
     runningOpen,
     setRunningOpen,
+    runningView,
+    setRunningView,
     runningWidth,
     setRunningWidth,
   } = useUi()
@@ -200,13 +205,11 @@ function WorkspaceView({ id }: { id: string }) {
 
   const running = useRunningProcesses(id, runningOpen, setRunningOpen)
 
-  const turn = useTurn(() => {
-    // A coding turn may have touched the project or started a server, so all
-    // three panels are stale.
-    void queryClient.invalidateQueries({ queryKey: ['workspace-tree', id] })
-    void queryClient.invalidateQueries({ queryKey: ['workspace-changes', id] })
-    void queryClient.invalidateQueries({ queryKey: ['workspace-processes', id] })
-  })
+  // Which panels a finished turn invalidates is decided by the store, from the
+  // workspace id passed with the request. It used to be a callback closed over
+  // here, which meant navigating away before the turn ended left the file tree
+  // and the changes list showing the state from before it ran.
+  const turn = useTurn(conversationId)
 
   const messages = useQuery({
     queryKey: ['messages', conversationId],
@@ -227,7 +230,7 @@ function WorkspaceView({ id }: { id: string }) {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [history.length, turn.streaming?.content, turn.streaming?.tools.length])
+  }, [history.length, turn.stream?.content, turn.stream?.tools.length])
 
   const setMode = useMutation({
     mutationFn: (mode: WorkspaceMode) => api.workspaces.update(id, { mode }),
@@ -238,7 +241,7 @@ function WorkspaceView({ id }: { id: string }) {
   })
 
   const send = async (content: string, skills: string[] = []) => {
-    if (turn.streaming) return
+    if (turn.stream) return
 
     let target = conversationId
     if (target === null) {
@@ -250,11 +253,12 @@ function WorkspaceView({ id }: { id: string }) {
 
     // Web and memory are off here: a coding turn's tools are the workspace's,
     // and the model already has more than enough to choose between.
-    await turn.send(target, content, {
+    await runTurn(target, content, {
       model: codeModel ?? undefined,
       effort: codeEffort,
       tools: [],
       skills,
+      workspace: id,
     })
   }
 
@@ -356,10 +360,48 @@ function WorkspaceView({ id }: { id: string }) {
             <span className="code-bar-label">Running</span>
             {running.live > 0 && <span className="code-bar-count">{running.live}</span>}
           </button>
+
+          {/*
+            The terminal and the browser, each one click away.
+
+            Both were already in the running panel and neither was reachable
+            without first finding the panel, opening it, and scrolling to the
+            half you wanted. A button that opens the panel *at* the thing you
+            asked for is the same feature with the hunting removed.
+          */}
+          <button
+            className={`code-bar-btn ${
+              runningOpen && runningView === 'terminal' ? 'is-on' : ''
+            }`}
+            onClick={() => {
+              setRunningView('terminal')
+              setRunningOpen(true)
+            }}
+            aria-pressed={runningOpen && runningView === 'terminal'}
+            title="Run a command and read its output"
+          >
+            <TerminalIcon size={13} />
+            <span className="code-bar-label">Terminal</span>
+          </button>
+
+          <button
+            className={`code-bar-btn ${
+              runningOpen && runningView === 'browser' ? 'is-on' : ''
+            }`}
+            onClick={() => {
+              setRunningView('browser')
+              setRunningOpen(true)
+            }}
+            aria-pressed={runningOpen && runningView === 'browser'}
+            title="Look at whatever this workspace is serving"
+          >
+            <GlobeIcon size={13} />
+            <span className="code-bar-label">Browser</span>
+          </button>
         </div>
 
         <div className="chat-scroll" ref={scrollRef}>
-          {history.length === 0 && !turn.streaming ? (
+          {history.length === 0 && !turn.stream && !turn.error && turn.notices.length === 0 ? (
             <div className="code-empty">
               <FolderIcon size={26} />
               <p className="muted">{emptyLine(workspace.mode)}</p>
@@ -367,19 +409,28 @@ function WorkspaceView({ id }: { id: string }) {
           ) : (
             <MessageList
               messages={history}
-              streaming={turn.streaming}
+              streaming={turn.stream}
               error={turn.error}
               notices={turn.notices}
               onFork={(messageId) => {
-                void turn.fork(conversationId as string, messageId).then((branch) => {
+                void forkTurn(conversationId as string, messageId).then((branch) => {
                   if (branch) setConversationId(branch.id)
                 })
               }}
+              // A file the turn touched opens in the viewer beside the
+              // transcript, which is where the question "what did it actually
+              // do to that" gets answered.
+              onOpenPath={(path) => setOpenFile(path)}
               onEdit={(messageId, content) => {
-                void turn.send(
+                void runTurn(
                   conversationId as string,
                   content,
-                  { model: codeModel ?? undefined, effort: codeEffort, tools: [] },
+                  {
+                    model: codeModel ?? undefined,
+                    effort: codeEffort,
+                    tools: [],
+                    workspace: id,
+                  },
                   messageId,
                 )
               }}
@@ -391,8 +442,8 @@ function WorkspaceView({ id }: { id: string }) {
           models={models.data?.models ?? []}
           remote={models.data?.remote ?? []}
           onSend={(content, skills) => void send(content, skills)}
-          onStop={turn.stop}
-          isStreaming={Boolean(turn.streaming)}
+          onStop={() => stopTurn(conversationId)}
+          isStreaming={Boolean(turn.stream)}
           selectedModel={codeModel}
           onSelectModel={setCodeModel}
           effort={codeEffort}
@@ -424,8 +475,11 @@ function WorkspaceView({ id }: { id: string }) {
 
           <aside className="code-running" style={{ width: runningWidth }}>
             <div className="code-running-head">
-              <EyeIcon size={13} />
-              <strong>Running</strong>
+              {runningView === 'browser' ? <GlobeIcon size={13} /> : <TerminalIcon size={13} />}
+              <strong>{runningView === 'browser' ? 'Browser' : 'Terminal'}</strong>
+              {running.live > 0 && (
+                <span className="tag tag-live">{running.live} running</span>
+              )}
               <button
                 className="btn btn-ghost btn-icon"
                 onClick={() => setRunningOpen(false)}
@@ -435,7 +489,7 @@ function WorkspaceView({ id }: { id: string }) {
                 <CloseIcon size={14} />
               </button>
             </div>
-            <PreviewPanel workspaceId={id} mode={workspace.mode} />
+            <PreviewPanel workspaceId={id} mode={workspace.mode} view={runningView} />
           </aside>
         </>
       )}
@@ -806,6 +860,14 @@ function FileViewer({ id, path, onClose }: { id: string; path: string; onClose: 
 function ChangeList({ id }: { id: string }) {
   const queryClient = useQueryClient()
   const [failed, setFailed] = useState<string | null>(null)
+  /**
+   * Which change is open as a diff.
+   *
+   * In the list rather than in a separate panel, because the question "what did
+   * that one do" is asked *about a row* and answered next to it. Opening one
+   * closes the last, so the panel never becomes a stack of them.
+   */
+  const [opened, setOpened] = useState<string | null>(null)
 
   const changes = useQuery({
     queryKey: ['workspace-changes', id],
@@ -843,7 +905,14 @@ function ChangeList({ id }: { id: string }) {
         {held.map((change) => (
           <li key={change.id} className={change.undone ? 'is-undone' : ''}>
             <div className="code-change-head">
-              <span className="mono code-change-path">{change.path}</span>
+              <button
+                className="mono code-change-path"
+                onClick={() => setOpened(opened === change.id ? null : change.id)}
+                aria-expanded={opened === change.id}
+                title={opened === change.id ? 'Hide the changes' : 'Show what changed'}
+              >
+                {change.path}
+              </button>
               {change.undone ? (
                 <span className="faint">undone</span>
               ) : (
@@ -865,6 +934,14 @@ function ChangeList({ id }: { id: string }) {
               )}
             </div>
             <span className="faint code-change-note">{describeChange(change)}</span>
+            {opened === change.id && (
+              <DiffView
+                workspaceId={id}
+                changeId={change.id}
+                path={change.path}
+                onClose={() => setOpened(null)}
+              />
+            )}
           </li>
         ))}
       </ul>
