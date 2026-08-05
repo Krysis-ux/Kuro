@@ -237,7 +237,7 @@ function WorkspaceView({ id }: { id: string }) {
     },
   })
 
-  const send = async (content: string) => {
+  const send = async (content: string, skills: string[] = []) => {
     if (turn.streaming) return
 
     let target = conversationId
@@ -254,6 +254,7 @@ function WorkspaceView({ id }: { id: string }) {
       model: codeModel ?? undefined,
       effort: codeEffort,
       tools: [],
+      skills,
     })
   }
 
@@ -389,7 +390,7 @@ function WorkspaceView({ id }: { id: string }) {
         <Composer
           models={models.data?.models ?? []}
           remote={models.data?.remote ?? []}
-          onSend={(content) => void send(content)}
+          onSend={(content, skills) => void send(content, skills)}
           onStop={turn.stop}
           isStreaming={Boolean(turn.streaming)}
           selectedModel={codeModel}
@@ -694,7 +695,7 @@ function TreeLevel({
 
         if (!node.dir) {
           return (
-            <li key={node.path} style={{ paddingLeft: depth * 12 }}>
+            <li key={node.path} style={{ paddingLeft: 4 + depth * 12 }}>
               <button
                 className="code-tree-file"
                 onClick={() => onOpen(node.path)}
@@ -711,7 +712,7 @@ function TreeLevel({
           <li key={node.path}>
             <button
               className="code-tree-dir"
-              style={{ paddingLeft: depth * 12 }}
+              style={{ paddingLeft: 4 + depth * 12 }}
               aria-expanded={isOpen}
               onClick={() =>
                 setOpen((held) =>

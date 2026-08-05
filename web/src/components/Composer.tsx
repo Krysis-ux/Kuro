@@ -67,7 +67,13 @@ export interface ComposerToggle {
 interface ComposerProps {
   models: InstalledModel[]
   remote: RemoteModel[]
-  onSend: (content: string) => void
+  /**
+   * `skills` are the ones named with `/` on this message. Separate from the
+   * text because they are an instruction to Kuro rather than something the
+   * model should read: pasting `/rust` into the prompt would ask the model to
+   * interpret a command instead of applying the guidance behind it.
+   */
+  onSend: (content: string, skills: string[]) => void
   onStop: () => void
   isStreaming: boolean
   /** Centred on an empty chat, docked once the conversation starts. */
@@ -150,10 +156,14 @@ export function Composer({
   const [menuOpen, setMenuOpen] = useState(false)
   const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
-  // For the `/` commands, half of which are navigation. The `from` they carry
-  // is what lets the destination offer a way back to a half-written message.
-  const navigate = useNavigate()
-  const location = useLocation()
+  /**
+   * Skills named with `/` for this message.
+   *
+   * Held here rather than in settings because that is the distinction: the
+   * store says what Kuro *may* use, and this says what it *will*, once, for
+   * this message. Cleared on send along with the text.
+   */
+  const [attachedSkills, setAttachedSkills] = useState<string[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -225,30 +235,41 @@ export function Composer({
       .map((file) => `--- ${file.name} ---\n${file.content}`)
       .join('\n\n')
 
-    onSend(preamble ? `${preamble}\n\n${trimmed}` : trimmed)
+    onSend(preamble ? `${preamble}\n\n${trimmed}` : trimmed, attachedSkills)
     setText('')
     setAttachments([])
+    setAttachedSkills([])
     setAttachError(null)
   }
 
   // `/` commands. Open while the message is a single slash-prefixed word, which
   // is what keeps them clear of prose that merely contains a slash.
   const query = commandQuery(text)
+
+  // Every skill this build knows about, so `/rust` finds Rust without the user
+  // having gone to the store first.
+  const catalogue = useQuery({
+    queryKey: ['tools'],
+    queryFn: api.tools.overview,
+    staleTime: 60_000,
+  })
+  const skillList = useMemo(
+    () => catalogue.data?.skills.catalogue ?? [],
+    [catalogue.data],
+  )
+
   const commands = useMemo(
     () =>
       buildCommands({
         toggles,
-        go: (path) => {
-          setText('')
-          navigate(path, { state: { from: location.pathname + location.search } })
-        },
-        onClear: () => setText(''),
-        onHelp: () => {
-          setText('')
-          navigate('/tools', { state: { from: location.pathname + location.search } })
-        },
+        skills: skillList,
+        attached: attachedSkills,
+        onAttach: (slug) =>
+          setAttachedSkills((held) =>
+            held.includes(slug) ? held.filter((have) => have !== slug) : [...held, slug],
+          ),
       }),
-    [toggles, navigate, location.pathname, location.search, setText],
+    [toggles, skillList, attachedSkills],
   )
   const matches = useMemo(
     () => (query === null ? [] : matchCommands(commands, query)),
@@ -258,10 +279,9 @@ export function Composer({
   const { index, setIndex } = useSlashKeys(slashOpen, matches.length)
 
   const runCommand = (command: SlashCommand) => {
-    // Cleared first so a command that navigates does not leave `/web` sitting
-    // in the box to be sent later as a message.
+    // Cleared first, so `/web` never ends up sent to the model as a message.
     setText('')
-    command.run()
+    command.run?.()
     textareaRef.current?.focus()
   }
 
@@ -347,6 +367,28 @@ export function Composer({
       )}
 
       <div className="composer">
+        {attachedSkills.length > 0 && (
+          // Shown as chips rather than left invisible: a `/rust` that vanished
+          // into thin air would give no way to tell whether it took, and no way
+          // to take it back.
+          <div className="composer-attachments">
+            {attachedSkills.map((slug) => (
+              <span key={slug} className="tag tag-live">
+                /{slug}
+                <button
+                  className="attachment-remove"
+                  aria-label={`Remove ${slug}`}
+                  onClick={() =>
+                    setAttachedSkills((held) => held.filter((have) => have !== slug))
+                  }
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         {attachments.length > 0 && (
           <div className="composer-attachments">
             {attachments.map((file, index) => (

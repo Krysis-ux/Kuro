@@ -373,20 +373,20 @@
   min-width: 0;
 }
 
+/* A row is a block, not a flex row.
+   It was `display: flex; align-items: center`, which was right while every
+   entry was a single label — and wrong the moment a directory gained children,
+   because a nested list is a sibling of the button inside the same `li` and a
+   flex row laid it out *beside* the folder rather than under it. Opening a
+   folder pushed its contents off to the right instead of dropping them down. */
 .code-tree li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
+  display: block;
   color: var(--text-muted);
   font-size: var(--text-xs);
-  /* Paths are long and the interesting end is the right one, so they scroll
-     rather than wrap into an unreadable column. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
+/* Clipping belongs on the row's own button, which sets its own padding.
+   Here it cut the disclosure chevron in half against the panel's left edge. */
 .code-tree li.is-dir {
   color: var(--text);
 }
@@ -4212,6 +4212,15 @@ body.is-resizing iframe {
   /* Points right when closed, down when open — the convention every file tree
      uses, and the only affordance saying the row can be opened at all. */
   transform: rotate(-90deg);
+}
+
+/* Both row types clip their own text rather than letting the list do it, so a
+   long filename ellipsises without the chevron beside it being cut off too. */
+.code-tree-file,
+.code-tree-dir {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .code-tree-dir svg:first-child.is-open {

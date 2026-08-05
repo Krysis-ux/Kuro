@@ -64,7 +64,7 @@ export function ChatPage() {
    * match before the optimistic row goes in — otherwise the old replies stay on
    * screen underneath the new question until the refetch lands.
    */
-  const send = async (content: string, editing?: string) => {
+  const send = async (content: string, skills: string[] = [], editing?: string) => {
     setError(null)
     setNotices([])
 
@@ -99,6 +99,7 @@ export function ChatPage() {
         effort,
         tools: activeToolGroups({ webSearch, memory, projects }),
         web_search: webSearch,
+        skills,
       }
       const events = editing
         ? streamEditMessage(targetId, editing, request, controller.signal)
@@ -174,7 +175,7 @@ export function ChatPage() {
       models={models.data?.models ?? []}
       remote={models.data?.remote ?? []}
       draftKey={`chat:${conversationId ?? 'new'}`}
-      onSend={(content) => void send(content)}
+      onSend={(content, skills) => void send(content, skills)}
       onStop={stop}
       isStreaming={streaming !== null}
       centred={centred}
@@ -205,7 +206,7 @@ export function ChatPage() {
               error={error}
               notices={notices}
               onFork={(messageId) => void fork(messageId)}
-              onEdit={(messageId, content) => void send(content, messageId)}
+              onEdit={(messageId, content) => void send(content, [], messageId)}
             />
           </div>
           {composer(false)}

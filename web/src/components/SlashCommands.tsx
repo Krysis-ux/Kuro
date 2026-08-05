@@ -3,17 +3,20 @@ import { useEffect, useState } from 'react'
 /**
  * The `/` palette.
  *
- * Everything here is reachable another way — through the sidebar, a toggle, or
- * the model picker — which is the point rather than an objection. The controls
- * are spread across the window and the keyboard is where the hands already are
- * halfway through typing a message; a palette is the shortest path between
- * "I want the web on for this one" and having it on, without the round trip
- * through the mouse and back to the caret.
+ * It began as a shortcut to other pages, and that was the wrong idea. A command
+ * that navigates away abandons the half-written message it was typed into —
+ * which is the opposite of useful, since the reason to reach for `/` mid-sentence
+ * is almost always that the sentence told you what you needed.
  *
- * It deliberately does not run anything the composer could not already do.
- * A `/` command that sent a message, deleted a conversation, or spent an
- * allowance would be a destructive action one keystroke away from an ordinary
- * typo, and `/` is a character people begin real sentences with.
+ * So nothing here leaves the page. A command either switches something on for
+ * this message or attaches expertise to it: `/rust` puts the Rust guidance in
+ * front of the model for this turn, `/security` does the same for security
+ * review, `/web` turns on search. The message stays where it is and gains
+ * something.
+ *
+ * That also makes the palette the answer to "what can this thing actually do" —
+ * every skill and every tool group in one list, in the place where you would
+ * use them, rather than on a settings screen you have to go and find.
  */
 export interface SlashCommand {
   /** Typed after the slash. Lowercase, no spaces. */
@@ -22,9 +25,13 @@ export interface SlashCommand {
   hint: string
   /** Other spellings that should find this. */
   aliases?: string[]
-  /** Shown on the right when the command reflects a state. */
+  /** Shown on the right — a state, or what kind of thing this is. */
   state?: string
-  run: () => void
+  kind: 'toggle' | 'skill'
+  /** For a skill, the slug to pin on the message. */
+  slug?: string
+  /** Toggles act immediately; skills attach and are removed on send. */
+  run?: () => void
 }
 
 /**
@@ -82,16 +89,16 @@ export function SlashMenu({ commands, query, index, onHover, onRun }: SlashMenuP
   if (commands.length === 0) {
     return (
       <div className="slash-menu fade-in">
-        <p className="faint slash-empty">No command called “/{query}”.</p>
+        <p className="faint slash-empty">No skill or switch called “/{query}”.</p>
       </div>
     )
   }
 
   return (
-    <div className="slash-menu fade-in" role="listbox" aria-label="Commands">
+    <div className="slash-menu fade-in" role="listbox" aria-label="Skills and switches">
       {commands.map((command, position) => (
         <button
-          key={command.name}
+          key={`${command.kind}:${command.name}`}
           className={`slash-item ${position === index ? 'is-on' : ''}`}
           role="option"
           aria-selected={position === index}
@@ -114,10 +121,6 @@ export function SlashMenu({ commands, query, index, onHover, onRun }: SlashMenuP
 
 /**
  * Keyboard handling for the palette, kept with the rest of it.
- *
- * Returns `true` when the key was the palette's, so the composer knows not to
- * also treat it as typing — Enter in particular, which would otherwise send
- * `/web` to the model as a message.
  */
 export function useSlashKeys(open: boolean, count: number) {
   const [index, setIndex] = useState(0)
@@ -135,12 +138,19 @@ export function useSlashKeys(open: boolean, count: number) {
   return { index, setIndex }
 }
 
+/** A skill as the tools API describes it. */
+export interface PaletteSkill {
+  slug: string
+  name: string
+  blurb: string
+}
+
 /**
- * The commands themselves, built from what the surface can actually do.
+ * The commands, built from what this surface can actually do.
  *
- * Assembled by the caller rather than declared as a constant, because half of
- * them reflect state the composer holds — whether web search is on, whether
- * there is a workspace — and a command whose label lies about its state is
+ * Assembled by the caller rather than declared as a constant, because all of it
+ * reflects live state — which switches this surface has, which are on, and which
+ * skills the build knows about. A command whose label lies about its state is
  * worse than no command.
  */
 export function buildCommands(parts: {
@@ -152,70 +162,36 @@ export function buildCommands(parts: {
     /** What to call this in the palette, when the toggle's id would collide. */
     command?: string
   }[]
-  go: (path: string) => void
-  onClear: () => void
-  onHelp: () => void
+  skills: PaletteSkill[]
+  /** Slugs already attached to this message, so the row can say so. */
+  attached: string[]
+  onAttach: (slug: string) => void
 }): SlashCommand[] {
   const fromToggles: SlashCommand[] = parts.toggles.map((toggle) => ({
     name: toggle.command ?? toggle.id,
     hint: `Turn ${toggle.label.toLowerCase()} ${toggle.on ? 'off' : 'on'} for this message`,
     state: toggle.on ? 'on' : 'off',
+    kind: 'toggle',
     run: () => toggle.onChange(!toggle.on),
   }))
 
-  const all: SlashCommand[] = [
-    ...fromToggles,
-    {
-      name: 'models',
-      hint: 'Manage and download models',
-      aliases: ['model'],
-      run: () => parts.go('/models'),
-    },
-    {
-      name: 'free',
-      hint: 'Free provider keys and what they have cost',
-      run: () => parts.go('/free'),
-    },
-    {
-      name: 'tools',
-      hint: 'Built-in tools, skills and MCP servers',
-      aliases: ['skills', 'mcp'],
-      run: () => parts.go('/tools'),
-    },
-    {
-      name: 'code',
-      hint: 'Open a folder to work in',
-      aliases: ['workspace'],
-      run: () => parts.go('/code'),
-    },
-    {
-      name: 'projects',
-      hint: 'Projects and their standing instructions',
-      run: () => parts.go('/projects'),
-    },
-    {
-      name: 'settings',
-      hint: 'Settings',
-      aliases: ['config', 'prefs'],
-      run: () => parts.go('/settings'),
-    },
-    {
-      name: 'clear',
-      hint: 'Empty this message box',
-      run: parts.onClear,
-    },
-    {
-      name: 'help',
-      hint: 'What Kuro can do',
-      aliases: ['?'],
-      run: parts.onHelp,
-    },
-  ]
+  const fromSkills: SlashCommand[] = parts.skills.map((skill) => ({
+    name: skill.slug,
+    hint: skill.blurb,
+    aliases: [skill.name.toLowerCase()],
+    state: parts.attached.includes(skill.slug) ? 'added' : undefined,
+    kind: 'skill',
+    slug: skill.slug,
+    run: () => parts.onAttach(skill.slug),
+  }))
+
+  // Switches first: there are two or three of them, they change what this
+  // message *does* rather than how it is answered, and burying them under forty
+  // skills would make the common case the hard one.
+  const all = [...fromToggles, ...fromSkills]
 
   // Two commands of one name is one command that does the wrong thing half the
-  // time. The toggles are built first and win, because a surface only offers a
-  // toggle it actually has, whereas the navigation entries are the same list
-  // everywhere.
+  // time. The toggles are built first and win.
   const seen = new Set<string>()
   return all.filter((command) => {
     if (seen.has(command.name)) return false

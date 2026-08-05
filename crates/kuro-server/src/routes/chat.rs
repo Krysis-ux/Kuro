@@ -65,6 +65,15 @@ pub struct SendMessageRequest {
     /// Search before answering, regardless of whether the model would have asked.
     #[serde(default)]
     pub web_search: Option<bool>,
+    /// Skills the user named for this message, by slug.
+    ///
+    /// What `/rust` in the composer actually does. Distinct from the enabled
+    /// set in settings, which says what Kuro *may* use: this says what it
+    /// *will*, for this turn only, and the orchestrator is not allowed to trim
+    /// one away to fit a budget. Somebody who typed the name of a skill has
+    /// been more specific than any ranking heuristic can be.
+    #[serde(default)]
+    pub skills: Option<Vec<String>>,
 }
 
 /// Send a message and stream the reply.
@@ -168,6 +177,7 @@ pub async fn send_message(
                 search_first,
                 memory_count,
                 query: &request.content,
+                pinned_skills: request.skills.as_deref().unwrap_or(&[]),
                 workspace,
             },
             messages,
@@ -233,6 +243,8 @@ struct Turn<'a> {
     memory_count: i64,
     /// The user's message, used as the up-front search query.
     query: &'a str,
+    /// Skills named on this message with `/`, which the brief must carry.
+    pinned_skills: &'a [String],
     /// The coding workspace this conversation belongs to. `None` for an ordinary
     /// chat, which is what makes a chat unable to reach a file.
     workspace: Option<TurnWorkspace>,
@@ -390,6 +402,8 @@ async fn run_turn(
             // that merely happens to be switched on when the brief runs out of
             // room.
             message: turn.query,
+            // And what was asked for by name, which outranks everything.
+            pinned: turn.pinned_skills,
         },
         &chosen_skills,
     );
