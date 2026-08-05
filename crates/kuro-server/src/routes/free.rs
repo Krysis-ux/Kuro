@@ -548,6 +548,30 @@ pub async fn refresh_catalogues(state: &SharedState, keys: &HashMap<String, Stri
 /// Settings key holding the last catalogue read of every free provider.
 pub const KEY_CATALOGUES: &str = "free.catalogues";
 
+/// Settings key holding which providers and models are currently set aside.
+pub const KEY_TROUBLES: &str = "free.troubles";
+
+/// Write the current refusals to storage.
+///
+/// A cooldown that a restart erases is not a cooldown: a rejected key came back
+/// looking fine, was tried again, failed again, and the picker offered it as
+/// available the whole time.
+pub fn save_troubles(state: &SharedState) {
+    let stored = state.free.troubles();
+    if let Err(error) = state.db.set_setting(KEY_TROUBLES, &serde_json::json!(stored)) {
+        tracing::warn!(%error, "could not store free provider cooldowns");
+    }
+}
+
+/// Read back the refusals from the last run, dropping any that have expired.
+pub fn stored_troubles(db: &kuro_core::db::Db) -> Vec<(String, String, u64)> {
+    db.get_setting(KEY_TROUBLES)
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
+}
+
 /// Write the catalogues to storage so the next start already has them.
 ///
 /// A cloud connector's model list has always been in the database, which is why
