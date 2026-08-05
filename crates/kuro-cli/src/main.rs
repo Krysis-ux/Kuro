@@ -91,6 +91,25 @@ enum Command {
     /// Show the free-tier pool: which keys work, and what they have cost.
     Free,
 
+    /// Run another coding tool against a Kuro model.
+    ///
+    /// `kuro launch claude` starts Claude Code pointed at this daemon, so it
+    /// uses a local model, a free provider or your own key instead of calling
+    /// out. Nothing is installed and no configuration is edited — the effect
+    /// lasts as long as the process does.
+    Launch {
+        /// Which tool: `claude`, `codex`, `opencode`. Omit to see the list.
+        app: Option<String>,
+
+        /// Model to use. Omit for whatever Kuro's default is.
+        #[arg(long, short)]
+        model: Option<String>,
+
+        /// Anything after `--` is passed through to the tool.
+        #[arg(trailing_var_arg = true)]
+        rest: Vec<String>,
+    },
+
     /// Print the version and exit.
     Version,
 }
@@ -139,5 +158,8 @@ async fn dispatch() -> Result<()> {
         Command::Rm { model } => commands::models::remove(&client, &model).await,
         Command::Show { model } => commands::models::show(&client, model).await,
         Command::Free => commands::free::free(&client).await,
+        Command::Launch { app, model, rest } => {
+            commands::launch::launch(&client, app, model, rest).await
+        }
     }
 }
