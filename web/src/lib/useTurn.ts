@@ -29,6 +29,14 @@ export interface TurnRequest {
   effort?: Effort
   tools?: ToolGroup[]
   web_search?: boolean
+  /**
+   * Skills named with `/` on this message.
+   *
+   * Distinct from the enabled set in settings: that says what Kuro may use,
+   * this says what it will, for this turn, and the orchestrator may not trim
+   * one away to fit its budget.
+   */
+  skills?: string[]
 }
 
 /**
