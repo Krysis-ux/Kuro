@@ -35,17 +35,13 @@ import {
   VideoIcon,
 } from './icons'
 
-/** Tallest the input grows before it starts scrolling. Matches `max-height`
- *  on `.composer-input`; the two have to agree or the box scrolls early. */
 const MAX_INPUT_HEIGHT = 320
 
-/** Extensions the text path can read. Anything else needs a capable model. */
 const TEXT_ACCEPT =
   '.txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.log,.xml,.yml,.yaml,.toml,.ini,.env,' +
   '.ts,.tsx,.js,.jsx,.py,.rs,.go,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.rb,.php,.sh,' +
   '.sql,.css,.scss,.html,.vue,.svelte'
 
-/** A switch shown to the left of the model picker. */
 export interface ComposerToggle {
   id: string
   label: string
@@ -53,77 +49,35 @@ export interface ComposerToggle {
   on: boolean
   title: string
   onChange: (on: boolean) => void
-  /**
-   * What to call this in the `/` palette, when the id would collide with a
-   * page of the same name.
-   *
-   * The projects toggle needs one. Its id is `projects` and so is the Projects
-   * page, and the two are genuinely different things — one is "may the model
-   * read my folders this turn", the other is "show me my projects" — so
-   * dropping either would lose something a person will look for.
-   */
   command?: string
 }
 
 interface ComposerProps {
   models: InstalledModel[]
   remote: RemoteModel[]
-  /**
-   * `skills` are the ones named with `/` on this message. Separate from the
-   * text because they are an instruction to Kuro rather than something the
-   * model should read: pasting `/rust` into the prompt would ask the model to
-   * interpret a command instead of applying the guidance behind it.
-   */
   onSend: (content: string, skills: string[]) => void
   onStop: () => void
   isStreaming: boolean
-  /** Centred on an empty chat, docked once the conversation starts. */
   centred?: boolean
 
   selectedModel: string | null
   onSelectModel: (model: string) => void
   effort: Effort
   onEffortChange: (effort: Effort) => void
-  /** What raising the effort buys on this surface. */
   effortNote?: string
-  /** Unlocks the coding-only effort level and its wording. */
   coding?: boolean
 
-  /** Web, memory and so on. The Code page passes none of these. */
   toggles?: ComposerToggle[]
-  /** Rendered before the toggles — the Code page's mode switch goes here. */
   leading?: React.ReactNode
-  /** Rendered between the toggles and the model picker. */
   trailing?: React.ReactNode
 
-  /**
-   * Where this composer's half-written message is kept.
-   *
-   * One key per conversation or workspace, so switching between two chats does
-   * not carry one's draft into the other.
-   */
   draftKey: string
 
   placeholder?: string
   hint?: React.ReactNode
-  /** Set when sending is impossible, with the reason. Shown on the button. */
   disabledReason?: string | null
 }
 
-/**
- * The message box, shared by chat and by a coding workspace.
- *
- * It was two components, and the Code page's copy was a bare textarea with a
- * send button — no attachments, no tools menu, no effort control, and a model
- * picker bolted onto the header several inches away from it. Somebody who had
- * learned the chat composer arrived at the Code page and found that half of what
- * they knew was missing, for no reason they could see.
- *
- * What actually differs between the two surfaces is which switches sit on the
- * left, so that is the prop. Everything else — growing with the content,
- * attachments, the model picker, how hard to think — is the same control in both
- * places because it is the same decision in both places.
- */
 export function Composer({
   models,
   remote,
@@ -145,9 +99,6 @@ export function Composer({
   hint,
   disabledReason,
 }: ComposerProps) {
-  // Read from the store rather than from local state, so that unmounting this
-  // component — which navigating anywhere does — no longer discards what was
-  // being typed.
   const text = useUi((state) => state.drafts[draftKey] ?? '')
   const setDraftText = useUi((state) => state.setDraft)
   const setText = useCallback(
@@ -155,21 +106,7 @@ export function Composer({
     [draftKey, setDraftText],
   )
   const [menuOpen, setMenuOpen] = useState(false)
-  /**
-   * Where the caret is, so `/` can be recognised mid-sentence.
-   *
-   * Tracked rather than read from the DOM on demand because the palette is
-   * rendered from it: a value read during an event handler would be one render
-   * behind whatever the menu was showing.
-   */
   const [caret, setCaret] = useState(0)
-  /**
-   * A command the user dismissed with Escape.
-   *
-   * Held as the text of the token rather than a flag, so the menu comes back
-   * the moment they type something different — dismissing `/ru` should not also
-   * dismiss the `/rust` it becomes.
-   */
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
@@ -191,15 +128,6 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  // Grow with the content instead of scrolling inside a fixed box.
-  //
-  // The width check is load-bearing. A textarea asked for its `scrollHeight`
-  // before layout has given it a width answers with a number that has nothing
-  // to do with its contents — several hundred pixels for an empty box. Because
-  // this only re-ran when the text changed, and the text of a fresh composer
-  // never does, that number used to be latched in for good: an empty input
-  // half the height of the window, sitting over the conversation it had
-  // squeezed out of the way.
   const fitToContent = useCallback(() => {
     const node = textareaRef.current
     if (!node || node.clientWidth === 0) return
@@ -209,18 +137,12 @@ export function Composer({
 
   useEffect(fitToContent, [text, fitToContent])
 
-  // Re-measure when the input's width changes. That covers the window being
-  // resized, and — the case that matters — a first render that happened before
-  // the element had been laid out, which is what makes the measurement above
-  // safe to skip rather than guess at.
   useEffect(() => {
     const node = textareaRef.current
     if (!node) return
 
     let lastWidth = node.clientWidth
     const observer = new ResizeObserver(() => {
-      // Height changes are this effect's own doing; reacting to them would
-      // loop. Only a width change can invalidate the measurement.
       if (node.clientWidth === lastWidth) return
       lastWidth = node.clientWidth
       fitToContent()
@@ -253,7 +175,6 @@ export function Composer({
     const trimmed = text.trim()
     if (!trimmed || isStreaming || disabledReason) return
 
-    // Attached text is prepended so the model sees the file before the question.
     const preamble = attachments
       .map((file) => `--- ${file.name} ---\n${file.content}`)
       .join('\n\n')
@@ -264,13 +185,9 @@ export function Composer({
     setAttachError(null)
   }
 
-  // `/` commands. Recognised wherever the caret is, so a command can be reached
-  // from the middle of a half-written message rather than only from its start.
   const token = commandTokenAt(text, caret)
   const query = token?.query ?? null
 
-  // Every skill this build knows about, so `/rust` finds Rust without the user
-  // having gone to the store first.
   const catalogue = useQuery({
     queryKey: ['tools'],
     queryFn: api.tools.overview,
@@ -281,7 +198,6 @@ export function Composer({
     [catalogue.data],
   )
 
-  /** Skills this message names, read back out of what has been typed. */
   const namedSkills = useMemo(() => skillsNamedIn(text, skillList), [text, skillList])
 
   const commands = useMemo(
@@ -300,19 +216,11 @@ export function Composer({
   const slashOpen = query !== null && matches.length > 0 && dismissed !== query
   const { index, setIndex } = useSlashKeys(slashOpen, matches.length)
 
-  /**
-   * Swap the `/command` under the caret for something else.
-   *
-   * Only that word. Running a command used to clear the entire message, which
-   * was survivable while `/` had to be the first thing typed and destructive the
-   * moment it did not have to be.
-   */
   const replaceToken = (replacement: string) => {
     if (!token) return
 
     const before = text.slice(0, token.start)
     let after = text.slice(token.end)
-    // Removing a word from between two spaces leaves two spaces behind.
     if (replacement === '' && /\s$/.test(before)) after = after.replace(/^[^\S\n]/, '')
 
     const next = before + replacement + after
@@ -320,8 +228,6 @@ export function Composer({
     setText(next)
     setCaret(position)
 
-    // The textarea is controlled, so its value lands on the next render and the
-    // caret has to be placed after that or the browser parks it at the end.
     requestAnimationFrame(() => {
       const node = textareaRef.current
       if (!node) return
@@ -330,7 +236,6 @@ export function Composer({
     })
   }
 
-  /** Take one `/name` back out of the message, leaving the rest of it alone. */
   const removeSkillWord = (slug: string) => {
     const next = text
       .replace(new RegExp(`(^|[\\s([{])/${slug}\\b[^\\S\\n]?`, 'gi'), '$1')
@@ -341,14 +246,8 @@ export function Composer({
 
   const runCommand = (command: SlashCommand) => {
     if (command.kind === 'skill') {
-      // Completed where it was typed, with a space so the sentence can carry
-      // on. The name is the attachment — it stays in the message and tells the
-      // model which part of the request the guidance is for.
       replaceToken(`/${command.name} `)
     } else {
-      // A switch is not context. `/web` configures the turn and would only be
-      // noise in the sentence it configures, and the button lighting up is
-      // already the receipt.
       replaceToken('')
       command.run?.()
     }
@@ -367,8 +266,6 @@ export function Composer({
         setIndex((current) => (current - 1 + matches.length) % matches.length)
         return
       }
-      // Tab completes rather than running, so a half-typed name can be checked
-      // before it does anything.
       const highlighted = matches[index]
       if (event.key === 'Tab' && highlighted) {
         event.preventDefault()
@@ -382,9 +279,6 @@ export function Composer({
       }
       if (event.key === 'Escape') {
         event.preventDefault()
-        // Closes the menu and leaves the message alone. It used to delete
-        // everything that had been typed, which is a lot to lose to the key
-        // people press to mean "never mind".
         setDismissed(query)
         return
       }
@@ -405,8 +299,6 @@ export function Composer({
 
     for (const file of Array.from(files)) {
       const content = await file.text()
-      // A file that decodes to control characters is binary, and pasting it into
-      // the prompt would waste the whole context window on noise.
       if (looksBinary(content)) {
         rejected.push(file.name)
         continue
@@ -441,11 +333,6 @@ export function Composer({
 
       <div className="composer">
         {namedSkills.length > 0 && (
-          // A reading of the message rather than a separate list. A textarea
-          // cannot colour the `/rust` inside it, so this is the only way to see
-          // that the name registered as a skill before the message is sent —
-          // and removing a chip removes the word, because the word is the
-          // thing.
           <div className="composer-attachments">
             {namedSkills.map((slug) => (
               <span key={slug} className="tag tag-live">
@@ -494,8 +381,6 @@ export function Composer({
             setCaret(event.target.selectionStart ?? event.target.value.length)
           }}
           onKeyDown={handleKeyDown}
-          // Arrow keys, clicks and drags all move the caret without changing the
-          // text, and each one can move it into or out of a command.
           onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
         />
 
@@ -594,31 +479,6 @@ export function Composer({
   )
 }
 
-/**
- * The `+` menu.
- *
- * Every entry stays visible whether or not it is usable, and an unusable one is
- * dimmed rather than hidden — a menu that changes shape between models makes a
- * capability look like a bug. The *reason* it is unusable lives in the tooltip,
- * not on the row: spelling it out inline turned this menu into a wall of
- * apologetic grey text that wrapped over three lines each.
- *
- * ## Every enabled row does something
- *
- * That is a rule now because it was broken. Images and Audio were enabled
- * whenever the chosen model was a provider model — `isRemote` alone was taken
- * as proof of the capability — and neither had a click handler at all. So on
- * any provider model they lit up, invited a click, and did nothing: no picker,
- * no error, no attachment. The bug reads as the whole application being broken,
- * because the part of it the user touched was.
- *
- * Both are off until Kuro can actually send them, and the tooltip says which
- * side the missing piece is on. A message's content is a string end to end —
- * in storage, in the history sent upstream, and on the wire — so an image has
- * nowhere to go yet regardless of which model is chosen. Saying "needs a vision
- * model" would have pointed at the wrong thing entirely: it is not the model
- * that is missing.
- */
 function AddMenu({
   capabilities,
   isRemote,
@@ -631,13 +491,8 @@ function AddMenu({
   const navigate = useNavigate()
   const location = useLocation()
 
-  // Where this menu was opened from, carried along so the destination can
-  // offer a way back. Without it, following "Tools" out of a half-written
-  // message is a one-way trip through the sidebar.
   const leaving = { state: { from: location.pathname + location.search } }
 
-  // Kept for the tooltips: whether the *model* could take an image is still
-  // worth saying, even while the answer does not change whether the row works.
   const modelHandles = (capability: string) => isRemote || capabilities.includes(capability)
 
   const servers = useQuery({
@@ -728,12 +583,6 @@ function AddMenu({
   )
 }
 
-/**
- * A menu row.
- *
- * One line, always. The hint is a tooltip so a long explanation cannot reflow the
- * menu, and the badge is for counts, which are short enough to show inline.
- */
 function MenuItem({
   icon,
   label,
@@ -764,15 +613,6 @@ function MenuItem({
   )
 }
 
-/**
- * The switches a chat shows.
- *
- * Two, and memory is deliberately not one of them. It is on, it stays on, and it
- * only ever touches things the user asked to be saved — so a switch for it was
- * a control nobody used occupying space under every message. It lives in
- * Settings now, next to the box for writing what you want models to know about
- * you, which is where somebody goes when they actually have an opinion about it.
- */
 export function chatToggles(state: {
   webSearch: boolean
   setWebSearch: (on: boolean) => void
@@ -792,9 +632,6 @@ export function chatToggles(state: {
     },
     {
       id: 'projects',
-      // `/folders` rather than `/projects`, which is the page. This switch is
-      // about whether the model may read the folders opened on the Code page,
-      // and "folders" is both what it does and what nothing else is called.
       command: 'folders',
       label: 'Projects',
       icon: <FolderIcon />,
@@ -807,21 +644,10 @@ export function chatToggles(state: {
   ]
 }
 
-/**
- * Whether decoded text is really binary.
- *
- * `File.text()` will happily decode a PNG into replacement characters, so the
- * check is for those and for NUL — both of which are absent from any real
- * document.
- */
 function looksBinary(content: string): boolean {
   const sample = content.slice(0, 4000)
-  // A NUL byte never appears in text and always appears in a binary header.
   if (sample.includes("\u0000")) return true
 
-  // Decoding a binary file as UTF-8 leaves a field of replacement characters. A
-  // couple can legitimately appear in badly encoded text, so this is a ratio
-  // rather than a flat rejection.
   const replacements = (sample.match(/\uFFFD/g) ?? []).length
   return replacements > sample.length * 0.02
 }

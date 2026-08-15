@@ -1,22 +1,3 @@
-//! `POST /v1/messages` — the Anthropic-compatible endpoint.
-//!
-//! This is what makes `kuro launch claude` possible. Claude Code speaks the
-//! Messages API and nothing else; every endpoint Kuro can reach speaks the
-//! OpenAI shape. Point Claude Code here and it talks to a local llama.cpp, an
-//! OpenRouter key or a free provider without knowing that any of that happened.
-//!
-//! The translation itself lives in [`kuro_core::gateway`], with its own tests.
-//! What is here is the part that needs the server: resolving which endpoint the
-//! request should go to, and turning one stream into the other.
-//!
-//! ## Kuro's own tools are deliberately absent
-//!
-//! Claude Code brings its own — it edits files, runs commands and asks for
-//! permission in its own interface, under its own rules. Kuro's contribution on
-//! this path is the model. Offering Kuro's coding tools here as well would mean
-//! two tool layers with two different ideas of what is permitted, and the
-//! workspace mode that governs Kuro's own surfaces would not be governing
-//! anything.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -36,15 +17,7 @@ use serde_json::{json, Value};
 use crate::routes::common::resolve_target;
 use crate::state::SharedState;
 
-// `/v1/models` is deliberately not reimplemented here. The OpenAI-shaped one
-// already answers with a `data` array of `{id}`, which is what a client reads
-// to validate a model name, and two handlers on one path would mean whichever
-// was registered last silently won.
 pub async fn messages(State(state): State<SharedState>, Json(body): Json<Value>) -> Response {
-    // Whatever Claude Code was configured with. An unknown name is not an
-    // error: `resolve_target` falls back to Kuro's own default, which is what
-    // makes `kuro launch claude` work without teaching Claude Code any of
-    // Kuro's model ids.
     let requested = gateway::requested_model(&body);
 
     let target = match resolve_target(&state, requested).await {
@@ -52,8 +25,6 @@ pub async fn messages(State(state): State<SharedState>, Json(body): Json<Value>)
         Err(error) => return failed(StatusCode::BAD_REQUEST, &error.to_string()),
     };
 
-    // A local model has to be running before anything is sent to it, and the
-    // address it is listening on is only known once it is.
     let base_url = match &target {
         ChatTarget::Local { model_id } => match state.engines.ensure_base_url(model_id).await {
             Ok(url) => url,
@@ -82,12 +53,6 @@ pub async fn messages(State(state): State<SharedState>, Json(body): Json<Value>)
     }
 }
 
-/// Build the upstream request for either kind of target.
-///
-/// The third place in this codebase that does this, and the comment in
-/// `subagent.rs` warns about exactly that: a provider quirk honoured in one and
-/// not the others means requests fail on precisely the providers the main loop
-/// was taught to handle. Kept identical on purpose.
 fn upstream_request(
     state: &SharedState,
     target: &ChatTarget,
@@ -122,7 +87,6 @@ fn upstream_request(
     .json(body)
 }
 
-/// One request, one JSON answer.
 async fn once(
     state: SharedState,
     target: ChatTarget,
@@ -147,7 +111,6 @@ async fn once(
     }
 }
 
-/// One request, a translated event stream.
 async fn stream(
     state: SharedState,
     target: ChatTarget,
@@ -166,8 +129,6 @@ async fn stream(
         return failed(status, &first_line(&detail));
     }
 
-    // A channel rather than a generator: `async-stream` is not a dependency
-    // here, and the chat route already streams this way.
     let (sender, receiver) = tokio::sync::mpsc::channel::<Result<String, Infallible>>(64);
 
     tokio::spawn(async move {
@@ -179,9 +140,6 @@ async fn stream(
             let bytes = match chunk {
                 Ok(bytes) => bytes,
                 Err(_) => {
-                    // The connection died mid-answer. Said as an event, then
-                    // closed properly below, so the client reports a failure
-                    // rather than hanging on a message that never ends.
                     let _ = sender
                         .send(Ok(encode(&translator.error(
                             "the connection to the model was lost",
@@ -207,8 +165,6 @@ async fn stream(
             }
         }
 
-        // Always, including after an error: a client waiting for `message_stop`
-        // waits forever without it.
         for out in translator.finish() {
             let _ = sender.send(Ok(encode(&out))).await;
         }
@@ -224,8 +180,6 @@ async fn stream(
         .unwrap_or_else(|_| failed(StatusCode::INTERNAL_SERVER_ERROR, "could not open the stream"))
 }
 
-/// One SSE frame. The `event:` line matters — the Messages API is dispatched on
-/// it, not on the payload's `type`.
 fn encode(event: &gateway::AnthropicEvent) -> String {
     format!("event: {}\ndata: {}\n\n", event.name, event.data)
 }

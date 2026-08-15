@@ -1,15 +1,8 @@
-/*
- * Kuro design tokens.
- *
- * The palette is deliberately monochrome: one neutral ramp, no accent hue.
- * Emphasis comes from contrast, weight and space rather than colour, which is
- * what keeps the interface quiet enough to read model output in.
- */
+
 
 :root {
   color-scheme: dark light;
 
-  /* Neutral ramp, dark theme. 0 is the page, 12 is the brightest text. */
   --n-0: #0a0a0a;
   --n-1: #111111;
   --n-2: #161616;
@@ -37,31 +30,17 @@
   --text-muted: var(--n-9);
   --text-faint: var(--n-8);
 
-  /* The one inverted pair, used for primary actions. */
   --solid: var(--n-12);
   --solid-text: var(--n-0);
 
   --danger: #e5484d;
-  /* Not an error — a state that can change the user's files. Used by Agent mode
-     on the Code page, and deliberately distinct from `--danger` so "this can
-     write" never reads as "this went wrong". */
+
   --warning: #d97706;
 
-  /* The only two hues in the interface, and both are load-bearing rather than
-     decorative: they answer a question the monochrome ramp cannot, which is
-     "did that register as a thing, or is it just words I typed".
-
-     A `/command` that stayed the same colour as the sentence around it gave no
-     way to tell a command that took from one that was quietly ignored, and a
-     link Kuro had actually resolved looked identical to a URL it had invented.
-     Both are desaturated well below where a brand colour would sit, so a
-     transcript with several in it still reads as text rather than as a form. */
   --command: #74cfb0;
   --command-bg: rgba(116, 207, 176, 0.13);
   --link: #86b0ee;
 
-  /* Type. A single family, sized on a small scale — this is a tool, not a
-     landing page. */
   --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter,
     system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -115,8 +94,6 @@
   --n-11: #2a2a26;
   --n-12: #121210;
 
-  /* Darkened for a light page: the dark-theme pair washes out on white,
-     which is the failure mode that makes accent colour look cheap. */
   --command: #0f7a63;
   --command-bg: rgba(15, 122, 99, 0.11);
   --link: #1f5fb0;
@@ -142,8 +119,6 @@
     --n-11: #2a2a26;
     --n-12: #121210;
 
-    /* Darkened for a light page: the dark-theme pair washes out on white,
-       which is the failure mode that makes accent colour look cheap. */
     --command: #0f7a63;
     --command-bg: rgba(15, 122, 99, 0.11);
     --link: #1f5fb0;

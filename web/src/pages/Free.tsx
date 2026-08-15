@@ -16,30 +16,9 @@ import {
   TrashIcon,
 } from '../components/icons'
 
-/**
- * Free models.
- *
- * Every company running an inference API gives some of it away, and individually
- * each allowance is a toy. The reason nobody uses them together is the
- * bookkeeping: a dozen keys, a dozen dashboards, and no way to know which one
- * still has quota this hour.
- *
- * This screen is that bookkeeping. Paste in whichever keys you have and they
- * become one model in the picker, called Kuro Free, which sends each request to
- * whichever provider is currently able to serve it.
- *
- * The page is written to prevent one specific misunderstanding: that Kuro is
- * giving away inference. It is not. There is no shared account and no key here
- * that Kuro supplies, and nothing works until you have added one of your own.
- * Saying that once at the top is cheaper than letting somebody discover it from
- * an error message.
- */
 export function FreePage() {
   const queryClient = useQueryClient()
   const overview = useQuery({ queryKey: ['free'], queryFn: api.free.overview })
-  // A separate query from the overview, which is re-read after every key edit.
-  // This is the one request whose cost grows with the size of the message
-  // table, and coupling it to key editing would re-run it constantly.
   const usage = useQuery({ queryKey: ['free', 'usage'], queryFn: api.free.usage })
 
   const setKeyless = useMutation({
@@ -52,9 +31,6 @@ export function FreePage() {
 
   const held = overview.data
   const providers = held?.providers ?? []
-  // Shared endpoints are their own group, listed last, because the order on
-  // screen has to be the order requests are routed in — a page that mixed them
-  // among the keyed providers would be claiming something the pool will not do.
   const shared = providers.filter((provider) => provider.keyless)
   const owned = providers.filter((provider) => !provider.keyless)
   const withKeys = owned.filter((provider) => provider.hasKey)
@@ -187,15 +163,6 @@ export function FreePage() {
   )
 }
 
-/**
- * What the user says this provider's monthly allowance is.
- *
- * Asked for rather than discovered, because it cannot be discovered: the
- * providers state these in requests per minute, tokens per day, neurons and
- * dollars of credit, none of them expose it over the API, and all of them
- * change it without notice. A number Kuro guessed at would be worse than no
- * number, because it would look measured.
- */
 function LimitField({ provider }: { provider: FreeProvider }) {
   const queryClient = useQueryClient()
   const stored = provider.limit?.tokensPerMonth
@@ -231,20 +198,10 @@ function LimitField({ provider }: { provider: FreeProvider }) {
   )
 }
 
-/** Thousands separated, because these numbers get long fast. */
 function count(value: number): string {
   return value.toLocaleString()
 }
 
-/**
- * What the keys have actually been spent on.
- *
- * Kuro measures this itself, from the token counts providers return, so it is
- * the one number on this screen that is not somebody's marketing copy. It is
- * still a floor rather than a total, and the panel says by how much rather than
- * hedging: a provider that returns no counts contributes a turn and no tokens,
- * and the number of those turns is shown so it can be judged.
- */
 function UsagePanel({ usage }: { usage?: FreeUsage }) {
   if (!usage) return null
 
@@ -312,13 +269,6 @@ function Figure({ label, value, unit }: { label: string; value: string; unit: st
   )
 }
 
-/**
- * One provider's month, with a bar only where a limit was entered.
- *
- * No limit means no bar — not a bar at zero. Kuro cannot discover what these
- * allowances are (the providers state them in incompatible units and none
- * expose them over the API), and drawing an empty bar would imply it knew.
- */
 function UsageRow({ row }: { row: FreeProviderUsage }) {
   const limit = row.limit?.tokensPerMonth ?? null
   const used = limit ? Math.min(100, (row.totalTokens / limit) * 100) : null
@@ -353,7 +303,6 @@ function ProviderRow({ provider }: { provider: FreeProvider }) {
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['free'] })
-    // A new key can add rows to the model picker, so that is stale too.
     void queryClient.invalidateQueries({ queryKey: ['models'] })
   }
 

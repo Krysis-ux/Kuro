@@ -7,21 +7,11 @@ import { FolderField } from '../components/FolderPicker'
 import { applyTheme, useUi } from '../store/ui'
 import { PowerIcon, RefreshIcon } from '../components/icons'
 
-/** Keys the Rust side reads. `0` (or `-1`) means "decide automatically". */
 const KEY_CONTEXT = 'engine.contextSize'
 const KEY_GPU_LAYERS = 'engine.gpuLayers'
 const KEY_THREADS = 'engine.threads'
 const KEY_IDLE = 'engine.idleUnloadMinutes'
 
-/**
- * Per-surface keys.
- *
- * Chat and coding are configured separately, and that separation is the point
- * rather than a convenience. A chat that quietly started running commands would
- * be alarming; a coding turn that would not is useless. One shared set of
- * settings would have to compromise on every one of these, and the compromise
- * suits neither.
- */
 const KEY_CHAT_AUTO = 'chat.autoOrchestrate'
 const KEY_CODE_AUTO = 'code.autoOrchestrate'
 const KEY_CHAT_EFFORT = 'chat.defaultEffort'
@@ -62,14 +52,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'server', label: 'Server' },
 ]
 
-/**
- * Upper bounds for the engine sliders.
- *
- * Context is capped well below what some models advertise, because a context
- * larger than memory allows does not fail at the slider — it fails minutes later
- * when the engine is killed. The exact field still accepts anything, for someone
- * who knows their machine better than this heuristic does.
- */
 const MAX_CONTEXT = 131072
 const MAX_GPU_LAYERS = 999
 const MAX_IDLE_MINUTES = 240
@@ -89,8 +71,6 @@ export function SettingsPage() {
     onSuccess: (data) => {
       queryClient.setQueryData(['settings'], data)
       void queryClient.invalidateQueries({ queryKey: ['hardware'] })
-      // The tools overview reports the resolved per-surface settings, so it is
-      // stale the moment one of them changes.
       void queryClient.invalidateQueries({ queryKey: ['tools'] })
     },
   })
@@ -365,19 +345,6 @@ export function SettingsPage() {
   )
 }
 
-/**
- * Memory, and the one part of it worth typing by hand.
- *
- * Memory used to be a switch under every message box, which is the wrong place
- * for it twice over: it is on, it stays on, and it only ever touches things the
- * user asked to be saved — so the switch was a control nobody used, taking up
- * room on every single turn.
- *
- * What people actually want is the box underneath. Teaching a model who you are
- * one conversation at a time, when you already know what you want it to know, is
- * the long way round; this is the short one, and it is separate from what a model
- * saves on its own so that neither can quietly overwrite the other.
- */
 function MemorySection({
   preload,
   count,
@@ -394,8 +361,6 @@ function MemorySection({
   const [saved, setSaved] = useState(false)
   const [touched, setTouched] = useState(false)
 
-  // Adopt the stored value until the field is touched, so a slow first load does
-  // not leave somebody typing into a box that is about to be replaced.
   if (!touched && draft !== aboutYou) setDraft(aboutYou)
 
   const setPreload = useMutation({
@@ -477,14 +442,6 @@ function MemorySection({
   )
 }
 
-/**
- * One surface's two settings: how hard it thinks by default, and whether that
- * setting is allowed to do anything beyond lengthen the answer.
- *
- * The same shape for chat and for coding, because the decision is the same one
- * asked about a different context — which is exactly why they are two settings
- * rather than one shared one.
- */
 function SurfaceSection({
   title,
   note,
@@ -541,14 +498,6 @@ function SurfaceSection({
   )
 }
 
-/**
- * Stop the server.
- *
- * Two clicks, because the consequence is not obvious from the button: this closes
- * the API every other tool on the machine may be pointed at, and the only way back
- * is a terminal. Confirmation is the difference between a deliberate stop and a
- * misclick that looks like a crash.
- */
 function ShutdownControl() {
   const [confirming, setConfirming] = useState(false)
   const [stopped, setStopped] = useState(false)
@@ -557,23 +506,12 @@ function ShutdownControl() {
   const stop = useMutation({
     mutationFn: () => api.shutdown(),
     onSuccess: () => setStopped(true),
-    // A connection error here usually means it worked and the socket closed
-    // before the response arrived, which is success, not failure.
     onError: () => setStopped(true),
   })
 
-  /**
-   * Restart, then wait for the successor before reloading.
-   *
-   * Reloading immediately would land on a dead port; a fixed delay would be a
-   * guess. Polling `/api/health` is the only version that is both correct and as
-   * fast as the machine allows.
-   */
   const restart = useMutation({
     mutationFn: async () => {
       setRestartError(null)
-      // The request itself may not complete — the server is going down — so a
-      // failure here is not yet a failure of the restart.
       await api.restart().catch(() => undefined)
       await api.waitUntilHealthy()
     },

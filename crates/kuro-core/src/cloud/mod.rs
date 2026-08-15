@@ -1,22 +1,3 @@
-//! Remote model providers.
-//!
-//! Kuro runs models locally. This module is the escape hatch for when the machine
-//! cannot: an endpoint you hold the key for, whose models appear in the same
-//! picker as the local ones. OpenRouter, OpenAI, Anthropic, Groq, or the
-//! OpenAI-compatible URL of a GPU box you rented for the afternoon.
-//!
-//! Three decisions keep this from turning Kuro into a generic API client:
-//!
-//! * **One wire format.** Everything is spoken to as the OpenAI API, which is why
-//!   Anthropic is reached through its compatibility endpoint rather than through a
-//!   second code path. A provider that cannot do that is not supported, which is
-//!   better than half-supporting it.
-//! * **The user's account, always.** There is no Kuro-hosted anything here. The
-//!   key is theirs, the bill is theirs, and the request goes straight to the
-//!   provider.
-//! * **Never the quiet default.** A remote model is always visibly remote, and
-//!   local stays first in the list. The promise on the front page is that nothing
-//!   leaves the machine unless you ask.
 
 pub mod presets;
 
@@ -34,38 +15,16 @@ use crate::{KuroError, Result};
 
 pub use presets::{Preset, PRESETS};
 
-/// Prefix on a model id that marks it as belonging to a provider.
-///
-/// `cloud:<connector id>/<model name>`. A prefix rather than a separate field
-/// because it means a provider model can travel anywhere a local model id can —
-/// the composer, a conversation row, the OpenAI-compatible API — without every
-/// one of those needing to learn about providers.
 pub const MODEL_PREFIX: &str = "cloud:";
 
-/// Credential reference for a provider. Namespaced away from MCP tokens.
 fn key_reference(connector_id: &str) -> String {
     format!("provider:{connector_id}")
 }
 
-/// What marks a model on a provider as costing nothing.
-///
-/// OpenRouter's convention, and the only one of these that is a convention
-/// rather than a per-model fact somebody has to look up. A provider that does
-/// not use it simply has no pool, which is the right failure: inventing one
-/// would mean guessing which of somebody's models are billed.
 const FREE_SUFFIX: &str = ":free";
 
-/// The reserved model name behind "free models".
-///
-/// Deliberately without a slash, because [`parse_model_id`] splits on the first
-/// one and every real OpenRouter id has several. Nothing a provider could
-/// legitimately return collides with it.
 pub const FREE_POOL_MODEL: &str = "kuro:free-pool";
 
-/// The free models among a connector's list, in the order they will be tried.
-///
-/// Sorted so the order is the same across restarts — a pool that reshuffled
-/// itself on every boot would make "which model answered" unanswerable.
 pub fn free_models_of(models: &[String]) -> Vec<String> {
     let mut free: Vec<String> = models
         .iter()
@@ -76,43 +35,21 @@ pub fn free_models_of(models: &[String]) -> Vec<String> {
     free
 }
 
-/// Where a chat request should be sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatTarget {
-    /// A local engine process, addressed by model id.
     Local { model_id: String },
-    /// A provider endpoint.
     Remote {
         connector_id: String,
         label: String,
         base_url: String,
-        /// The complete `Authorization` value, or `None` for an endpoint that
-        /// takes none.
-        ///
-        /// Was `api_key: String`, which obliged every caller to assume a bearer
-        /// token. The shared endpoints break that assumption: sending them
-        /// `Bearer ` reads as a malformed key rather than as an absent one, and
-        /// there is no string that means "no header".
         authorization: Option<String>,
-        /// The name the provider knows the model by, without Kuro's prefix.
         model: String,
-        /// How this endpoint departs from the plain OpenAI shape.
         quirks: Quirks,
-        /// Which upstream actually answered, when `connector_id` names a pool
-        /// rather than one endpoint.
-        ///
-        /// `connector_id` on a free turn is `free:auto` — which is what the
-        /// conversation should remember, because the user chose Kuro Free and
-        /// not a particular provider. But *which allowance the turn spent* is a
-        /// different question, and it used to be unanswerable: the slug was
-        /// dropped on the floor here, so nothing downstream could attribute a
-        /// turn, and the failure path had to re-derive it by guessing.
         upstream: Option<String>,
     },
 }
 
 impl ChatTarget {
-    /// Which provider's allowance this turn spends, if that is knowable.
     pub fn upstream(&self) -> Option<&str> {
         match self {
             Self::Local { .. } => None,
@@ -120,7 +57,6 @@ impl ChatTarget {
         }
     }
 
-    /// How this endpoint departs from the plain OpenAI shape.
     pub fn quirks(&self) -> Quirks {
         match self {
             Self::Local { .. } => Quirks::OPENAI,
@@ -130,7 +66,6 @@ impl ChatTarget {
 }
 
 impl ChatTarget {
-    /// The model id as Kuro records it, which is what goes in the database.
     pub fn recorded_id(&self) -> String {
         match self {
             Self::Local { model_id } => model_id.clone(),
@@ -140,7 +75,6 @@ impl ChatTarget {
         }
     }
 
-    /// The name to put in the request body.
     pub fn wire_model(&self) -> &str {
         match self {
             Self::Local { model_id } => model_id,
@@ -153,10 +87,6 @@ impl ChatTarget {
     }
 }
 
-/// Split `cloud:<id>/<model>` into its parts.
-///
-/// Returns `None` for a plain local model id, which is how callers tell the two
-/// apart without a separate flag.
 pub fn parse_model_id(model_id: &str) -> Option<(String, String)> {
     let rest = model_id.strip_prefix(MODEL_PREFIX)?;
     let (connector_id, model) = rest.split_once('/')?;
@@ -171,64 +101,23 @@ pub fn is_remote_model(model_id: &str) -> bool {
     parse_model_id(model_id).is_some()
 }
 
-/// A provider's models, for the picker.
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteModel {
-    /// The prefixed id, usable anywhere a model id is.
     pub id: String,
-    /// The provider's own name for it.
     pub name: String,
     pub connector_id: String,
     pub connector_label: String,
     pub provider: String,
-    /// Whether this row is the free pool rather than one named model.
-    ///
-    /// The picker uses it to mark the row, and to keep it at the top of its
-    /// provider's group — it is the entry most people want and the one nobody
-    /// would find by scrolling a list of four hundred model ids.
     pub pooled: bool,
-    /// How many models the pool covers. Zero for an ordinary row.
     pub pool_size: usize,
-    /// Whether this model costs nothing on the key that reaches it.
-    ///
-    /// The distinction is per-model rather than per-provider because on a
-    /// gateway it is: an OpenRouter key reaches three hundred models it bills
-    /// for and fourteen it does not, and a picker that does not say which is
-    /// which is a picker somebody spends money in by accident.
     pub free: bool,
-    /// What the model's name says it was trained for, as words the picker can
-    /// put on the row. Empty only for a pooled row, which is not one model.
     pub specialities: Vec<&'static str>,
-    /// Size in billions of parameters, when the name states one.
     pub params_b: Option<f32>,
-    /// Why this cannot be picked right now, when it cannot.
-    ///
-    /// The row stays in the list and goes grey rather than disappearing. A
-    /// model that vanishes answers "where did the one I used yesterday go" with
-    /// silence, and the answer — out of allowance until tomorrow, or this key
-    /// was not issued for it — is exactly what the user needs in order to act.
     pub unavailable: Option<String>,
-    /// Where to go to make it work, when there is somewhere to go.
-    ///
-    /// NVIDIA is the case that forced this: its models are provisioned per key,
-    /// and the fix is a page on build.nvidia.com for that specific model. A
-    /// reason with no remedy attached is a dead end.
     pub fix_url: Option<String>,
 }
 
 impl RemoteModel {
-    /// Describe one named model, reading its name for what it is.
-    ///
-    /// The id is passed in rather than built here because the two callers
-    /// address their models differently: a connector's models are `cloud:`
-    /// ids resolved against the registry, and a free provider's are `free:`
-    /// ids resolved against the pool. Everything after the id is the same
-    /// question in both cases, which is what makes one constructor worth
-    /// having.
-    ///
-    /// Non-chat models are the caller's to filter out. This cannot refuse
-    /// them, because refusing would also have to be a `None` the pooled rows
-    /// would trip over.
     pub fn described(id: String, group: RemoteGroup<'_>, model: &str, free: bool) -> Self {
         let classified = crate::classify::classify(model);
         Self {
@@ -252,7 +141,6 @@ impl RemoteModel {
     }
 }
 
-/// Which heading a model is filed under in the picker.
 #[derive(Debug, Clone, Copy)]
 pub struct RemoteGroup<'a> {
     pub connector_id: &'a str,
@@ -260,14 +148,6 @@ pub struct RemoteGroup<'a> {
     pub provider: &'a str,
 }
 
-/// Which free model a connector is currently using, and which have refused.
-///
-/// Sticky rather than round-robin. Rotating on every request would spread the
-/// shared daily cap slightly more evenly and would also mean two consecutive
-/// messages in one conversation came from two different models — which reads as
-/// the assistant changing personality mid-thought, for a benefit nobody asked
-/// for. So one model answers until it refuses, and the refusal is what moves the
-/// cursor on.
 #[derive(Default)]
 struct PoolState {
     cursor: usize,
@@ -275,7 +155,6 @@ struct PoolState {
 }
 
 impl PoolState {
-    /// Whether this model is still inside its cooldown.
     fn is_troubled(&mut self, model: &str) -> bool {
         let Some((trouble, since)) = self.troubled.get(model).copied() else {
             return false;
@@ -292,11 +171,6 @@ pub struct ProviderRegistry {
     db: Db,
     secrets: SecretStore,
     client: reqwest::Client,
-    /// Free-pool state per connector.
-    ///
-    /// In memory, like the free tiers' own cooldowns: it describes the next few
-    /// minutes, and one that survived a restart would be describing a rate limit
-    /// that had long since reset.
     pools: Arc<Mutex<HashMap<String, PoolState>>>,
 }
 
@@ -310,11 +184,6 @@ impl ProviderRegistry {
         }
     }
 
-    /// Add a provider: store the key, record the endpoint, then probe it.
-    ///
-    /// The probe happens immediately because a key that does not work is worth
-    /// knowing about while the user is still looking at the form, not the first
-    /// time they try to send a message.
     pub async fn add(
         &self,
         provider: &str,
@@ -328,8 +197,6 @@ impl ProviderRegistry {
             .map(str::trim)
             .filter(|url| !url.is_empty())
             .map(str::to_string)
-            // A preset that asks for a URL carries an empty one, which must not
-            // be mistaken for a default.
             .or_else(|| {
                 preset
                     .map(|preset| preset.base_url)
@@ -355,10 +222,6 @@ impl ProviderRegistry {
             .or_else(|| preset.map(|preset| preset.name.to_string()))
             .ok_or_else(|| KuroError::bad_request("the provider needs a name"))?;
 
-        // The row is created first so the credential reference has an id to hang
-        // off, then the key is written. A failure between the two leaves a
-        // provider with no key, which the interface shows as "needs a key" — a
-        // recoverable state, unlike an orphaned secret.
         let record = self.db.insert_cloud_connector(
             provider,
             &resolved_label,
@@ -380,8 +243,6 @@ impl ProviderRegistry {
             Ok(())
         })?;
 
-        // A failed probe is recorded, not returned: the provider is saved and the
-        // user can fix the key without re-entering everything.
         let _ = self.test(&record.id).await;
 
         self.db
@@ -389,7 +250,6 @@ impl ProviderRegistry {
             .ok_or_else(|| KuroError::other("the provider disappeared after being added"))
     }
 
-    /// Ask a provider what models it offers, and record the answer.
     pub async fn test(&self, connector_id: &str) -> Result<Vec<String>> {
         let connector = self.require(connector_id)?;
         let key = self.key_for(&connector)?;
@@ -406,14 +266,6 @@ impl ProviderRegistry {
         }
     }
 
-    /// Every model from every enabled, working provider.
-    ///
-    /// A provider that offers free models gets one extra row at the top of its
-    /// own list: the pool, which is every one of them behind a single id. On
-    /// OpenRouter that row is the difference between a usable free tier and a
-    /// four-hundred-entry list nobody reads to the end of — the free models are
-    /// scattered through it alphabetically, and picking one by hand means also
-    /// noticing when it runs out of allowance and picking another.
     pub fn remote_models(&self) -> Result<Vec<RemoteModel>> {
         let mut out = Vec::new();
 
@@ -441,9 +293,6 @@ impl ProviderRegistry {
             }
 
             for model in &connector.models {
-                // A provider's model list is not a list of chat models. Sending
-                // a conversation to an embedding endpoint fails with a 400 that
-                // reads like a broken key, so those rows never reach a picker.
                 if !crate::classify::classify(model).kind.is_chat() {
                     continue;
                 }
@@ -463,7 +312,6 @@ impl ProviderRegistry {
         Ok(out)
     }
 
-    /// Resolve a prefixed model id into somewhere to send a request.
     pub fn resolve_target(&self, model_id: &str) -> Result<ChatTarget> {
         let Some((connector_id, model)) = parse_model_id(model_id) else {
             return Ok(ChatTarget::Local {
@@ -487,8 +335,6 @@ impl ProviderRegistry {
 
         Ok(ChatTarget::Remote {
             authorization: Some(format!("Bearer {}", self.key_for(&connector)?)),
-            // A connector the user added is one endpoint they named, so the
-            // allowance it spends is its own.
             upstream: Some(connector.provider.clone()),
             connector_id: connector.id,
             label: connector.label,
@@ -498,12 +344,6 @@ impl ProviderRegistry {
         })
     }
 
-    /// Which free model this connector should answer with right now.
-    ///
-    /// The one the cursor is on, unless it has recently refused, in which case
-    /// the next one that has not. If every one of them is inside a cooldown the
-    /// cursor's model is used anyway: a stale cooldown is a guess, and a request
-    /// that might work beats an error that definitely does not.
     fn choose_free(&self, connector: &CloudConnectorRecord) -> Result<String> {
         let free = free_models_of(&connector.models);
 
@@ -518,8 +358,6 @@ impl ProviderRegistry {
         let mut pools = self.pools.lock().expect("provider pool lock");
         let state = pools.entry(connector.id.clone()).or_default();
 
-        // The list can shrink between refreshes, so the cursor is taken modulo
-        // the current length rather than trusted.
         let start = state.cursor % free.len();
 
         for offset in 0..free.len() {
@@ -533,12 +371,6 @@ impl ProviderRegistry {
         Ok(free[start].clone())
     }
 
-    /// Note that a model refused, so the pool moves on from it.
-    ///
-    /// Called on every failing remote response rather than only on pooled ones.
-    /// A model that is not in a pool is recorded and never consulted, which
-    /// costs a map entry and saves threading "was this a pool pick" through the
-    /// whole turn.
     pub fn note_trouble(&self, connector_id: &str, model: &str, status: u16) {
         let Some(trouble) = Trouble::from_status(status) else {
             return;
@@ -547,25 +379,19 @@ impl ProviderRegistry {
         let mut pools = self.pools.lock().expect("provider pool lock");
         let state = pools.entry(connector_id.to_string()).or_default();
         state.troubled.insert(model.to_string(), (trouble, Instant::now()));
-        // Move off it now, so the next request does not have to rediscover the
-        // refusal before failing over.
         state.cursor = state.cursor.saturating_add(1);
 
         tracing::info!(connector_id, model, kind = trouble.as_str(), "free model set aside");
     }
 
-    /// Remove a provider and its key together.
     pub fn remove(&self, connector_id: &str) -> Result<bool> {
         let Some(connector) = self.db.get_cloud_connector(connector_id)? else {
             return Ok(false);
         };
-        // The key goes first: a leftover secret is worse than a leftover row,
-        // which the user can see and delete again.
         self.secrets.delete(&connector.keychain_ref)?;
         self.db.delete_cloud_connector(connector_id)
     }
 
-    /// Replace a provider's key in place, keeping its id and conversations.
     pub async fn replace_key(&self, connector_id: &str, api_key: &str) -> Result<()> {
         let connector = self.require(connector_id)?;
         self.secrets.put(&connector.keychain_ref, api_key)?;
@@ -596,7 +422,6 @@ impl ProviderRegistry {
     }
 }
 
-/// Ask an OpenAI-compatible endpoint for its model list.
 async fn list_models(
     client: &reqwest::Client,
     base_url: &str,
@@ -605,8 +430,6 @@ async fn list_models(
     let response = client
         .get(format!("{}/models", base_url.trim_end_matches('/')))
         .bearer_auth(api_key)
-        // Anthropic's compatibility endpoint requires its own version header even
-        // when the OpenAI shape is being used.
         .header("anthropic-version", "2023-06-01")
         .timeout(std::time::Duration::from_secs(20))
         .send()
@@ -690,14 +513,14 @@ mod tests {
     #[test]
     fn a_prefixed_model_id_splits_into_connector_and_model() {
         let (connector, model) =
-            parse_model_id("cloud:abc-123/anthropic/claude-opus-5").expect("split");
+            parse_model_id("cloud:abc-123/vendor/model-name").expect("split");
 
         assert_eq!(connector, "abc-123");
         assert_eq!(
-            model, "anthropic/claude-opus-5",
+            model, "vendor/model-name",
             "a provider's own name may itself contain slashes"
         );
-        assert!(is_remote_model("cloud:abc-123/anthropic/claude-opus-5"));
+        assert!(is_remote_model("cloud:abc-123/vendor/model-name"));
     }
 
     #[test]
@@ -715,19 +538,19 @@ mod tests {
             label: "OpenRouter".to_string(),
             base_url: "https://openrouter.ai/api/v1".to_string(),
             authorization: Some("Bearer sk-or".to_string()),
-            model: "anthropic/claude-opus-5".to_string(),
+            model: "vendor/model-name".to_string(),
             quirks: Quirks::OPENAI,
             upstream: Some("openrouter".to_string()),
         };
 
         let recorded = target.recorded_id();
 
-        assert_eq!(recorded, "cloud:abc/anthropic/claude-opus-5");
+        assert_eq!(recorded, "cloud:abc/vendor/model-name");
         assert_eq!(
             parse_model_id(&recorded).expect("split"),
-            ("abc".to_string(), "anthropic/claude-opus-5".to_string())
+            ("abc".to_string(), "vendor/model-name".to_string())
         );
-        assert_eq!(target.wire_model(), "anthropic/claude-opus-5", "the prefix must not be sent");
+        assert_eq!(target.wire_model(), "vendor/model-name", "the prefix must not be sent");
         assert!(target.is_remote());
     }
 
@@ -812,8 +635,6 @@ mod tests {
         assert!(!models.iter().any(|model| model.name == "gpt-4o"));
     }
 
-    /// A connector whose catalogue looks like OpenRouter's: mostly paid, a few
-    /// free, scattered through it alphabetically.
     fn openrouter(db: &Db) -> CloudConnectorRecord {
         let connector = db
             .insert_cloud_connector("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "r1")
@@ -821,7 +642,7 @@ mod tests {
         db.set_cloud_ok(
             &connector.id,
             &[
-                "anthropic/claude-opus-5".to_string(),
+                "vendor/model-name".to_string(),
                 "deepseek/deepseek-r1:free".to_string(),
                 "meta-llama/llama-3.3-70b-instruct:free".to_string(),
                 "openai/gpt-4o".to_string(),
@@ -838,7 +659,6 @@ mod tests {
             "z/model:free".to_string(),
             "openai/gpt-4o".to_string(),
             "a/model:free".to_string(),
-            // Not free: the suffix has to end the id, not merely appear in it.
             "vendor/freestyle".to_string(),
             "vendor/model:free-tier".to_string(),
         ];
@@ -917,8 +737,6 @@ mod tests {
 
     #[test]
     fn every_free_model_refusing_still_produces_a_request_rather_than_an_error() {
-        // The alternative is telling somebody their free tier is unavailable on
-        // the strength of three cooldowns that may already have expired.
         let (registry, db) = registry();
         let connector = openrouter(&db);
         registry.secrets.put("r1", "sk-or-test").expect("put");

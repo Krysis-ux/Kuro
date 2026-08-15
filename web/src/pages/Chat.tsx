@@ -28,9 +28,6 @@ export function ChatPage() {
 
   const conversationId = params.id ?? null
 
-  // Read from the store rather than from local state. A turn is work the server
-  // is doing, and unmounting this page — which opening Settings or clicking
-  // another conversation both do — is no reason to abandon it.
   const { stream: streaming, error, notices } = useTurn(conversationId)
 
   const models = useQuery({ queryKey: ['models'], queryFn: api.models.list })
@@ -42,36 +39,14 @@ export function ChatPage() {
   })
 
   const history = messages.data?.messages ?? []
-  /**
-   * Whether to show the welcome screen instead of the transcript.
-   *
-   * An error counts as content. Without that, a turn that failed before the
-   * server stored anything — a model with too small a context window, a
-   * provider that refused — left the welcome screen up and said nothing at all:
-   * the message vanished, no error appeared, and the only evidence anything had
-   * happened was a new empty chat in the sidebar. "It just stopped and I don't
-   * know why" is the exact experience that produces.
-   */
   const isEmpty =
     conversationId === null ||
     (history.length === 0 && !streaming && !error && notices.length === 0)
 
-  // Follow the output as it streams.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [history.length, streaming?.content, streaming?.reasoning, streaming?.tools.length])
 
-  /**
-   * Run a turn: either a new message, or a rewrite of an existing one.
-   *
-   * `editing` carries the id of the message being replaced. The server drops
-   * that message and everything after it; the store trims the local cache to
-   * match before its optimistic row goes in.
-   *
-   * The conversation is created first when there is not one yet, because the
-   * turn is keyed by its id — a turn that started under "no conversation yet"
-   * would have nowhere to be shown once there was one.
-   */
   const send = async (content: string, skills: string[] = [], editing?: string) => {
     let targetId = conversationId
     if (targetId === null) {
@@ -97,12 +72,6 @@ export function ChatPage() {
 
   const stop = () => stopTurn(conversationId)
 
-  /**
-   * Branch this conversation at a message and open the copy.
-   *
-   * The original is untouched — that is the point of forking rather than
-   * editing: two directions from the same history, both kept.
-   */
   const fork = async (messageId: string) => {
     const branch = await forkTurn(conversationId as string, messageId)
     if (branch) navigate(`/chat/${branch.id}`)

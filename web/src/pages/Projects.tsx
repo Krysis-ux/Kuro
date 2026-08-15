@@ -11,17 +11,6 @@ import {
   TrashIcon,
 } from '../components/icons'
 
-/**
- * Projects.
- *
- * The substance is the standing instructions, not the folder. "This is a Rust
- * codebase, assume the 2021 edition, never suggest adding a dependency" said once
- * and applied to every conversation in the project — which is the thing people
- * actually retype at the top of every chat.
- *
- * The grouping matters mainly because it makes those instructions findable again a
- * week later, and because it gives a set of related chats somewhere to live.
- */
 export function ProjectsPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -139,7 +128,6 @@ export function ProjectsPage() {
   )
 }
 
-/** One project: its instructions, its defaults, and the chats inside it. */
 export function ProjectPage() {
   const params = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -305,13 +293,6 @@ export function ProjectPage() {
   )
 }
 
-/**
- * The instructions editor.
- *
- * Saved explicitly rather than on every keystroke: these words change how every
- * conversation in the project behaves, and a half-typed sentence taking effect
- * would be a strange thing to happen silently.
- */
 function InstructionsPanel({
   project,
   onSave,
@@ -323,7 +304,6 @@ function InstructionsPanel({
 }) {
   const [draft, setDraft] = useState(project.instructions)
 
-  // Adopt an externally changed value, without clobbering an in-progress edit.
   useEffect(() => setDraft(project.instructions), [project.instructions])
 
   const dirty = draft !== project.instructions

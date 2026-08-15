@@ -1,26 +1,3 @@
-//! Pulling skills out of a GitHub repository.
-//!
-//! ## Why this reads a tree rather than cloning
-//!
-//! A skills repository is mostly not skills. `anthropics/skills` carries
-//! scripts, example documents, images and a build; the part Kuro wants is the
-//! handful of `SKILL.md` files scattered through it. Cloning would drag all of
-//! it onto the disk to read a few kilobytes, need `git` present, and leave a
-//! checkout somebody has to clean up.
-//!
-//! So: one call to the tree API, which returns every path in the repository in
-//! a single response, then one fetch per `SKILL.md` found. That is two or three
-//! requests for a repository of a thousand files, and nothing is written to
-//! disk that the user did not ask for.
-//!
-//! ## What it will not do
-//!
-//! It reads `SKILL.md` and nothing else. Repositories in this space also ship
-//! `scripts/` that the skill expects to run, and importing those would mean
-//! putting somebody else's executable code where a model can call it — from a
-//! URL typed into a text box, with no review step. Kuro imports the
-//! instructions and says plainly when a skill it took references scripts it did
-//! not, which is the honest half of the job rather than a quiet fraction of it.
 
 use serde::Deserialize;
 
@@ -29,19 +6,12 @@ use crate::{KuroError, Result};
 
 use super::custom::{estimate_tokens, parse_skill_md, ParsedSkill};
 
-/// Most `SKILL.md` files to take from one repository.
-///
-/// `anthropics/skills` has dozens. Importing all of them silently would fill
-/// the palette with entries the user never looked at, so the import stops and
-/// says how many it found.
 pub const MAX_PER_REPO: usize = 60;
 
-/// A repository, as the tree API needs it named.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repo {
     pub owner: String,
     pub name: String,
-    /// `None` when the URL did not name one, in which case the default is used.
     pub branch: Option<String>,
 }
 
@@ -51,10 +21,6 @@ impl Repo {
     }
 }
 
-/// Read a GitHub URL.
-///
-/// Accepts what people actually paste: the browser URL, the clone URL with
-/// `.git` on the end, a `tree/<branch>` deep link, or just `owner/name`.
 pub fn parse_repo(raw: &str) -> Result<Repo> {
     let trimmed = raw.trim().trim_end_matches('/');
 
@@ -64,11 +30,6 @@ pub fn parse_repo(raw: &str) -> Result<Repo> {
         .or_else(|| trimmed.strip_prefix("git@github.com:"))
         .or_else(|| trimmed.strip_prefix("github.com/"));
 
-    // A bare `owner/name` is allowed, but anything that carries a scheme or a
-    // host had to match one of the forms above. Without this, `https://example.com`
-    // split into an owner of `https:` and a repository of `example.com`, and the
-    // first sign of trouble was a 404 from GitHub about a repository nobody
-    // had asked for.
     let path = match matched {
         Some(rest) => rest,
         None if trimmed.contains("://") || trimmed.contains('@') => {
@@ -93,8 +54,6 @@ pub fn parse_repo(raw: &str) -> Result<Repo> {
         )));
     }
 
-    // `.../tree/<branch>/...` is what the address bar holds when you are looking
-    // at a branch, and pasting that should import that branch.
     let branch = match parts.next() {
         Some("tree") => parts.next().map(str::to_string),
         _ => None,
@@ -121,17 +80,13 @@ struct TreeEntry {
     kind: String,
 }
 
-/// One skill found in a repository, and what it cost to notice.
 #[derive(Debug, Clone)]
 pub struct Found {
     pub parsed: ParsedSkill,
-    /// Where in the repository it came from, shown so the user can check it.
     pub path: String,
-    /// True when the file expects `scripts/` that were deliberately not taken.
     pub wants_scripts: bool,
 }
 
-/// Find and read every `SKILL.md` in a repository.
 pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<Found>> {
     let branch = match &repo.branch {
         Some(named) => named.clone(),
@@ -167,8 +122,6 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
         .filter(|path| is_skill_file(path))
         .collect();
 
-    // Shallower paths first, so a repository with one skill at the root and
-    // forty in a subdirectory imports the obvious one when it hits the cap.
     paths.sort_by_key(|path| (path.matches('/').count(), path.clone()));
 
     if paths.is_empty() {
@@ -201,8 +154,6 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
         }
         let Ok(text) = body.text().await else { continue };
 
-        // The directory a skill sits in is its name in every layout in use, and
-        // a much better fallback than "SKILL.md".
         let fallback = path
             .rsplit('/')
             .nth(1)
@@ -211,16 +162,6 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
 
         match parse_skill_md(&text, &fallback) {
             Ok(parsed) => {
-                // The same skill, once per agent tool. `pbakaus/impeccable`
-                // ships fifteen copies of one skill under `.claude/`,
-                // `.cursor/`, `.gemini/` and so on, and an earlier version
-                // imported all fifteen — which, since they share a slug, meant
-                // writing the same row fifteen times and reporting fifteen
-                // skills where there was one.
-                //
-                // Skipped by slug rather than by directory name, because a
-                // repository whose *only* copy lives under `.claude/skills/` is
-                // just as common and must still import.
                 if seen.iter().any(|held| held == &parsed.slug) {
                     continue;
                 }
@@ -231,7 +172,6 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
                     path,
                 });
             }
-            // One malformed file should not fail an import of forty.
             Err(error) => tracing::debug!(%path, %error, "skipped an unreadable SKILL.md"),
         }
     }
@@ -246,11 +186,6 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
     Ok(found)
 }
 
-/// Ask GitHub which branch is the default, rather than guessing `main`.
-///
-/// Guessing is wrong often enough to matter — plenty of these repositories are
-/// still on `master` — and the failure it produces is a 404 that reads as "the
-/// repository does not exist".
 async fn default_branch(client: &reqwest::Client, repo: &Repo) -> Result<String> {
     #[derive(Deserialize)]
     struct RepoResponse {
@@ -292,18 +227,12 @@ fn github_error(status: reqwest::StatusCode, slug: &str) -> KuroError {
     }
 }
 
-/// Whether a path is a skill definition.
-///
-/// `SKILL.md` is the convention. The case-insensitive check is not pedantry:
-/// several repositories use `skill.md`, and a case-sensitive match would report
-/// them as having no skills at all.
 fn is_skill_file(path: &str) -> bool {
     path.rsplit('/')
         .next()
         .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
 }
 
-/// Whether the instructions expect files this import does not take.
 fn mentions_scripts(instructions: &str) -> bool {
     let lowered = instructions.to_lowercase();
     ["scripts/", "./script", "python scripts", "run the script"]
@@ -311,7 +240,6 @@ fn mentions_scripts(instructions: &str) -> bool {
         .any(|needle| lowered.contains(needle))
 }
 
-/// Turn a parsed skill into the row that will be stored.
 pub fn to_record(found: &Found, source: &str) -> UserSkillRecord {
     UserSkillRecord {
         slug: found.parsed.slug.clone(),
@@ -371,7 +299,6 @@ mod tests {
         assert!(is_skill_file("skills/taste/SKILL.md"));
         assert!(is_skill_file("a/b/c/skill.md"));
 
-        // The things a skills repository is otherwise full of.
         assert!(!is_skill_file("README.md"));
         assert!(!is_skill_file("skills/taste/reference.md"));
         assert!(!is_skill_file("scripts/build.py"));
@@ -380,8 +307,6 @@ mod tests {
 
     #[test]
     fn shallower_paths_are_preferred_so_a_mirror_never_wins() {
-        // A repository that keeps one real copy at the top and mirrors it into
-        // every agent's directory should import the top one.
         let mut paths = [
             ".cursor/skills/x/SKILL.md".to_string(),
             "SKILL.md".to_string(),

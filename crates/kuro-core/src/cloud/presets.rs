@@ -100,7 +100,7 @@ pub const PRESETS: &[Preset] = &[
         slug: "anthropic",
         name: "Anthropic",
         base_url: "https://api.anthropic.com/v1",
-        blurb: "Claude, direct from Anthropic, through their OpenAI-compatible endpoint.",
+        blurb: "Models direct from Anthropic through its OpenAI-compatible endpoint.",
         kind: PresetKind::FirstParty,
         credentials_url: Some("https://console.anthropic.com/settings/keys"),
         key_hint: Some("sk-ant-…"),

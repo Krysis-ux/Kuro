@@ -1,18 +1,5 @@
 import { EndpointsPage } from './Endpoints'
 
-/**
- * Cloud: your model, on hardware you rent.
- *
- * This is bring-your-own-cloud, and the distinction from Providers is the whole
- * point of the page existing. A provider rents you access to their model. A cloud
- * endpoint is a machine you are paying for by the hour, running an engine you
- * started, serving weights you chose — the same arrangement as running locally,
- * with someone else's GPU. Which model, which quantisation and how much context
- * are all still your decisions, and none of them are on the Providers page.
- *
- * There is no Kuro-hosted cloud, and this page is not a step towards one. It is
- * the opposite: everything here is an endpoint the user owns.
- */
 export function CloudPage() {
   return (
     <EndpointsPage

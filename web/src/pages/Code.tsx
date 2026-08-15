@@ -30,20 +30,6 @@ import {
   TrashIcon,
 } from '../components/icons'
 
-/**
- * The Code page.
- *
- * The only surface in Kuro that can change a file or run a command. A workspace
- * is a folder the user picked plus a mode saying what may happen inside it, and
- * the mode is the permission: it is chosen before the turn, visible while it
- * runs, and decides which tools the model is even shown.
- *
- * Kept deliberately separable. Everything here talks to `/api/workspaces` and
- * the ordinary chat endpoint, so lifting it into its own application later means
- * moving these files and pointing them at the same daemon. The composer, the
- * model picker and the folder picker are shared components rather than page-local
- * ones, so that move takes the whole interface with it rather than half of it.
- */
 export function CodePage() {
   const params = useParams<{ id?: string }>()
   return params.id ? <WorkspaceView id={params.id} /> : <WorkspaceList />
@@ -78,9 +64,6 @@ function WorkspaceList() {
 
   const held = workspaces.data?.workspaces ?? []
 
-  // Naming a workspace after its folder is right almost every time, so the name
-  // fills itself in and stays editable rather than being a second thing to think
-  // about before any work can start.
   const chooseRoot = (path: string) => {
     setRoot(path)
     if (!name.trim()) {
@@ -205,10 +188,6 @@ function WorkspaceView({ id }: { id: string }) {
 
   const running = useRunningProcesses(id, runningOpen, setRunningOpen)
 
-  // Which panels a finished turn invalidates is decided by the store, from the
-  // workspace id passed with the request. It used to be a callback closed over
-  // here, which meant navigating away before the turn ended left the file tree
-  // and the changes list showing the state from before it ran.
   const turn = useTurn(conversationId)
 
   const messages = useQuery({
@@ -220,8 +199,6 @@ function WorkspaceView({ id }: { id: string }) {
   const workspace = detail.data?.workspace
   const history = messages.data?.messages ?? []
 
-  // Resume the most recent chat in this workspace rather than starting an empty
-  // one, so reopening a workspace picks up where it was left.
   useEffect(() => {
     if (conversationId !== null || !detail.data) return
     const existing = detail.data.conversations[0]
@@ -251,8 +228,6 @@ function WorkspaceView({ id }: { id: string }) {
       void queryClient.invalidateQueries({ queryKey: ['workspace', id] })
     }
 
-    // Web and memory are off here: a coding turn's tools are the workspace's,
-    // and the model already has more than enough to choose between.
     await runTurn(target, content, {
       model: codeModel ?? undefined,
       effort: codeEffort,
@@ -417,9 +392,6 @@ function WorkspaceView({ id }: { id: string }) {
                   if (branch) setConversationId(branch.id)
                 })
               }}
-              // A file the turn touched opens in the viewer beside the
-              // transcript, which is where the question "what did it actually
-              // do to that" gets answered.
               onOpenPath={(path) => setOpenFile(path)}
               onEdit={(messageId, content) => {
                 void runTurn(
@@ -497,19 +469,6 @@ function WorkspaceView({ id }: { id: string }) {
   )
 }
 
-/**
- * Watch what this workspace has running, and open the panel when it starts.
- *
- * The panel used to be a tab, which meant a model could start a dev server and
- * nothing on screen would change — you had to already suspect it and go clicking.
- * That is the wrong way round: the moment something is running is exactly the
- * moment its output is worth looking at, and it is also the moment a person
- * stops being able to guess what is happening.
- *
- * It opens on the transition into "something is running" rather than whenever
- * something is, so closing the panel while a server is still up keeps it closed.
- * Being overruled by a poll every two seconds is worse than not opening at all.
- */
 function useRunningProcesses(
   id: string,
   isOpen: boolean,
@@ -518,22 +477,12 @@ function useRunningProcesses(
   const processes = useQuery({
     queryKey: ['workspace-processes', id],
     queryFn: () => api.workspaces.processes(id),
-    // Polled from here rather than only from inside the panel, because the whole
-    // point is to notice while the panel is shut.
     refetchInterval: 2000,
-    // And kept polling when the window is not focused, which is the case this
-    // exists for: you switched to your editor, the model started a server, and
-    // the panel should be open when you look back. React Query pauses intervals
-    // on blur by default, and this application also has `refetchOnWindowFocus`
-    // off — so without this the answer on returning would be however stale it
-    // was when you left.
     refetchIntervalInBackground: true,
   })
 
   const live = processes.data?.processes.filter((held) => held.running).length ?? 0
   const previous = useRef(live)
-  // Read in the effect without making it a dependency: the effect must run on a
-  // change in `live`, not every time the panel is toggled.
   const openRef = useRef(open)
   openRef.current = open
   const isOpenRef = useRef(isOpen)
@@ -549,15 +498,6 @@ function useRunningProcesses(
 
 /* ---------- Mode ---------- */
 
-/**
- * The four modes, as one control.
- *
- * Shown as a row rather than a dropdown because which one is active is the most
- * important fact on this page — it is the difference between a model that can
- * read the project, one that can rewrite it, and one that can also run anything
- * it likes. It sits in the composer rather than in a header because that is
- * where the decision is made: immediately before pressing send.
- */
 function ModeSwitch({
   current,
   onChange,
@@ -578,8 +518,6 @@ function ModeSwitch({
           className={`mode-step is-${mode.id} ${mode.id === current ? 'is-on' : ''}`}
           onClick={() => onChange(mode.id)}
           disabled={busy}
-          // The title carries the full explanation, which is also what a
-          // narrow composer leaves as the only way to read the label.
           title={`${mode.label} — ${mode.blurb}`}
           aria-pressed={mode.id === current}
           aria-label={mode.label}
@@ -592,15 +530,6 @@ function ModeSwitch({
   )
 }
 
-/**
- * One glyph per mode, so the switch has something to collapse to.
- *
- * The composer's controls used to overlap rather than shrink when the panels
- * squeezed it — four words of mode switch cannot get smaller, and with
- * `min-width: 0` on the row they were painted over instead. Below a container
- * width the labels go and these remain, which is a legible control rather than
- * a collision.
- */
 const MODE_ICON: Record<WorkspaceMode, React.ReactNode> = {
   ask: <ChatIcon size={13} />,
   plan: <ListIcon size={13} />,
@@ -610,14 +539,6 @@ const MODE_ICON: Record<WorkspaceMode, React.ReactNode> = {
 
 /* ---------- Panels ---------- */
 
-/**
- * The project's files, with the files actually openable.
- *
- * This was a list of labels you could not click, which is a strange thing to put
- * beside a conversation about code: the one question it invites — "what is in
- * that file" — was the one it would not answer, and the only way to find out was
- * to ask the model to read it back to you.
- */
 function FileTree({ id, onOpen }: { id: string; onOpen: (path: string) => void }) {
   const [filter, setFilter] = useState('')
 
@@ -657,8 +578,6 @@ function FileTree({ id, onOpen }: { id: string; onOpen: (path: string) => void }
         <TreeLevel
           nodes={buildTree(shown)}
           depth={0}
-          // A filter is a search, and a search whose hits are inside closed
-          // folders looks like a search that found nothing.
           forceOpen={needle.length > 0}
           onOpen={onOpen}
         />
@@ -667,7 +586,6 @@ function FileTree({ id, onOpen }: { id: string; onOpen: (path: string) => void }
   )
 }
 
-/** One node of the project tree. */
 interface TreeNode {
   name: string
   path: string
@@ -675,16 +593,6 @@ interface TreeNode {
   children: TreeNode[]
 }
 
-/**
- * Turn the flat list of paths into a tree.
- *
- * The API answers with every path in the project — `src/`, `src/main.rs`,
- * `src/db/mod.rs` — and this used to be rendered exactly as it arrived: one flat
- * list, every directory a label you could not click, every file in the project
- * visible at once. On anything real that is hundreds of rows deep and there is
- * no way to collapse any of it, which makes the panel useless for the thing a
- * file tree is for — seeing the shape of a project.
- */
 function buildTree(paths: string[]): TreeNode[] {
   const roots: TreeNode[] = []
 
@@ -702,8 +610,6 @@ function buildTree(paths: string[]): TreeNode[] {
         node = { name, path: last && !dir ? path : `${here}/`, dir: !last || dir, children: [] }
         level.push(node)
       }
-      // A directory entry can arrive after a file inside it, so a node created
-      // as a leaf has to be able to become a branch.
       if (!last) node.dir = true
       level = node.children
     })
@@ -712,7 +618,6 @@ function buildTree(paths: string[]): TreeNode[] {
   return sortLevel(roots)
 }
 
-/** Folders first, then files, each alphabetical — the order every file tree uses. */
 function sortLevel(nodes: TreeNode[]): TreeNode[] {
   nodes.sort((left, right) => {
     if (left.dir !== right.dir) return left.dir ? -1 : 1
@@ -722,13 +627,6 @@ function sortLevel(nodes: TreeNode[]): TreeNode[] {
   return nodes
 }
 
-/**
- * One level of the tree.
- *
- * Folders start closed. That is the whole point of the rewrite: opening a
- * project should show you its top level — a handful of directories and the
- * files beside them — not every file it contains.
- */
 function TreeLevel({
   nodes,
   depth,
@@ -799,13 +697,6 @@ function TreeLevel({
   )
 }
 
-/**
- * One file, read through the same containment the tools use.
- *
- * Read-only on purpose. Editing here would be a second way to change a file,
- * sitting outside the mode that governs the first one and outside the change log
- * that makes the first one reversible.
- */
 function FileViewer({ id, path, onClose }: { id: string; path: string; onClose: () => void }) {
   const file = useQuery({
     queryKey: ['workspace-file', id, path],
@@ -851,22 +742,9 @@ function FileViewer({ id, path, onClose }: { id: string; path: string; onClose: 
   )
 }
 
-/**
- * Every file the model changed, newest first, each with a way to put it back.
- *
- * This is what makes Agent mode reasonable to offer without a prompt before
- * every write: the change already happened, and undoing it is one click.
- */
 function ChangeList({ id }: { id: string }) {
   const queryClient = useQueryClient()
   const [failed, setFailed] = useState<string | null>(null)
-  /**
-   * Which change is open as a diff.
-   *
-   * In the list rather than in a separate panel, because the question "what did
-   * that one do" is asked *about a row* and answered next to it. Opening one
-   * closes the last, so the panel never becomes a stack of them.
-   */
   const [opened, setOpened] = useState<string | null>(null)
 
   const changes = useQuery({

@@ -29,14 +29,6 @@ import {
   TrashIcon,
 } from '../components/icons'
 
-/**
- * Tools.
- *
- * Kuro's own capabilities and other people's MCP servers on one page, because the
- * distinction is an implementation detail — from the model's side they are the
- * same thing, and a user asking "can it search the web" should not have to know
- * which half answers that.
- */
 export function ToolsPage() {
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -185,13 +177,6 @@ export function ToolsPage() {
   )
 }
 
-/**
- * Match a search across everything a person might type.
- *
- * Name, blurb and detail all count, because somebody looking for a browser will
- * type "browser" and the entry is called Playwright. Matching only the name is
- * the difference between a search bar and a filter nobody can use.
- */
 function filterRegistry(entries: McpRegistryEntry[], query: string): McpRegistryEntry[] {
   const needle = query.trim().toLowerCase()
   if (!needle) return entries
@@ -445,27 +430,6 @@ function BuiltinSection({
   )
 }
 
-/**
- * The skills store.
- *
- * A skill is prompt guidance, nothing more — no execution, no sandbox. That is
- * what makes one-click installation safe, and it is also the highest-leverage
- * thing available on a small local model: a 4B model told the specific rules of
- * idiomatic Rust writes markedly better Rust for no extra inference cost.
- *
- * The context cost is shown because it is real. Six skills at once is most of a
- * small model's usable prompt, and a user should be able to see that adding up
- * rather than discover it as a mysterious drop in answer quality.
- */
-/**
- * Adding skills of your own.
- *
- * Two ways in, because there are two things people have: a file they wrote, and
- * a repository somebody else wrote. Both land in the same place and become
- * ordinary skills — the same `/slug`, the same switch, the same budget — which
- * is the point. A skill you added should not be a second-class thing living in
- * its own corner of the interface.
- */
 function AddSkills({ custom }: { custom: CustomSkill[] }) {
   const queryClient = useQueryClient()
   const [url, setUrl] = useState('')
@@ -619,7 +583,6 @@ function AddSkills({ custom }: { custom: CustomSkill[] }) {
   )
 }
 
-/** `https://github.com/owner/name` reads better as `owner/name`. */
 function shortSource(source: string): string {
   return source.replace(/^https?:\/\/github\.com\//, '')
 }
@@ -641,9 +604,6 @@ function SkillsSection({
 
   const { catalogue, enabled, budgets } = overview.skills
 
-  // What a coding turn at the default effort will actually carry. The number
-  // worth showing, because it is the one that does not move when a switch is
-  // flipped — see the note on the heading below.
   const perTurn =
     budgets?.code.find((entry) => entry.effort === 'balanced')?.tokens ?? null
 
@@ -654,15 +614,6 @@ function SkillsSection({
     save.mutate(next)
   }
 
-  /**
-   * Turn a whole group on or off at once.
-   *
-   * Forty-four switches is a lot of clicking to answer "give me everything for
-   * writing code". Doing exactly that is now the default, and it is no longer
-   * something the user needs protecting from: a turn ranks what is switched on
-   * against what was asked and sends what fits its budget, so a skill that is
-   * on but irrelevant costs nothing.
-   */
   const setMany = (slugs: string[], on: boolean) => {
     const next = on
       ? [...new Set([...enabled, ...slugs])]
@@ -675,8 +626,6 @@ function SkillsSection({
     byCategory.set(skill.category, [...(byCategory.get(skill.category) ?? []), skill])
   }
 
-  // Falls back to the raw slug for a category from a newer build, so an unknown
-  // one is an odd heading rather than a section that disappears.
   const CATEGORY_LABEL: Record<string, string> = {
     language: 'Languages',
     practice: 'Engineering practice',
@@ -693,12 +642,6 @@ function SkillsSection({
         </h2>
         <div className="panel-head-actions">
           {enabled.length > 0 && (
-            // Deliberately no longer the sum of everything switched on. That
-            // number ran to tens of thousands with the whole catalogue enabled
-            // and read as the running cost of leaving switches on — so people
-            // switched skills off to protect a context window that was never
-            // actually at risk. What a turn spends is capped regardless of how
-            // many are on, and the cap is the honest figure.
             <span
               className="faint"
               title="Switching a skill on makes it available. Each turn picks the ones your message calls for, up to the budget."

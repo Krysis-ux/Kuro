@@ -1,17 +1,5 @@
 import { EndpointsPage } from './Endpoints'
 
-/**
- * Providers: someone else's model, billed per token.
- *
- * Kuro's argument is that models should run on your machine. This page is the
- * honest exception: sometimes the machine cannot, and the alternative to
- * supporting that is a user keeping a second application open.
- *
- * The framing throughout is "your account, your key, your bill". There is nothing
- * hosted by Kuro here, and the page says so rather than leaving room for the
- * assumption. Renting a GPU to run your own weights is a different decision and
- * lives on its own page — see `Cloud.tsx`.
- */
 export function ProvidersPage() {
   return (
     <EndpointsPage

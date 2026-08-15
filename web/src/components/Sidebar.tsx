@@ -20,15 +20,6 @@ import {
 } from './icons'
 import { Logo } from './Logo'
 
-/**
- * The navigation, as data.
- *
- * One list, used once. It was written as data with a comment saying two
- * hand-maintained copies would drift — and then the open sidebar was written out
- * by hand anyway, so there were three lists: this one, the markup, and the CSS
- * rule for an `is-icon-only` class nothing ever set. That is why the collapsed
- * rail rendered full-width labels inside 52 pixels.
- */
 const NAV: { to: string; label: string; icon: React.ReactNode; end?: boolean }[] = [
   { to: '/', label: 'Chat', icon: <ChatIcon size={15} />, end: true },
   { to: '/code', label: 'Code', icon: <BracesIcon size={15} /> },
@@ -69,15 +60,6 @@ export function Sidebar() {
     },
   })
 
-  /**
-   * The one control that is never inside the thing it controls.
-   *
-   * Rendered in both states and positioned by CSS: in the sidebar's own header
-   * when it is open, and floating over the top-left corner of the page when it
-   * is not. Putting it anywhere inside the collapsed sidebar is what forced the
-   * old rail to exist — a sidebar that fully collapses has nowhere left to hold
-   * its own reopen button, so the button has to leave first.
-   */
   const toggle = (
     <button
       className="sidebar-toggle"
@@ -91,9 +73,6 @@ export function Sidebar() {
     </button>
   )
 
-  // Collapsed means collapsed: no rail, no icon strip, nothing but the page and
-  // the button that brings this back. The rail was a compromise made because
-  // there was nowhere to put that button, and now there is.
   if (!sidebarOpen) {
     return <div className="sidebar-rail">{toggle}</div>
   }

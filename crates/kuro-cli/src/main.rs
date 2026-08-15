@@ -103,12 +103,9 @@ enum Command {
 
     /// Run another coding tool against a Kuro model.
     ///
-    /// `kuro launch claude` starts Claude Code pointed at this daemon, so it
-    /// uses a local model, a free provider or your own key instead of calling
-    /// out. Nothing is installed and no configuration is edited — the effect
-    /// lasts as long as the process does.
+    /// Start a supported coding client against the Kuro model you choose.
     Launch {
-        /// Which tool: `claude`, `codex`, `opencode`. Omit to see the list.
+        /// Supported tool name. Omit to see the list.
         app: Option<String>,
 
         /// Model to use. Omit for whatever Kuro's default is.

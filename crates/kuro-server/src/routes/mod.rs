@@ -232,7 +232,6 @@ fn native_routes() -> Router<SharedState> {
 fn openai_routes() -> Router<SharedState> {
     Router::new()
         .route("/v1/models", get(openai::list_models))
-        // Anthropic-compatible, so Claude Code can be pointed at Kuro.
         .route("/v1/messages", post(anthropic::messages))
         .route("/v1/chat/completions", post(openai::chat_completions))
         .route("/v1/completions", post(openai::completions))

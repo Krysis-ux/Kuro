@@ -1,10 +1,3 @@
-/**
- * Line icons, drawn on a 24-unit grid at a consistent 1.6 stroke weight.
- *
- * Hand-rolled rather than pulled from a library: there are few enough of them
- * that a dependency would cost more than it saves, and a single stroke weight
- * keeps the interface visually quiet.
- */
 
 type IconProps = { size?: number; className?: string }
 
@@ -230,7 +223,6 @@ export const PencilIcon = (props: IconProps) => (
   </Svg>
 )
 
-/** Angle brackets, for the coding surface. */
 export const BracesIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="M9 4H7.5A2.5 2.5 0 0 0 5 6.5v3A2.5 2.5 0 0 1 2.5 12 2.5 2.5 0 0 1 5 14.5v3A2.5 2.5 0 0 0 7.5 20H9" />
@@ -238,7 +230,6 @@ export const BracesIcon = (props: IconProps) => (
   </Svg>
 )
 
-/** Two paths diverging from one, for branching a conversation. */
 export const BranchIcon = (props: IconProps) => (
   <Svg {...props}>
     <circle cx="6" cy="5" r="2.2" />
@@ -297,14 +288,12 @@ export const CloseIcon = (props: IconProps) => (
   </Svg>
 )
 
-/** A checklist, for Plan mode. */
 export const ListIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" />
   </Svg>
 )
 
-/** A shield with a line through it, for the mode with no allowlist. */
 export const ShieldOffIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="M19.7 14A8.4 8.4 0 0 0 20 12V5l-8-3-3.3 1.2M6.3 6.3 4 5v7c0 5 8 10 8 10a20 20 0 0 0 4.6-3.3" />
@@ -312,22 +301,12 @@ export const ShieldOffIcon = (props: IconProps) => (
   </Svg>
 )
 
-/** Bars, for the panel that counts what has been spent. */
 export const ChartIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
   </Svg>
 )
 
-/**
- * A pane, with the side rail marked.
- *
- * The standard icon for "show or hide the panel beside this" — the same shape
- * every editor uses for it. It reads as a layout rather than as a direction,
- * which is what the sidebar toggle wants: a chevron promises movement one way
- * and then has to flip, and a flipping chevron is the part that never quite
- * looks right.
- */
 export const PanelIcon = (props: IconProps) => (
   <Svg {...props}>
     <rect x="3" y="4" width="18" height="16" rx="2" />

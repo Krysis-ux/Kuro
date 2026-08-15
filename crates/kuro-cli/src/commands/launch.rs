@@ -1,23 +1,3 @@
-//! `kuro launch` — run another coding tool against a Kuro model.
-//!
-//! The idea is Ollama's: you already have Claude Code installed and you already
-//! like its interface, its file editing and its permission prompts. What you do
-//! not necessarily have is a reason to send every keystroke to one company's
-//! API. So Kuro stands in as the model — local weights, a free provider's
-//! allowance, or a key you hold — and the tool it launches never knows.
-//!
-//! ## How this works, and what it is not
-//!
-//! Claude Code reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from its
-//! environment. So this sets both, points the first at the local daemon's
-//! Anthropic-compatible endpoint, and execs the real binary. Nothing is
-//! installed, nothing is patched, and no configuration file is edited — which
-//! is deliberate. A launcher that rewrote a user's settings would leave them
-//! broken the moment it crashed, and "undo whatever that did" is not a thing
-//! anybody should have to work out. Close the terminal and the effect is gone.
-//!
-//! It is also not a way around anyone's terms. It runs a tool you installed,
-//! against a model you supplied, on your machine.
 
 use std::process::Command;
 
@@ -29,31 +9,19 @@ const DIM: &str = "\x1b[2m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
-/// A tool Kuro knows how to point at itself.
 struct Launchable {
-    /// What the user types after `kuro launch`.
     name: &'static str,
-    /// The executable to look for on the PATH.
     binary: &'static str,
-    /// Which API shape it speaks, which decides the variables set for it.
     wire: Wire,
-    /// Where to get it, for when it is not installed.
     install: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Wire {
-    /// Anthropic Messages, read from `ANTHROPIC_BASE_URL`.
     Anthropic,
-    /// OpenAI, read from `OPENAI_BASE_URL`.
     OpenAi,
 }
 
-/// What can be launched today.
-///
-/// Short on purpose. Every entry here is one whose environment variables have
-/// been checked against the tool's own documentation — a list of tools that
-/// *might* work would be a list of ways to waste somebody's afternoon.
 const LAUNCHABLE: &[Launchable] = &[
     Launchable {
         name: "claude",
@@ -92,9 +60,6 @@ pub async fn launch(
         bail!("unknown application");
     };
 
-    // The daemon has to be up before anything is pointed at it, or the tool
-    // starts and fails on its first message with a connection error that says
-    // nothing about Kuro.
     client.ensure_running().await?;
 
     let Some(path) = which(target.binary) else {
@@ -103,9 +68,6 @@ pub async fn launch(
         bail!("`{}` not found", target.binary);
     };
 
-    // Checked before launching rather than after: a model name that does not
-    // resolve produces an error inside the other tool's interface, where it
-    // looks like that tool is broken.
     let model = match model {
         Some(name) => {
             verify_model(client, &name).await?;
@@ -129,9 +91,6 @@ pub async fn launch(
     match target.wire {
         Wire::Anthropic => {
             command.env("ANTHROPIC_BASE_URL", &base);
-            // Kuro listens on loopback and has no authentication, so this is a
-            // placeholder rather than a secret. It exists because the client
-            // refuses to start without one.
             command.env("ANTHROPIC_AUTH_TOKEN", "kuro-local");
             command.env("ANTHROPIC_API_KEY", "kuro-local");
             if let Some(model) = &model {
@@ -147,9 +106,6 @@ pub async fn launch(
         }
     }
 
-    // Replaces this process, so the launched tool owns the terminal completely
-    // — its own key handling, its own resize behaviour, its own exit code.
-    // Anything less makes a full-screen interface feel subtly wrong.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -164,7 +120,6 @@ pub async fn launch(
     }
 }
 
-/// Fail early on a model name Kuro cannot resolve.
 async fn verify_model(client: &KuroClient, model: &str) -> Result<()> {
     let listing = client.get("/api/models").await?;
 
@@ -210,7 +165,6 @@ fn printly_list() {
     }
 }
 
-/// Where a program is on the PATH, if it is.
 fn which(binary: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
@@ -244,8 +198,6 @@ mod tests {
 
     #[test]
     fn every_launchable_says_where_to_get_it() {
-        // A tool that is not installed and does not say where it comes from is
-        // a dead end.
         for entry in LAUNCHABLE {
             assert!(entry.install.starts_with("https://"), "{}", entry.name);
             assert!(!entry.binary.is_empty());
@@ -264,7 +216,6 @@ mod tests {
     #[test]
     fn a_program_that_is_not_on_the_path_is_not_found() {
         assert!(which("kuro-definitely-not-a-real-program").is_none());
-        // And something every system has, is.
         assert!(which("sh").is_some());
     }
 }

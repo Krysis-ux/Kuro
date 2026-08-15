@@ -13,31 +13,8 @@ import {
   TrashIcon,
 } from './icons'
 
-/** How often the running list is re-read while something is alive. */
 const POLL_MS = 2000
 
-/**
- * What is running, and what it looks like.
- *
- * The missing half of a coding assistant. A model that can edit files and run
- * commands can tell you the build succeeded; it cannot tell you the page renders,
- * and neither could you without leaving the application to go and look.
- *
- * So a workspace's background processes get a panel. It lists them, shows their
- * output, and — when one of them has announced an address — puts that address in
- * a frame. The address is read out of the process's own output rather than
- * guessed at, which is why a server that has not printed anything yet shows a
- * log instead of a blank frame: there is genuinely nothing to point at, and an
- * empty frame would look like the page is broken rather than not started.
- *
- * ## What the frame can and cannot do
- *
- * It is an ordinary iframe pointed at localhost. That renders the page and it is
- * enough to see whether a layout is right. It is not a browser Kuro drives: a
- * site that refuses framing shows nothing, and the panel says so and offers to
- * open the address properly rather than pretending. Driving a real browser is
- * what the Playwright server on the Tools page is for.
- */
 export function PreviewPanel({
   workspaceId,
   mode,
@@ -45,14 +22,6 @@ export function PreviewPanel({
 }: {
   workspaceId: string
   mode: WorkspaceMode
-  /**
-   * Which half of this panel is being asked for.
-   *
-   * `terminal` is the command line and the output; `browser` is the frame
-   * around whatever is being served. They were one scrolling column with the
-   * frame at the bottom, which meant that on the turn you wanted to *look* at
-   * the page you first had to scroll past the log of how it got built.
-   */
   view?: 'terminal' | 'browser'
 }) {
   const queryClient = useQueryClient()
@@ -64,8 +33,6 @@ export function PreviewPanel({
   const processes = useQuery({
     queryKey: ['workspace-processes', workspaceId],
     queryFn: () => api.workspaces.processes(workspaceId),
-    // Only poll while something is alive. A workspace with nothing running does
-    // not need a request every two seconds for the rest of the afternoon.
     refetchInterval: (query) =>
       query.state.data?.processes.some((held) => held.running) ? POLL_MS : false,
   })
@@ -188,10 +155,6 @@ export function PreviewPanel({
                   <StopIcon size={13} />
                 </button>
               ) : (
-                // A finished process is history, and history that cannot be
-                // cleared is a list that only grows. Twenty dead `npm test`
-                // rows above the one server actually running is not a record,
-                // it is a thing to scroll past.
                 <button
                   className="btn btn-ghost btn-icon"
                   aria-label={`Clear ${process.command}`}
@@ -246,10 +209,6 @@ export function PreviewPanel({
             className="preview-frame"
             src={active.url}
             title="Preview of the running app"
-            // The page being framed is the user's own dev server on loopback.
-            // The sandbox still applies: it stops a page from navigating this
-            // one away or opening things, which a half-written app can do by
-            // accident.
             sandbox="allow-scripts allow-forms allow-same-origin"
           />
           <p className="faint preview-frame-note">
@@ -262,14 +221,6 @@ export function PreviewPanel({
   )
 }
 
-/**
- * A process's recent output.
- *
- * Shown instead of the frame when there is no address yet, because that is
- * exactly when somebody needs to know why: a missing script, a port already
- * taken, or a compile error all look identical from outside and are all in the
- * first ten lines of this.
- */
 function ProcessLog({
   workspaceId,
   process,
@@ -302,9 +253,6 @@ function ProcessLog({
           {process.running ? 'Nothing printed yet.' : 'It printed nothing before exiting.'}
         </p>
       ) : (
-        // The output of a failed build is the single most-pasted thing in this
-        // application, and selecting it by hand means dragging inside a pane
-        // that is scrolling itself as new lines arrive.
         <CodeBlock
           text={lines.join('\n')}
           className="is-filled"

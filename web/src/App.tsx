@@ -48,18 +48,6 @@ export function App() {
   )
 }
 
-/**
- * Start the two effort dials where Settings says they should start.
- *
- * The server has always held these — `chat.defaultEffort` and
- * `code.defaultEffort` — and until now nothing read them: the composer sent its
- * own persisted value with every message, so the server's fallback never
- * applied and the two controls in Settings changed nothing anybody could see.
- *
- * Seeded once, here, rather than in each composer, so both surfaces get it and
- * a page that gains a composer later does too. A dial the user has turned is
- * left alone — see `effortChosen` in the store.
- */
 function useConfiguredEfforts() {
   const seedEfforts = useUi((state) => state.seedEfforts)
   const settings = useQuery({ queryKey: ['tools'], queryFn: api.tools.overview })

@@ -24,8 +24,6 @@ export function ModelsPage() {
   const [reference, setReference] = useState('')
   const [pullError, setPullError] = useState<string | null>(null)
   const [source, setSource] = useState<Source>('recommended')
-  // Which model the user has asked to delete, pending confirmation. Deleting
-  // weights is one of the few things in Kuro with nothing behind it.
   const [pendingDelete, setPendingDelete] = useState<{ id: string; bytes: number } | null>(
     null,
   )
@@ -33,7 +31,6 @@ export function ModelsPage() {
   const installed = useQuery({ queryKey: ['models'], queryFn: api.models.list })
   const recommended = useQuery({ queryKey: ['recommended'], queryFn: api.models.recommended })
 
-  // While anything is downloading, poll often enough for the bar to feel live.
   const downloads = useQuery({
     queryKey: ['downloads'],
     queryFn: api.downloads.list,
@@ -75,7 +72,6 @@ export function ModelsPage() {
       (download) => download.status === 'downloading' || download.status === 'queued',
     ) ?? []
 
-  // A finished download changes what is installed, so refresh once it lands.
   if (activeDownloads.length === 0 && downloads.isFetched && installed.isStale) {
     void queryClient.invalidateQueries({ queryKey: ['models'] })
   }
@@ -286,14 +282,6 @@ export function ModelsPage() {
   )
 }
 
-/**
- * Search Hugging Face from inside Kuro.
- *
- * Filtered to GGUF, so nothing in the results is a model that cannot run here —
- * which is the main thing the Hub's own search will not do for you. Each result
- * lists the quantizations it publishes, smallest first, because that is the choice
- * that decides whether the model fits.
- */
 function HubSearch({
   onPull,
   pulling,
@@ -367,8 +355,6 @@ function HubRow({
   onPull: (reference: string) => void
   pulling: boolean
 }) {
-  // Default to the smallest published quantization, which is the one most likely
-  // to fit; the list is already ordered that way.
   const [quant, setQuant] = useState(model.quants[0] ?? '')
 
   const blocked = model.split_only || model.gated

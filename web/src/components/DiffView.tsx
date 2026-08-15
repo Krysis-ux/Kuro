@@ -4,48 +4,20 @@ import { api } from '../lib/api'
 import { CodeBlock } from './CodeBlock'
 import { CloseIcon } from './icons'
 
-/**
- * What a change actually changed.
- *
- * The changes list said "edited src/app/page.tsx, +9 −2" and stopped there,
- * which is the shape of a change rather than the change. Nine lines is either
- * fine or a disaster and the number is the same either way, so the only way to
- * find out was to open the file and try to remember what had been in it.
- *
- * Both sides have been stored since the first version of undo — undo could not
- * work without them — so this is the same data the undo button already relies
- * on, shown instead of only acted upon.
- */
 
-/** One line of the rendered diff. */
 interface DiffRow {
   kind: 'same' | 'added' | 'removed'
-  /** Line number on the left, when there is one. */
   before: number | null
-  /** Line number on the right, when there is one. */
   after: number | null
   text: string
 }
 
-/** How many unchanged lines to keep either side of a change. */
 const CONTEXT = 3
 
-/**
- * A line-by-line diff of two texts.
- *
- * Longest common subsequence, computed over lines. The table is O(n·m), which
- * is the reason for the size guard below rather than a cleverer algorithm: a
- * real source file is a few thousand lines and this is instant on that, while a
- * minified bundle is one line and a lockfile is not something anybody reads a
- * diff of.
- */
 function diffLines(before: string, after: string): DiffRow[] {
   const left = before.split('\n')
   const right = after.split('\n')
 
-  // Common prefix and suffix are stripped first. Almost every edit touches a
-  // handful of lines in the middle of a file, so this is what keeps the table
-  // small enough to be worth computing at all.
   let head = 0
   while (head < left.length && head < right.length && left[head] === right[head]) head += 1
 
@@ -69,9 +41,6 @@ function diffLines(before: string, after: string): DiffRow[] {
     push('same', left[index] as string, index + 1, index + 1)
   }
 
-  // Past this the table would be tens of millions of cells for a file nobody is
-  // reading line by line anyway. Reported as a whole-block replacement, which
-  // is honest about what it is rather than pretending to a line-level answer.
   const TOO_BIG = 2000
   if (midLeft.length > TOO_BIG || midRight.length > TOO_BIG) {
     midLeft.forEach((text, index) => push('removed', text, head + index + 1, null))
@@ -126,7 +95,6 @@ function diffLines(before: string, after: string): DiffRow[] {
   return rows
 }
 
-/** Drop the runs of unchanged lines nobody is reading. */
 function collapse(rows: DiffRow[]): (DiffRow | { kind: 'gap'; count: number })[] {
   const keep = new Set<number>()
   rows.forEach((row, index) => {
@@ -173,8 +141,6 @@ export function DiffView({
 
   const rows = useMemo(() => {
     if (!change) return null
-    // A missing snapshot is not an empty file. Both are possible and only one of
-    // them can be shown as a diff.
     if (change.after === null) return null
     return collapse(diffLines(change.before ?? '', change.after))
   }, [change])

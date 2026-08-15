@@ -252,7 +252,6 @@ mod tests {
 
     #[test]
     fn the_names_other_tools_use_for_these_modes_are_accepted() {
-        // People coming from Claude Code and Codex type these.
         assert_eq!(WorkspaceMode::parse("auto"), Some(WorkspaceMode::Agent));
         assert_eq!(WorkspaceMode::parse("yolo"), Some(WorkspaceMode::Bypass));
     }

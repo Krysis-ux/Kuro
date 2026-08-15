@@ -3,24 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { CheckIcon, ChevronIcon, FolderIcon } from './icons'
 
-/**
- * Choosing a folder by clicking, not by typing a path.
- *
- * A browser cannot open a native folder dialog that returns a path.
- * `<input webkitdirectory>` hands over the files themselves, uploaded, with
- * their real location stripped — exactly backwards for a workspace, where the
- * path is the only thing wanted.
- *
- * So the picker is built rather than borrowed: the daemon walks its own
- * filesystem and this renders the result. The daemon is on the same machine as
- * the folders, which is what makes that honest rather than a workaround.
- *
- * Typing is still there, because somebody who knows the path should not have to
- * click through six levels to reach it — but it is the fallback rather than the
- * only option, which is the way round it was.
- */
 interface FolderPickerProps {
-  /** The currently chosen path, or empty. */
   value: string
   onChange: (path: string) => void
   onClose: () => void
@@ -34,7 +17,6 @@ export function FolderPicker({ value, onChange, onClose, title }: FolderPickerPr
   const listing = useQuery({
     queryKey: ['fs', at ?? '~', showHidden],
     queryFn: () => api.fs.browse(at, showHidden),
-    // A folder that cannot be read is a dead end, not a reason to retry.
     retry: false,
   })
 
@@ -169,13 +151,6 @@ export function FolderPicker({ value, onChange, onClose, title }: FolderPickerPr
   )
 }
 
-/**
- * A path field with a Choose button beside it.
- *
- * The pairing matters: the field shows what was chosen so it can be checked or
- * corrected, and the button means nobody has to know the path in the first
- * place.
- */
 export function FolderField({
   value,
   onChange,
@@ -191,15 +166,6 @@ export function FolderField({
   const [opening, setOpening] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
-  /**
-   * Ask the operating system first.
-   *
-   * The built-in list works and is nobody's idea of a folder picker — people
-   * expect Finder, with their own sidebar and `⌘⇧G`. The daemon runs on this
-   * machine, so it can open the real dialog; the list stays as the fallback for
-   * a platform that has none, or for a dialog that opens behind the browser and
-   * gets dismissed.
-   */
   const choose = async () => {
     setNote(null)
     setOpening(true)
@@ -213,11 +179,8 @@ export function FolderField({
         setPicking(true)
         return
       }
-      // Cancelled. Saying nothing would look like a broken button, and opening
-      // the fallback list would override a decision that was just made.
       setNote(result.reason ?? 'Nothing was chosen.')
     } catch {
-      // The endpoint is missing or the daemon is older than this interface.
       setPicking(true)
     } finally {
       setOpening(false)

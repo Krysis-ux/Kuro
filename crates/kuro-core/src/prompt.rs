@@ -1,78 +1,36 @@
-//! Telling the model where it is and what it can do.
-//!
-//! Without this, a model has no idea it is running inside Kuro, that a web search
-//! tool exists, or that the paragraph above its prompt is a set of live search
-//! results. The observed failure modes are all the same mistake:
-//!
-//! * asked "do you have internet access", it answers from whatever its training
-//!   data said about its own deployment — which is never this one;
-//! * asked to look something up, it produces plausible-looking URLs it invented,
-//!   because nothing told it that inventing them is not allowed;
-//! * handed real search results, it ignores them, because nothing told it they
-//!   were real.
-//!
-//! The prompt is written for the *small* end of the model range. A 0.5B model is
-//! the one that needs this most and is also the one that drowns in a long brief,
-//! so every line here has to earn its place. Capability statements are phrased as
-//! present-tense facts ("You can search the web right now") rather than
-//! conditionals, because small models handle facts far better than they handle
-//! "if the user has enabled X then you may Y".
 
 use crate::skills::Skill;
 use crate::workspace::WorkspaceMode;
 
-/// What the model needs to know about this turn.
 #[derive(Debug, Clone)]
 pub struct PromptContext<'a> {
-    /// The model's own id, so it can answer "what are you running as".
     pub model_id: &'a str,
-    /// True when the request goes to a provider rather than a local engine.
     pub is_remote: bool,
-    /// Whether the web tool group is on for this message.
     pub web_enabled: bool,
-    /// Whether Kuro already ran a search and put the results in the context.
     pub search_ran: bool,
     pub memory_enabled: bool,
-    /// How many memories exist, so "you remember nothing yet" can be said plainly.
     pub memory_count: i64,
-    /// Tool names offered this turn, exactly as the model will see them.
     pub tool_names: &'a [String],
-    /// Names of the MCP servers currently connected.
-    ///
-    /// Asked "what MCP servers did I just connect", a model with only the tool
-    /// names has to guess which server each came from. Naming them is a dozen
-    /// tokens and turns a wrong answer into a right one.
     pub mcp_servers: &'a [String],
-    /// The coding workspace this turn is running in, when there is one. Absent
-    /// in an ordinary chat, which has no access to files at all.
     pub workspace: Option<WorkspaceBrief<'a>>,
-    /// Whether this turn can read the user's coding workspaces without being in
-    /// one. A chat with this on can answer questions about a project; it still
-    /// cannot change a single byte of it.
     pub projects_readable: bool,
-    /// Skills the user switched on.
     pub skills: &'a [&'a Skill],
-    /// Standing instructions from the project this conversation belongs to.
     pub project: Option<ProjectBrief<'a>>,
 }
 
-/// The folder this turn is working in, and how much it may do there.
 #[derive(Debug, Clone, Copy)]
 pub struct WorkspaceBrief<'a> {
     pub name: &'a str,
-    /// The workspace root, as the user chose it.
     pub root: &'a str,
     pub mode: WorkspaceMode,
 }
 
-/// A project's name and standing instructions.
 #[derive(Debug, Clone, Copy)]
 pub struct ProjectBrief<'a> {
     pub name: &'a str,
     pub instructions: &'a str,
 }
 
-/// Build the system prompt for one turn.
 pub fn build(context: &PromptContext<'_>) -> String {
     let mut out = String::with_capacity(1200);
 
@@ -89,8 +47,6 @@ pub fn build(context: &PromptContext<'_>) -> String {
         out.push_str(&skills(context));
     }
 
-    // Project instructions go last, so that when they conflict with anything above
-    // the user's own words are what the model read most recently.
     if let Some(project) = &context.project {
         out.push_str(&project_section(project));
     }
@@ -129,7 +85,6 @@ fn identity(context: &PromptContext<'_>) -> String {
     )
 }
 
-/// The live state of every switch, stated as fact.
 fn capabilities(context: &PromptContext<'_>) -> String {
     let mut out = String::from("Right now, in this conversation:\n");
 
@@ -190,15 +145,6 @@ fn capabilities(context: &PromptContext<'_>) -> String {
     out
 }
 
-/// What the model can do with the user's files, stated exactly.
-///
-/// Vagueness here is the failure. Told only "you have file tools", a model either
-/// claims access to the whole machine or refuses a folder it was given; naming the
-/// folder and the mode means both questions have a factual answer.
-///
-/// The two writing modes get an extra sentence about commands, because a model
-/// that can run `npm test` and does not know it will describe the test it would
-/// have run. That is the single most common way a coding assistant wastes a turn.
 fn files_line(context: &PromptContext<'_>) -> String {
     let Some(workspace) = &context.workspace else {
         let projects = if context.projects_readable {
@@ -265,16 +211,6 @@ fn tools(context: &PromptContext<'_>) -> String {
     )
 }
 
-/// The rules that stop the specific failures seen in real transcripts.
-///
-/// Ordering is load-bearing. A small model weights the first rule it reads most
-/// heavily, and an earlier version of this function opened the list with `Say "I
-/// don't know" when you do not know`. That is correct advice for a factual
-/// question and catastrophic as a general instruction: the observed result was
-/// "hi" answered with "I don't know", because a greeting contains no fact the
-/// model could claim to know and the most prominent rule told it what to do about
-/// that. Replying normally therefore comes first, and not-knowing is stated last
-/// and scoped explicitly to facts that were asked for and are missing.
 fn honesty(context: &PromptContext<'_>) -> String {
     let mut out = String::from("Rules:\n");
 
@@ -285,8 +221,6 @@ fn honesty(context: &PromptContext<'_>) -> String {
          - Answer the question that was asked. Skip preamble and restatement.\n",
     );
 
-    // Invented URLs were the worst observed failure: a question about a net worth
-    // produced five fabricated links, each of which looked entirely plausible.
     out.push_str(
         "- Never invent a URL, a citation, a price, a statistic or a date. If you did not \
          get it from a tool result or from the user, you do not have it.\n",
@@ -427,7 +361,6 @@ mod tests {
 
     #[test]
     fn the_model_is_told_it_can_see_the_conversation() {
-        // Asked "what was my first message", a small model otherwise refuses.
         assert!(build(&context()).contains("see the whole conversation"));
     }
 
@@ -439,9 +372,6 @@ mod tests {
 
     #[test]
     fn replying_normally_is_the_first_rule_and_not_knowing_is_the_last() {
-        // The transcript bug: "hi" was answered with "I don't know", because the
-        // rules opened by telling the model to say exactly that. A small model
-        // follows the rule it read first.
         let prompt = build(&context());
 
         let rules = prompt.find("Rules:").expect("rules section");
@@ -472,8 +402,6 @@ mod tests {
 
     #[test]
     fn search_results_must_be_synthesised_rather_than_listed() {
-        // The other half of the transcript bug: with results in context the model
-        // replied "I don't know" and printed five links.
         let prompt = build(&PromptContext {
             web_enabled: true,
             search_ran: true,
@@ -487,8 +415,6 @@ mod tests {
 
     #[test]
     fn connected_mcp_servers_are_named_so_the_question_can_be_answered() {
-        // Asked "what MCP servers did I just connect", the model previously had
-        // no way to know, and said so.
         let servers = vec!["Filesystem".to_string(), "Context7".to_string()];
         let prompt = build(&PromptContext {
             mcp_servers: &servers,
@@ -538,8 +464,6 @@ mod tests {
 
     #[test]
     fn a_workspace_turn_is_not_also_told_about_the_weaker_project_tools() {
-        // Inside a workspace the file line already describes access to that
-        // folder. A second, weaker route to the same files is only confusing.
         let prompt = build(&PromptContext {
             workspace: Some(WorkspaceBrief {
                 name: "App",
@@ -555,8 +479,6 @@ mod tests {
 
     #[test]
     fn a_writable_workspace_is_told_it_can_run_things_and_look_at_them() {
-        // The failure this prevents: a model that could have run the test suite
-        // describing the command it would have run instead.
         let prompt = build(&PromptContext {
             workspace: Some(WorkspaceBrief {
                 name: "App",
@@ -691,13 +613,6 @@ mod tests {
         });
 
         let words = prompt.split_whitespace().count();
-        // Every switch on at once is the worst case and not the common one. The
-        // ceiling has moved twice: from 400 when the file and MCP lines were
-        // added, and to here when a writable workspace gained commands and a dev
-        // server. Each rise bought a specific wrong answer becoming a right one —
-        // a model that narrates `npm test` instead of running it is the failure
-        // those three lines exist to stop. The budget still needs a limit, or it
-        // drifts indefinitely and the smallest models drown.
         assert!(
             words < 560,
             "a 0.5B model has little context to spare; got {words} words"

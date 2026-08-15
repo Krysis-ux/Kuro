@@ -1,15 +1,6 @@
 import { useId } from 'react'
 
-/**
- * The Kuro mark: an eight-petalled flower with a punched-out centre.
- *
- * Adapted from the flower icon in the author's own Rainette Music project and
- * redrawn in pure monochrome for Kuro. Petals are generated rather than written
- * out so the two rings stay in step, and the centre is removed with a mask so
- * the mark sits correctly on any background.
- */
 export function Logo({ size = 24, className }: { size?: number; className?: string }) {
-  // Multiple logos can appear on one page, so the mask needs a unique id.
   const maskId = useId()
 
   const front = 'M50 50 C36 40 34 18 50 6 C66 18 64 40 50 50 Z'

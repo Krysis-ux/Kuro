@@ -1,37 +1,8 @@
-//! OpenAI's streaming deltas as Anthropic's streaming events.
-//!
-//! The two formats disagree about more than field names. OpenAI sends a flat
-//! run of deltas and leaves the client to accumulate them; Anthropic sends a
-//! *structured* stream — a message opens, content blocks open and close inside
-//! it, and the message closes — and a client written against it will wait
-//! forever for an event that never comes. Claude Code is such a client, so
-//! getting the bracketing right is the difference between working and hanging.
-//!
-//! The shape being produced:
-//!
-//! ```text
-//! message_start
-//!   content_block_start   (index 0, text)
-//!   content_block_delta   × many
-//!   content_block_stop
-//!   content_block_start   (index 1, tool_use)
-//!   content_block_delta   × many  (partial JSON)
-//!   content_block_stop
-//! message_delta           (stop reason, output tokens)
-//! message_stop
-//! ```
-//!
-//! Two details are load-bearing and neither is obvious from the format alone.
-//! A block must be *closed* before the next opens, so the translator tracks
-//! what is currently open rather than emitting per delta. And tool arguments
-//! arrive as fragments of a JSON string that are only valid once concatenated,
-//! so they are forwarded as `input_json_delta` and never parsed mid-stream.
 
 use serde_json::{json, Value};
 
 use super::{stop_reason, tool_use_block};
 
-/// One event to write to the wire, named so the SSE `event:` line is right.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnthropicEvent {
     pub name: &'static str,
@@ -44,28 +15,19 @@ impl AnthropicEvent {
     }
 }
 
-/// What is currently open in the stream.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Open {
     Nothing,
     Text,
-    /// A tool call, and which `content_block` index it occupies.
     Tool(usize),
 }
 
-/// Turns a run of OpenAI chunks into a well-formed Anthropic event stream.
-///
-/// Stateful on purpose: whether a delta opens a block, continues one, or closes
-/// one depends entirely on what came before it, and that is not knowable from a
-/// single chunk.
 #[derive(Debug)]
 pub struct StreamTranslator {
     model: String,
     started: bool,
     open: Open,
-    /// Next content-block index to hand out.
     next_index: usize,
-    /// Index of the tool call currently streaming, as OpenAI numbers them.
     current_tool: Option<usize>,
     finish: Option<String>,
     output_tokens: u64,
@@ -84,7 +46,6 @@ impl StreamTranslator {
         }
     }
 
-    /// Translate one OpenAI chunk.
     pub fn chunk(&mut self, chunk: &Value) -> Vec<AnthropicEvent> {
         let mut events = Vec::new();
 
@@ -158,12 +119,9 @@ impl StreamTranslator {
         events
     }
 
-    /// One tool-call delta, which may open a new block or continue the last.
     fn tool_delta(&mut self, call: &Value) -> Vec<AnthropicEvent> {
         let mut events = Vec::new();
 
-        // OpenAI identifies which call a fragment belongs to by `index`, and
-        // sends the name only on the first fragment of each.
         let position = call.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
         let starting = self.current_tool != Some(position);
 
@@ -174,7 +132,6 @@ impl StreamTranslator {
             self.open = Open::Tool(index);
 
             let mut block = tool_use_block(call);
-            // The block opens with empty input; the arguments arrive as deltas.
             block["input"] = json!({});
             events.push(AnthropicEvent::new(
                 "content_block_start",
@@ -189,8 +146,6 @@ impl StreamTranslator {
                     json!({
                         "type": "content_block_delta",
                         "index": self.current_index(),
-                        // Forwarded verbatim. A fragment is not valid JSON on
-                        // its own and parsing it here would throw away the call.
                         "delta": { "type": "input_json_delta", "partial_json": fragment },
                     }),
                 ));
@@ -200,14 +155,9 @@ impl StreamTranslator {
         events
     }
 
-    /// Close the stream. Always call this, including after an error, or the
-    /// client waits for a `message_stop` that never arrives.
     pub fn finish(&mut self) -> Vec<AnthropicEvent> {
         let mut events = Vec::new();
 
-        // A stream that produced nothing at all still has to be a well-formed
-        // message, or the client reports a protocol error rather than an empty
-        // answer.
         if !self.started {
             self.started = true;
             events.push(AnthropicEvent::new(
@@ -247,7 +197,6 @@ impl StreamTranslator {
         events
     }
 
-    /// An error mid-stream, as an event rather than a dropped connection.
     pub fn error(&self, message: &str) -> AnthropicEvent {
         AnthropicEvent::new(
             "error",
@@ -299,7 +248,6 @@ mod tests {
         events.iter().map(|event| event.name).collect()
     }
 
-    /// Run a whole stream and collect every event, as the route does.
     fn run(chunks: &[Value]) -> Vec<AnthropicEvent> {
         let mut translator = StreamTranslator::new("kuro-model");
         let mut events: Vec<AnthropicEvent> = Vec::new();
@@ -369,11 +317,8 @@ mod tests {
         let start = &events[1].data;
         assert_eq!(start["content_block"]["type"], "tool_use");
         assert_eq!(start["content_block"]["name"], "read_file");
-        // Opens empty; the arguments are deltas.
         assert_eq!(start["content_block"]["input"], json!({}));
 
-        // Forwarded verbatim rather than parsed — a fragment is not valid JSON
-        // and parsing it here would throw the call away.
         assert_eq!(events[2].data["delta"]["type"], "input_json_delta");
         assert_eq!(events[2].data["delta"]["partial_json"], "{\"path\":");
         assert_eq!(events[6].data["type"], "message_stop");
@@ -381,8 +326,6 @@ mod tests {
 
     #[test]
     fn text_followed_by_a_tool_call_closes_the_text_block_first() {
-        // The bracketing rule: a block must close before the next opens, or a
-        // client written against this format waits forever.
         let events = run(&[
             json!({ "id": "c1", "choices": [{ "delta": { "content": "Let me look." } }] }),
             json!({ "choices": [{ "delta": {
@@ -434,8 +377,6 @@ mod tests {
 
     #[test]
     fn a_stream_that_produced_nothing_is_still_a_well_formed_message() {
-        // Otherwise the client reports a protocol error rather than an empty
-        // answer, which sends people looking for the wrong bug.
         let mut translator = StreamTranslator::new("m");
         let events = translator.finish();
 

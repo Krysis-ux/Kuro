@@ -1,4 +1,4 @@
-/* ---------- Shell ---------- */
+
 
 .app {
   display: flex;
@@ -13,8 +13,6 @@
   flex-direction: column;
   overflow: hidden;
 }
-
-/* ---------- Sidebar ---------- */
 
 .sidebar {
   width: var(--sidebar-width);
@@ -164,8 +162,6 @@
   color: var(--danger);
 }
 
-/* ---------- Chat ---------- */
-
 .chat {
   flex: 1;
   min-height: 0;
@@ -234,14 +230,6 @@
   justify-content: flex-end;
 }
 
-/*
- * The bubble and its controls, stacked.
- *
- * A user message is right-aligned with no gutter beside it, so there is nowhere
- * to put controls except underneath. Stacking them in normal flow — rather than
- * floating a toolbar over the bubble — is what keeps them from landing on a
- * neighbouring message when a row changes height.
- */
 .message-user-col {
   display: flex;
   flex-direction: column;
@@ -278,33 +266,14 @@
   min-width: 0;
 }
 
-/* ---------- Code page ---------- */
-
-/*
- * Two columns: the project on the left, the conversation on the right. The
- * project pane is fixed-width and the conversation takes the rest, because the
- * conversation is what grows.
- */
 .code {
   flex: 1;
   min-height: 0;
   display: flex;
-  /* The running panel becomes an overlay on a narrow window, and needs
-     something to be positioned against. */
+
   position: relative;
 }
 
-/*
- * Width comes from the drag handle beside it, via an inline style, so there is
- * one source of truth for it and it survives a reload.
- *
- * `flex: 0 1 auto` rather than `flex: none`: the inline width is a *preference*
- * that may be shrunk, down to `min-width`. With `flex: none` the panel was
- * honoured to the pixel and the deficit went to the conversation, which has its
- * own floor — so the row could not fit, and `.main`'s `overflow: hidden`
- * silently clipped the composer's right-hand edge off the window. A panel
- * giving up fifty pixels is better than a send button nobody can reach.
- */
 .code-side {
   flex: 0 1 auto;
   min-width: 180px;
@@ -373,20 +342,12 @@
   min-width: 0;
 }
 
-/* A row is a block, not a flex row.
-   It was `display: flex; align-items: center`, which was right while every
-   entry was a single label — and wrong the moment a directory gained children,
-   because a nested list is a sibling of the button inside the same `li` and a
-   flex row laid it out *beside* the folder rather than under it. Opening a
-   folder pushed its contents off to the right instead of dropping them down. */
 .code-tree li {
   display: block;
   color: var(--text-muted);
   font-size: var(--text-xs);
 }
 
-/* Clipping belongs on the row's own button, which sets its own padding.
-   Here it cut the disclosure chevron in half against the panel's left edge. */
 .code-tree li.is-dir {
   color: var(--text);
 }
@@ -430,12 +391,6 @@
   font-size: var(--text-xs);
 }
 
-/*
- * The conversation is what the other two panels are beside, so it is the one
- * that never gets squeezed out. Without a floor, opening both panels on a
- * laptop-width window left it about ninety pixels wide and rendering one
- * letter per line.
- */
 .code-main {
   flex: 1;
   min-width: 340px;
@@ -472,12 +427,6 @@
   font-size: var(--text-xs);
 }
 
-/*
- * The mode switch.
- *
- * Agent is marked because it is the one that can change the user's files, and
- * "which mode am I in" should be answerable from across the room.
- */
 .mode-switch {
   display: flex;
   gap: 2px;
@@ -521,8 +470,6 @@
   color: var(--warning);
   border-color: color-mix(in srgb, var(--warning) 45%, transparent);
 }
-
-/* ---------- Workspaces ---------- */
 
 .workspace-new {
   display: flex;
@@ -575,17 +522,6 @@
   border-color: color-mix(in srgb, var(--danger) 40%, transparent);
 }
 
-/* ---------- Message actions ---------- */
-
-/*
- * Copy, fork and edit, under every stored message.
- *
- * Hidden with `visibility` rather than `display` so the strip occupies its space
- * whether or not the pointer is over the message. A message resizes constantly
- * — while it streams, when thinking is expanded, when the tool trail or the
- * inspector opens — and a control that only takes up space on hover would make
- * the whole transcript jump every time the pointer crossed it.
- */
 .message-actions {
   display: flex;
   gap: 2px;
@@ -619,8 +555,6 @@
   color: var(--text);
   background: var(--bg-active);
 }
-
-/* ---------- Editing a sent message ---------- */
 
 .message-editor {
   display: flex;
@@ -675,9 +609,6 @@
   padding-top: 2px;
 }
 
-/* Three dots rather than a spinner. A spinner is a *blocking* signal — it says
-   wait, nothing else is happening — and this sits under a reply that is already
-   half-written and readable. */
 .thinking-dots {
   display: inline-flex;
   align-items: center;
@@ -720,13 +651,10 @@
   }
 }
 
-/* Only appears once the wait is long enough to wonder about. */
 .thinking-elapsed {
   font-size: var(--text-xs);
   opacity: 0.7;
 }
-
-/* ---------- Prose ---------- */
 
 .prose {
   overflow-wrap: anywhere;
@@ -813,9 +741,6 @@
   text-decoration-color: var(--link);
 }
 
-/* A `/command` the composer recognised, kept in the message it was used on.
-   Tinted rather than merely coloured, so it reads as a token that did
-   something rather than as a word someone chose to emphasise. */
 .rich-command {
   padding: 1px 5px;
   margin: 0 -1px;
@@ -826,8 +751,6 @@
   font-size: 0.92em;
   white-space: nowrap;
 }
-
-/* ---------- Reasoning + inspector ---------- */
 
 .reasoning {
   margin-bottom: var(--space-3);
@@ -881,19 +804,12 @@
   font-size: var(--text-sm);
 }
 
-/* ---------- Composer ---------- */
-
 .composer-shell {
   width: 100%;
   max-width: var(--content-max);
   margin: 0 auto;
   padding: var(--space-3) var(--space-5) var(--space-4);
-  /*
-   * Never take space from the transcript. `.chat-scroll` is the flexible one
-   * and can shrink to nothing, so without this a composer that grew — whether
-   * from a long message or from a bad measurement — pushes the conversation
-   * off the screen instead of being bounded itself.
-   */
+
   flex: none;
 }
 
@@ -940,10 +856,9 @@
   padding: var(--space-2) var(--space-2) var(--space-3);
   font-size: var(--text-md);
   line-height: 1.6;
-  /* One line plus its padding, so the box has a floor even before the script
-     that sizes it has had a chance to measure anything. */
+
   min-height: calc(1.6em + var(--space-2) + var(--space-3));
-  /* Kept in step with MAX_INPUT_HEIGHT in Composer.tsx. */
+
   max-height: 320px;
 }
 
@@ -951,24 +866,6 @@
   color: var(--text-faint);
 }
 
-/*
- * The row that used to collide with itself.
- *
- * `.composer-left` and `.composer-right` are `flex: 0 1 auto` with
- * `min-width: 0`, which removes the content-based minimum that normally stops a
- * flex item shrinking past its own contents. Their children could not shrink —
- * the mode switch is four words, the thinking label is a nowrap text node, the
- * icon buttons are a literal 32px — so the boxes shrank and the contents were
- * painted outside them, underneath an opaque model picker.
- *
- * Three things fix it, in order of which acts first:
- *
- * 1. The container queries below drop labels to icons before space runs out.
- * 2. `flex-wrap` here is the floor: if it ever does run out anyway, the row
- *    wraps onto a second line. Wrapping is always better than overlapping.
- * 3. `overflow` is deliberately NOT set. Both pickers open their menus from
- *    inside this row, and clipping the row would clip the menus.
- */
 .composer-actions {
   display: flex;
   align-items: center;
@@ -978,15 +875,6 @@
   row-gap: var(--space-2);
 }
 
-/*
- * Measured against the composer, not the window.
- *
- * The existing `@media (max-width: 720px)` cannot help here: on the Code page
- * the composer is narrow because two panels are open, while the window is
- * wide — so a viewport query never fires in exactly the case that breaks. A
- * container query asks the only question that matters, which is how much room
- * this row actually has.
- */
 .composer {
   container-type: inline-size;
   container-name: composer;
@@ -998,7 +886,6 @@
   flex: none;
 }
 
-/* The collapsing labels. Width rather than display, so it can be animated. */
 .mode-step-label,
 .thinking-trigger-label,
 .composer-toggle-label {
@@ -1010,20 +897,6 @@
     margin var(--duration) var(--ease);
 }
 
-/*
- * The thresholds are below the composer's *own* maximum, which is the mistake
- * that made this ship with the labels permanently collapsed.
- *
- * `.composer-shell` is capped at `--content-max` (720px) and spends 48px of that
- * on padding, so `.composer` is never wider than 672. A container query written
- * at 720px is a condition that is always true: every composer, at every window
- * size, was below it. The first threshold now has to leave room at 672 for the
- * widest case — the Code page, whose row carries a four-word mode switch that a
- * chat does not.
- *
- * Collapsing in stages, least useful label first. The mode switch says which
- * permission the next turn runs under, so it keeps its words longest.
- */
 @container composer (max-width: 665px) {
   .thinking-trigger-label {
     max-width: 0;
@@ -1032,14 +905,6 @@
   }
 }
 
-/*
- * The icon is the label's replacement, not its companion.
- *
- * Showing both made the mode switch about seventy pixels wider than it was
- * before it could collapse at all — so the row stopped fitting at full width
- * and wrapped, which is the second half of what went wrong. Hidden by default,
- * revealed exactly when the words go.
- */
 .mode-step svg {
   display: none;
 }
@@ -1075,7 +940,6 @@
   }
 }
 
-/* A label that collapses instantly is a label that vanished. */
 @media (prefers-reduced-motion: reduce) {
   .mode-step-label,
   .thinking-trigger-label,
@@ -1115,12 +979,6 @@
 .composer-shell.is-centred .composer-hint {
   margin-top: var(--space-3);
 }
-
-/* Effort */
-
-/* One word and a chevron, rather than four words permanently on screen. The
-   four-across control asked for a decision on every turn that most people do
-   not have an opinion about; this asks only when somebody wants to answer. */
 
 .thinking-trigger {
   gap: 5px;
@@ -1179,8 +1037,6 @@
   line-height: 1.45;
 }
 
-/* Menu */
-
 .menu-anchor {
   position: relative;
 }
@@ -1193,8 +1049,7 @@
   min-width: 244px;
   padding: var(--space-1);
   border-radius: var(--radius);
-  /* One step lighter than the composer it floats over, so the popover reads as
-     a separate layer instead of blending into the panel behind it. */
+
   background: var(--bg-hover);
   box-shadow: var(--shadow-pop);
 }
@@ -1230,8 +1085,6 @@
   flex: 1;
 }
 
-/* A row is one line, always. The previous version let an explanatory note wrap
-   to three lines and push the icon out of alignment. */
 .menu-item {
   flex-wrap: nowrap;
   white-space: nowrap;
@@ -1248,8 +1101,7 @@
 }
 
 .menu-item:disabled {
-  /* Dimmed, not hidden: the row teaches what the model cannot do. The reason is
-     in the tooltip rather than on the row. */
+
   color: var(--text-faint);
 }
 
@@ -1276,8 +1128,6 @@
   margin: var(--space-1) 0;
   background: var(--border);
 }
-
-/* ---------- Pages ---------- */
 
 .page {
   flex: 1;
@@ -1315,16 +1165,6 @@
   background: var(--bg-raised);
 }
 
-/*
- * The flex row is what aligns the icon with the label.
- *
- * This rule used to be a plain block, and only `.panel-head .panel-title` was
- * given the flex treatment — so a heading inside a panel head lined up and the
- * same heading anywhere else did not. The icon in those cases fell back to
- * baseline alignment, which put its centre about 3px above the centre of the
- * letters: small enough that no single heading looks broken, consistent enough
- * that the whole page looks slightly off.
- */
 .panel-title {
   display: flex;
   align-items: center;
@@ -1342,8 +1182,6 @@
   margin-bottom: var(--space-4);
   font-size: var(--text-sm);
 }
-
-/* Rows and fields */
 
 .row,
 .field {
@@ -1423,8 +1261,6 @@
   overflow-x: auto;
   white-space: pre;
 }
-
-/* Models page */
 
 .pull-form {
   display: flex;
@@ -1560,7 +1396,6 @@
   width: 100%;
 }
 
-/* Fit badges keep the monochrome palette; the wording carries the meaning. */
 .fit {
   flex: none;
   padding: 2px 7px;
@@ -1602,8 +1437,6 @@
   border-color: color-mix(in srgb, var(--danger) 40%, transparent);
 }
 
-/* Empty states */
-
 .empty-state {
   text-align: center;
   padding: var(--space-7) var(--space-5);
@@ -1627,16 +1460,12 @@
   justify-content: center;
 }
 
-/* ---------- Model picker ---------- */
-
 .model-trigger {
   display: flex;
   align-items: center;
   gap: 6px;
   height: 30px;
-  /* Capped tighter than the 260 it used to be. The name ellipsizes; the
-     alternative was a long model id pushing the send button onto a second
-     line. */
+
   max-width: 200px;
   padding: 0 8px 0 10px;
   border-radius: var(--radius-full);
@@ -1666,12 +1495,6 @@
   flex: none;
 }
 
-/* The listbox is wider than the trigger and right-aligned to it, because model
-   names are long and the composer's right edge is the stable one. */
-/* Placement is decided in JS, because it depends on where the trigger happens
-   to be on screen: the composer sits at the bottom of the window and wants an
-   upward menu, the Code page header sits at the top and wants a downward one.
-   The class only says which of the four resulting positions to use. */
 .model-menu {
   position: absolute;
   z-index: 30;
@@ -1720,9 +1543,6 @@
   pointer-events: none;
 }
 
-/* No fixed height: the menu's own `max-height` is set from the space actually
-   available, and the list takes whatever is left after the search box and the
-   footer. A fixed 340px here would overflow the menu on a short window. */
 .model-menu-list {
   flex: 1;
   min-height: 0;
@@ -1740,10 +1560,6 @@
   margin-top: var(--space-2);
 }
 
-/* The `/` command palette.
-   Sits above the composer rather than over it: the message being typed has to
-   stay readable, because half the reason to run a command mid-sentence is that
-   the sentence told you which one you wanted. */
 .slash-menu {
   margin-bottom: var(--space-2);
   max-height: 260px;
@@ -1767,8 +1583,6 @@
   color: var(--text-muted);
 }
 
-/* Hover and keyboard selection are one state, so moving the mouse over the list
-   does not leave two rows looking equally chosen. */
 .slash-item.is-on {
   background: var(--bg-active);
   color: var(--text);
@@ -1791,9 +1605,6 @@
   font-size: var(--text-sm);
 }
 
-/* Introduces the run of provider sections. There is exactly one of these, and
-   it exists because "API providers" is the boundary the eye needs: everything
-   above it runs on this machine and everything below it does not. */
 .model-section-head {
   margin-top: var(--space-3);
   padding: var(--space-2) var(--space-2) var(--space-1);
@@ -1822,8 +1633,6 @@
   text-align: left;
 }
 
-/* A provider heading is a disclosure rather than a label, so it has to read as
-   pressable: full row, its own hover, and a chevron that turns. */
 .model-group-head.is-button {
   padding: 7px var(--space-2);
   border-radius: var(--radius-sm);
@@ -1841,8 +1650,6 @@
   white-space: nowrap;
 }
 
-/* How many models are behind the row, so the size of what is about to open is
-   known before it opens. */
 .model-group-count {
   flex: none;
   padding: 0 5px;
@@ -1861,9 +1668,6 @@
   transform: rotate(180deg);
 }
 
-/* Was a sentence telling the user to search. That is advice, not a control —
-   and when the thing you want is forty rows down a list you have already
-   opened, being told to type something else is a worse answer than a button. */
 .model-group-more {
   width: 100%;
   padding: 7px var(--space-2) 7px 30px;
@@ -1878,8 +1682,6 @@
   color: var(--text);
 }
 
-/* A model that has already refused. Visible, legible, and not clickable — the
-   reason it is greyed is the point, so it must not be greyed into illegibility. */
 .model-option.is-unavailable {
   opacity: 0.55;
   cursor: not-allowed;
@@ -1896,7 +1698,6 @@
   max-width: 190px;
 }
 
-/* The way out of the greyed state. Kept interactive while its row is not. */
 .model-option-fix {
   display: inline-flex;
   padding: 2px;
@@ -1965,8 +1766,6 @@
   background: var(--bg-active);
 }
 
-/* The quantization label. Monospaced and boxed, because it is a technical value
-   a user compares across rows rather than reads as prose. */
 .quant {
   flex: none;
   padding: 1px 5px;
@@ -1991,8 +1790,6 @@
   color: var(--n-0);
 }
 
-/* ---------- Composer additions ---------- */
-
 .composer-warning {
   margin-bottom: var(--space-2);
   font-size: var(--text-xs);
@@ -2007,8 +1804,6 @@
   color: var(--text-faint);
 }
 
-/* ---------- Panels with actions in the header ---------- */
-
 .panel-head {
   display: flex;
   align-items: center;
@@ -2018,8 +1813,6 @@
   flex-wrap: wrap;
 }
 
-/* The flex row and gap now come from `.panel-title` itself, so a heading is laid
-   out the same way whether or not it sits in a `.panel-head`. */
 .panel-head .panel-title {
   margin-bottom: 0;
 }
@@ -2040,8 +1833,6 @@
   padding-top: var(--space-4);
   font-size: var(--text-xs);
 }
-
-/* ---------- Switch ---------- */
 
 .switch {
   flex: none;
@@ -2073,8 +1864,6 @@
   transform: translateX(14px);
 }
 
-/* ---------- Sliders ---------- */
-
 .slider-field {
   padding: var(--space-4) 0;
   border-bottom: 1px solid var(--border);
@@ -2097,8 +1886,6 @@
   font-size: var(--text-sm);
 }
 
-/* The value doubles as the button that turns it into a field, so it needs to
-   look pressable without becoming another control on the row. */
 .slider-value {
   padding: 2px 7px;
   border-radius: var(--radius-sm);
@@ -2164,8 +1951,6 @@
   font-size: var(--text-xs);
 }
 
-/* ---------- Server and provider rows ---------- */
-
 .server-rows {
   display: flex;
   flex-direction: column;
@@ -2219,8 +2004,6 @@
   flex: none;
 }
 
-/* A dot rather than a coloured label, so the monochrome palette holds and only
-   a genuine failure spends colour. */
 .status-dot {
   flex: none;
   width: 7px;
@@ -2237,8 +2020,6 @@
 .status-error {
   background: var(--danger);
 }
-
-/* ---------- Tool lists ---------- */
 
 .tool-list {
   display: flex;
@@ -2268,8 +2049,6 @@
   font-size: var(--text-xs);
   min-width: 0;
 }
-
-/* ---------- Store and preset cards ---------- */
 
 .store-grid {
   display: grid;
@@ -2333,8 +2112,6 @@
   gap: var(--space-2);
 }
 
-/* ---------- Hugging Face search ---------- */
-
 .hub-rows {
   display: flex;
   flex-direction: column;
@@ -2386,8 +2163,6 @@
   gap: 4px;
   max-width: 220px;
 }
-
-/* ---------- Dialog ---------- */
 
 .dialog-backdrop {
   position: fixed;
@@ -2573,8 +2348,6 @@
   align-items: center;
 }
 
-/* ---------- Search provider choices ---------- */
-
 .provider-choices {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
@@ -2618,8 +2391,6 @@
   font-size: var(--text-xs);
 }
 
-/* ---------- Test results ---------- */
-
 .test-result {
   margin-top: var(--space-3);
   padding: var(--space-3);
@@ -2650,8 +2421,6 @@
   font-size: var(--text-xs);
 }
 
-/* ---------- Memory ---------- */
-
 .memory-list {
   display: flex;
   flex-direction: column;
@@ -2679,8 +2448,6 @@
   display: flex;
   gap: 4px;
 }
-
-/* ---------- Tool trail and sources ---------- */
 
 .tool-trail {
   display: flex;
@@ -2758,14 +2525,6 @@
   white-space: nowrap;
 }
 
-/* ---------- Inline forms and small shared bits ---------- */
-
-/* Granted folders.
- *
- * A path is long, arbitrary and the only thing on the row that can be shortened,
- * so it is the part that truncates — with the whole path in a `title` so it stays
- * readable. The remove button must never be the thing pushed out of view: it is
- * how a grant is taken back. */
 .file-roots {
   display: flex;
   flex-direction: column;
@@ -2793,8 +2552,6 @@
   border: 1px solid var(--border);
 }
 
-/* The notes explain the guarantees around the control above them, so they need
-   separating from it rather than reading as part of the form. */
 .file-notes {
   margin-top: var(--space-4);
 }
@@ -2903,8 +2660,6 @@
   border-width: 1.5px;
 }
 
-/* ---------- Narrow windows ---------- */
-
 @media (max-width: 720px) {
   .sidebar {
     display: none;
@@ -2923,15 +2678,6 @@
   }
 }
 
-/* ---------- Tool activity ---------- */
-
-/* What the model did, as a list of lines rather than as a panel.
-
-   It was a bordered, filled card with another bordered, filled card inside it
-   for every result, which on a coding turn meant fifteen nested boxes between
-   the question and the answer. The information was right and the framing was
-   wrong: these are steps in a sequence, and a sequence wants a rule down the
-   side, not fifteen rectangles. */
 .tool-activity {
   margin-bottom: var(--space-3);
 }
@@ -2986,9 +2732,6 @@
   min-width: 0;
 }
 
-/* Fixed width so the verbs line up down the list. A ragged left edge makes a
-   sequence of fifteen steps unreadable at a glance, which is the only way
-   anybody reads it. */
 .tool-step-mark {
   display: inline-flex;
   align-items: center;
@@ -3032,8 +2775,6 @@
   white-space: nowrap;
 }
 
-/* A path is a destination. The underline is the only affordance available on a
-   line this small, and it is the one people already read as "clickable". */
 .tool-step-path {
   text-align: left;
   text-decoration: underline;
@@ -3069,8 +2810,6 @@
   color: var(--text);
 }
 
-/* The raw tool result. Monospaced and scrollable, because it is data the user is
-   checking the answer against rather than prose to read. */
 .tool-step-detail {
   margin: 5px 0 0 18px;
   padding: var(--space-2);
@@ -3091,8 +2830,6 @@
   color: var(--text);
 }
 
-/* ---------- Adding your own skills ---------- */
-
 .skill-add {
   margin-bottom: var(--space-4);
   padding-bottom: var(--space-4);
@@ -3111,17 +2848,12 @@
   font-size: var(--text-xs);
 }
 
-/* `.panel-note` carries a negative top margin so it tucks under a panel
-   heading. Here it follows a row of controls instead, and that margin pulled it
-   up over the buttons — twelve pixels of text sitting on top of Import. */
 .skill-add .panel-note {
   margin-top: var(--space-2);
   margin-bottom: 0;
   font-size: var(--text-xs);
 }
 
-/* What one import turned up. Names rather than counts, because "3 skipped" is a
-   mystery and "rust, go were already built in" is an answer. */
 .skill-import-note {
   display: flex;
   flex-direction: column;
@@ -3181,7 +2913,6 @@
   white-space: nowrap;
 }
 
-/* The slug is what you type after a slash, so it carries the command colour. */
 .skill-mine-slug {
   flex: none;
   color: var(--command);
@@ -3194,8 +2925,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* ---------- Diff ---------- */
 
 .diff-view {
   margin-top: var(--space-2);
@@ -3220,7 +2949,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-xs);
-  /* The interesting end of a path is the right end. */
+
   direction: rtl;
   text-align: left;
 }
@@ -3255,9 +2984,6 @@
   white-space: pre;
 }
 
-/* Tinted rather than only signed, because a plus and a minus at the start of a
-   monospace line are two characters wide and the eye does not find them at
-   speed. The tints are the same two hues used everywhere else. */
 .diff-row.is-added {
   background: var(--command-bg);
 }
@@ -3273,7 +2999,6 @@
   padding-bottom: 2px;
 }
 
-/* Line numbers from both sides, so a hunk can be found in the real file. */
 .diff-gutter {
   flex: none;
   width: 3.2em;
@@ -3298,10 +3023,6 @@
   color: var(--danger);
 }
 
-/* Not wrapped. A wrapped diff turns one changed line into six rows of ragged
-   text and loses the thing a diff is for, which is that the shape of the change
-   is visible at a glance. The body scrolls sideways instead, and the panel is
-   draggable when a line is worth reading in full. */
 .diff-text {
   flex: 1;
   min-width: 0;
@@ -3316,8 +3037,6 @@
   min-width: max-content;
 }
 
-/* A change path is a button now, because clicking it opens the diff. It should
-   still read as the path it is, not as a control bolted next to one. */
 .code-change-path {
   flex: 1;
   min-width: 0;
@@ -3336,17 +3055,12 @@
   color: var(--link);
 }
 
-/* A skill attached with `/`, waiting on the message it will be sent with. It
-   carries the same colour as the command in the transcript, because it is the
-   same fact: this one registered. */
 .composer-attachments .tag-live {
   background: var(--command-bg);
   color: var(--command);
   border-color: color-mix(in srgb, var(--command) 30%, transparent);
 }
 
-/* A clear-all that only exists when there is something to clear, so it never
-   sits there advertising a list that is already empty. */
 .preview-clear {
   align-self: flex-start;
   color: var(--text-muted);
@@ -3355,8 +3069,6 @@
 .preview-clear:hover {
   color: var(--text);
 }
-
-/* ---------- Skills ---------- */
 
 .skill-group + .skill-group {
   margin-top: var(--space-5);
@@ -3423,8 +3135,6 @@
   white-space: pre-wrap;
 }
 
-/* ---------- Shutdown ---------- */
-
 .btn-danger {
   border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
@@ -3439,8 +3149,6 @@
   justify-content: flex-end;
   font-size: var(--text-sm);
 }
-
-/* ---------- Projects ---------- */
 
 .project-grid {
   display: grid;
@@ -3498,8 +3206,6 @@
   font-size: var(--text-xs);
 }
 
-/* The instructions field is the substance of a project, so it gets room to
-   breathe rather than being a one-line input. */
 .project-instructions {
   width: 100%;
   min-height: 150px;
@@ -3549,11 +3255,6 @@
   border-color: var(--border-strong);
 }
 
-/* ---------- Bypass mode ---------- */
-
-/* Louder than Agent, because it is the one mode that turns a protection off
-   rather than on. The colour is the same danger red used for destructive
-   buttons, so it reads the same way everywhere. */
 .mode-step.is-bypass.is-on {
   background: var(--danger);
   color: #fff;
@@ -3563,8 +3264,6 @@
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 45%, transparent);
 }
-
-/* ---------- Folder picker ---------- */
 
 .folder-field .input {
   flex: 1;
@@ -3639,8 +3338,7 @@
   flex: 1;
   min-width: 0;
   font-size: var(--text-xs);
-  /* The end of a path is the part that identifies it, so it scrolls from the
-     right rather than truncating the folder name. */
+
   direction: rtl;
   text-align: left;
   overflow: hidden;
@@ -3676,8 +3374,6 @@
   color: var(--text);
 }
 
-/* An empty folder is still choosable — it just cannot be navigated into, and
-   dimming it says which of the two it is. */
 .folder-row:disabled {
   opacity: 0.45;
   cursor: default;
@@ -3710,8 +3406,6 @@
   min-width: 0;
   font-size: var(--text-xs);
 }
-
-/* ---------- Running processes and preview ---------- */
 
 .preview-panel {
   display: flex;
@@ -3795,9 +3489,6 @@
   white-space: nowrap;
 }
 
-/* Tall rather than square: the side panel is narrow, and a page rendered in it
-   is mostly useful for checking vertical rhythm and whether anything is
-   obviously broken. */
 .preview-frame {
   width: 100%;
   height: 420px;
@@ -3836,12 +3527,9 @@
   line-height: 1.5;
   color: var(--text-muted);
   overflow: auto;
-  /* Build output is column-aligned, so it must not be re-wrapped — but it
-     also must not stretch the panel, hence the scroll. */
+
   white-space: pre;
 }
-
-/* ---------- Settings tabs ---------- */
 
 .settings-tabs {
   display: flex;
@@ -3867,8 +3555,6 @@
   color: var(--text);
   border-bottom-color: var(--text);
 }
-
-/* ---------- Choosing a default permission ---------- */
 
 .mode-choices {
   display: grid;
@@ -3902,8 +3588,6 @@
   color: var(--text);
 }
 
-/* Bypass is the only choice that removes a protection, so it is the only one
-   that gets a colour when selected. */
 .mode-choice.is-bypass.is-on {
   border-color: var(--danger);
 }
@@ -3911,8 +3595,6 @@
 .mode-choice.is-bypass.is-on .mode-choice-label {
   color: var(--danger);
 }
-
-/* ---------- Skills that are always on ---------- */
 
 .skill-essentials {
   margin-top: var(--space-4);
@@ -3937,8 +3619,6 @@
   font-size: var(--text-sm);
 }
 
-/* ---------- Marketplace search ---------- */
-
 .store-search {
   position: relative;
   width: min(260px, 45vw);
@@ -3949,8 +3629,6 @@
   padding-left: 29px;
   font-size: var(--text-sm);
 }
-
-/* ---------- Models by purpose ---------- */
 
 .purpose-group + .purpose-group {
   margin-top: var(--space-6);
@@ -3974,8 +3652,6 @@
   max-width: 62ch;
 }
 
-/* ---------- Free-tier pool ---------- */
-
 .free-flavours {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -3993,9 +3669,6 @@
   font-size: var(--text-sm);
 }
 
-/* Dimmed rather than hidden: a flavour with no provider behind it is a fact
-   about which keys have been added, and hiding it would make the set of models
-   appear to change shape for no visible reason. */
 .free-flavour.is-off {
   opacity: 0.5;
 }
@@ -4007,18 +3680,6 @@
   flex-wrap: wrap;
 }
 
-/* ---------- Collapsing the sidebar ---------- */
-
-/*
- * Collapsed is collapsed.
- *
- * The old version kept a 52px icon rail, on the reasoning that a fully hidden
- * sidebar has nowhere to put the button that brings it back. That reasoning was
- * sound and the conclusion was wrong: the button does not have to live in the
- * sidebar. It lives here — a fixed corner control that is present in both
- * states, so the page gets the whole width and the way back is never more than
- * one click and always in the same place.
- */
 .sidebar-rail {
   position: fixed;
   top: var(--space-3);
@@ -4048,8 +3709,6 @@
   color: var(--text);
 }
 
-/* Floating over the page, it needs its own ground to sit on — inside the
-   sidebar it has the sidebar's. */
 .sidebar-rail .sidebar-toggle {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -4061,11 +3720,6 @@
   border-color: var(--border-strong);
 }
 
-/*
- * The reopen button sits over the top-left of whatever is showing, so pages
- * whose own content starts up there get out of its way. Applied to the shell
- * rather than to each page, so a page added later inherits it.
- */
 .app:has(.sidebar-rail) .page,
 .app:has(.sidebar-rail) .chat-scroll,
 .app:has(.sidebar-rail) .code-bar,
@@ -4073,16 +3727,6 @@
   padding-left: calc(var(--space-4) + 34px);
 }
 
-/* ---------- Panel dividers ---------- */
-
-/*
- * A one-pixel seam with a nine-pixel grab area.
- *
- * Both numbers matter and they cannot be the same number: a divider you can see
- * is too thin to hit, and one you can hit is too thick to look like a seam. So
- * the element is wide, transparent, and negatively margined so it takes no space
- * in the layout, and the line inside it is what you actually see.
- */
 .panel-divider {
   position: relative;
   flex: none;
@@ -4111,18 +3755,14 @@
   outline: none;
 }
 
-/* A drag that crosses the conversation must not select it on the way past. */
 body.is-resizing {
   user-select: none;
 }
 
 body.is-resizing iframe {
-  /* An iframe swallows pointer events, which ends the drag the moment the
-     cursor crosses the preview. */
+
   pointer-events: none;
 }
-
-/* ---------- The Code page's bar and running panel ---------- */
 
 .code-bar {
   flex: none;
@@ -4159,8 +3799,6 @@ body.is-resizing iframe {
   color: var(--text);
 }
 
-/* Something is running. The dot is the whole point of the button being visible
-   while the panel is shut. */
 .code-bar-btn.is-live {
   color: var(--text);
 }
@@ -4202,15 +3840,6 @@ body.is-resizing iframe {
   flex: 1;
 }
 
-/*
- * On a narrow window the running panel stops taking layout space and slides
- * over the conversation instead.
- *
- * Three resizable columns need about 1200px before the middle one stops being
- * the loser. Below that the choice is between a crushed conversation and a
- * panel that overlaps it, and overlapping is the honest one: the panel is
- * something you open, look at, and close, not somewhere you type.
- */
 @media (max-width: 1200px) {
   .code-running {
     position: absolute;
@@ -4223,18 +3852,12 @@ body.is-resizing iframe {
     box-shadow: -8px 0 24px rgb(0 0 0 / 0.3);
   }
 
-  /* Nothing to drag against once it floats. */
   .code-running + .panel-divider,
   .panel-divider:has(+ .code-running) {
     display: none;
   }
 }
 
-/*
- * Narrower still and the file panel is the one in the way, so it collapses to
- * nothing rather than competing with the conversation. The stored width is
- * untouched — the panel comes back exactly as wide as it was dragged.
- */
 @media (max-width: 900px) {
   .code-side {
     max-width: 40vw;
@@ -4248,15 +3871,6 @@ body.is-resizing iframe {
   }
 }
 
-/* ---------- Copy buttons ---------- */
-
-/*
- * The button floats over the block's top-right corner rather than sitting in a
- * header, so a block gains no height for having one. It fades in on hover —
- * a page of code should not also be a page of buttons — but focus brings it
- * back regardless, because fading a control out is a visual convenience and
- * must never be an access rule.
- */
 .code-surface {
   position: relative;
   min-width: 0;
@@ -4305,8 +3919,6 @@ body.is-resizing iframe {
   border-color: currentColor;
 }
 
-/* A fenced block in a reply keeps its language label, so the bar is real
-   layout rather than an overlay. */
 .code-surface.is-markdown {
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -4345,7 +3957,6 @@ body.is-resizing iframe {
   opacity: 1;
 }
 
-/* The block already has the surface's border and background. */
 .code-surface.is-markdown > pre {
   margin: 0;
   border: none;
@@ -4353,7 +3964,6 @@ body.is-resizing iframe {
   background: none;
 }
 
-/* Inside a tool result, where space is tight, the label is dropped. */
 .code-surface.is-inline .copy-button-label {
   display: none;
 }
@@ -4365,15 +3975,12 @@ body.is-resizing iframe {
   padding: 0 5px;
 }
 
-/* A pooled model reads as a category rather than a name. */
 .model-option.is-pooled .model-option-name {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-weight: 500;
 }
-
-/* ---------- What the free keys have been spent on ---------- */
 
 .usage-totals {
   display: grid;
@@ -4435,8 +4042,6 @@ body.is-resizing iframe {
   font-size: var(--text-xs);
 }
 
-/* Only drawn where a limit was entered — never an empty bar, which would imply
-   Kuro knew the allowance and measured nothing against it. */
 .usage-bar {
   height: 5px;
   border-radius: 999px;
@@ -4470,8 +4075,6 @@ body.is-resizing iframe {
   cursor: pointer;
   font-size: var(--text-sm);
 }
-
-/* ---------- Confirming something irreversible ---------- */
 
 .confirm-backdrop {
   position: fixed;
@@ -4521,7 +4124,6 @@ body.is-resizing iframe {
   margin-top: var(--space-1);
 }
 
-/* The colour is the warning. Reserved for actions with nothing behind them. */
 .btn-danger {
   background: var(--danger);
   color: #fff;
@@ -4532,14 +4134,12 @@ body.is-resizing iframe {
   filter: brightness(1.08);
 }
 
-/* Room for a count and a bulk switch beside a panel heading. */
 .panel-head-actions {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-/* The per-category all/none control sits at the end of its heading. */
 .skill-group-head {
   display: flex;
   align-items: baseline;
@@ -4547,8 +4147,6 @@ body.is-resizing iframe {
   gap: var(--space-3);
 }
 
-/* The way back to wherever you came from. Sits above the page title, so it
-   reads as leaving rather than as part of the page. */
 .back-link {
   align-self: flex-start;
   margin-bottom: var(--space-2);
@@ -4560,8 +4158,6 @@ body.is-resizing iframe {
 .back-link:hover {
   color: var(--text);
 }
-
-/* ---------- File tree and viewer ---------- */
 
 .code-tree-filter {
   position: relative;
@@ -4598,8 +4194,6 @@ body.is-resizing iframe {
   color: var(--text);
 }
 
-/* A directory row. Was a static label, which made every folder in the project
-   permanently open and the panel a flat dump of hundreds of paths. */
 .code-tree-dir {
   display: flex;
   align-items: center;
@@ -4623,13 +4217,10 @@ body.is-resizing iframe {
 .code-tree-dir svg:first-child {
   flex: none;
   transition: transform 120ms ease;
-  /* Points right when closed, down when open — the convention every file tree
-     uses, and the only affordance saying the row can be opened at all. */
+
   transform: rotate(-90deg);
 }
 
-/* Both row types clip their own text rather than letting the list do it, so a
-   long filename ellipsises without the chevron beside it being cut off too. */
 .code-tree-file,
 .code-tree-dir {
   white-space: nowrap;
@@ -4641,8 +4232,6 @@ body.is-resizing iframe {
   transform: rotate(0deg);
 }
 
-/* Nested levels carry their own indent through inline padding, so the list
-   itself adds none. */
 .code-tree .code-tree {
   padding-left: 0;
 }
@@ -4652,9 +4241,6 @@ body.is-resizing iframe {
   text-overflow: ellipsis;
 }
 
-/* A third column between the project pane and the conversation. Wider than the
-   file list because it holds code, narrower than the conversation because the
-   conversation is what grows. */
 .file-viewer {
   flex: none;
   width: min(520px, 38vw);
@@ -4696,8 +4282,6 @@ body.is-resizing iframe {
   white-space: pre;
   tab-size: 2;
 }
-
-/* ---------- About you ---------- */
 
 .about-you {
   height: auto;

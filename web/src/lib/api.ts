@@ -1,10 +1,3 @@
-/**
- * Client for the Kuro daemon.
- *
- * Field names mirror the Rust structs exactly rather than being remapped, so a
- * backend change surfaces as a type error here instead of as a silently
- * undefined value at runtime.
- */
 
 export type ModelStatus = 'downloading' | 'ready' | 'error'
 export type FitVerdict = 'great' | 'fits' | 'tight' | 'wont_fit'
@@ -41,67 +34,25 @@ export interface InstalledModel {
   model: ModelRecord
   loaded: boolean
   fit: FitEstimate | null
-  /** `chat`, `embedding`, `reranker` and so on, read off the name. */
   kind: string
-  /**
-   * Whether this model can hold a conversation.
-   *
-   * False for embedding models and rerankers. Worth knowing rather than
-   * assuming: picking an embedding model for a chat does not fail, it answers —
-   * with whatever the decoder makes of a vector, which reads as a stuck model
-   * rather than as the wrong one.
-   */
   chat: boolean
 }
 
-/**
- * A model belonging to a connected provider.
- *
- * `id` carries a `cloud:` prefix and is usable anywhere a local model id is, so
- * the composer and the conversation store need no notion of "remote".
- */
 export interface RemoteModel {
   id: string
   name: string
   connector_id: string
   connector_label: string
   provider: string
-  /**
-   * Whether this row stands for every free model on its provider rather than
-   * one named model. OpenRouter lists hundreds; the free ones are scattered
-   * through them alphabetically, and this is the row that finds them for you.
-   */
   pooled: boolean
-  /** How many models the pool covers. Zero on an ordinary row. */
   pool_size: number
-  /**
-   * Whether this model costs nothing on the key that reaches it.
-   *
-   * Per-model rather than per-provider because on a gateway it is: one
-   * OpenRouter key reaches hundreds of billed models and a dozen free ones.
-   */
   free: boolean
-  /**
-   * What the model's name says it was trained for — `code`, `reasoning`,
-   * `vision`, `fast`, `general`. Read off the id by the server, because no
-   * provider publishes this and a list of four hundred untagged ids is a list
-   * nobody can choose from.
-   */
   specialities: string[]
-  /** Size in billions of parameters, when the name states one. */
   params_b: number | null
-  /**
-   * Why this cannot be picked right now, when it cannot.
-   *
-   * The row greys out rather than disappearing: a model that vanishes answers
-   * "where did the one I used yesterday go" with silence.
-   */
   unavailable: string | null
-  /** Where to go to make it work — a provisioning page, when one exists. */
   fix_url: string | null
 }
 
-/** A GGUF repository found on Hugging Face. */
 export interface HubModel {
   repo: string
   name: string
@@ -112,7 +63,6 @@ export interface HubModel {
   quants: string[]
   param_count: string | null
   gated: boolean
-  /** Published only as multi-part shards, which cannot be loaded yet. */
   split_only: boolean
   fit: FitEstimate | null
   installed: boolean
@@ -145,7 +95,6 @@ export interface SearchProviderOption {
 
 export type SkillCategory = 'language' | 'coding' | 'practice' | 'design' | 'writing'
 
-/** An instruction pack appended to the system prompt when switched on. */
 export interface Skill {
   slug: string
   name: string
@@ -155,46 +104,37 @@ export interface Skill {
   approx_tokens: number
 }
 
-/** A skill that is always on in a coding workspace and has no switch. */
 export interface EssentialSkill {
   slug: string
   name: string
   blurb: string
 }
 
-/** Per-surface preferences. Chat and coding are configured separately. */
 export interface SurfaceSettings {
   autoOrchestrate: boolean
   defaultEffort: Effort
-  /** Coding only: the mode a newly opened workspace starts in. */
   defaultMode?: WorkspaceMode
 }
 
-/** How much skill guidance one turn may carry at a given effort level. */
 export interface SkillBudget {
   effort: string
   tokens: number
 }
 
-/** A skill the user uploaded or imported. */
 export interface CustomSkill {
   slug: string
   name: string
   blurb: string
   category: string
   approxTokens: number
-  /** `upload`, or the repository it came from. */
   source: string
   updatedAt: string
 }
 
-/** What one import of a repository turned up. */
 export interface SkillImport {
   repo: string
   added: string[]
-  /** Names that clashed with a built-in, so were left alone. */
   skipped: string[]
-  /** Skills whose instructions expect `scripts/` that were not imported. */
   needsScripts: string[]
 }
 
@@ -205,29 +145,12 @@ export interface ToolsOverview {
   skills: {
     catalogue: Skill[]
     enabled: string[]
-    /**
-     * What every enabled skill would cost if they all went into one prompt.
-     *
-     * No longer what a turn spends, and no longer what the screen leads with.
-     * A turn ranks the enabled set against the message and sends what fits
-     * `budgets`; this total only describes the pool.
-     */
     approxTokens: number
-    /** The ceiling on what one turn carries, per surface and effort level. */
     budgets: {
       chat: SkillBudget[]
       code: SkillBudget[]
     }
-    /** Shown as a note, not as switches — these cannot be turned off. */
     essentials: EssentialSkill[]
-    /**
-     * The ones the user added themselves.
-     *
-     * These also appear in `catalogue`, because to everything downstream they
-     * are ordinary skills. They are listed again here because the question
-     * this answers is different: not "what can Kuro do" but "what did I add,
-     * where did it come from, and how do I take it back out".
-     */
     custom: CustomSkill[]
   }
   surfaces: { chat: SurfaceSettings; code: SurfaceSettings }
@@ -235,7 +158,6 @@ export interface ToolsOverview {
   search: {
     provider: string
     baseUrl: string | null
-    /** Whether a key is stored. The key itself is never sent to the browser. */
     hasApiKey: boolean
     needsApiKey: boolean
     needsBaseUrl: boolean
@@ -263,9 +185,7 @@ export type McpTransport = 'stdio' | 'http'
 export type McpStatus = 'connected' | 'disconnected' | 'error'
 
 export interface ExposedTool {
-  /** The name the model is given, after collision handling. */
   name: string
-  /** The name the server itself uses. */
   remote_name: string
   description: string
 }
@@ -286,7 +206,6 @@ export interface McpServer {
   tool_count: number | null
   created_at: string
   tools: ExposedTool[]
-  /** Whether a bearer token is stored. Never the token. */
   has_auth: boolean
 }
 
@@ -308,7 +227,6 @@ export interface McpRegistryEntry {
   installed: boolean
 }
 
-/** Result of a connection attempt, reported alongside the row it belongs to. */
 export interface ConnectionResult {
   ok: boolean
   toolCount?: number
@@ -320,12 +238,6 @@ export interface ConnectionResult {
 export type ProviderStatus = 'untested' | 'ok' | 'error'
 export type PresetKind = 'aggregator' | 'first_party' | 'rented_gpu' | 'custom'
 
-/**
- * Which screen an endpoint belongs on.
- *
- * `provider` is someone else's model billed per token; `cloud` is your own model
- * on hardware you rent, billed by the hour. Same mechanism, different decision.
- */
 export type Surface = 'provider' | 'cloud'
 
 export interface ProviderPreset {
@@ -357,12 +269,6 @@ export interface Provider {
 
 /* ---------- Projects ---------- */
 
-/**
- * A project: standing instructions plus a grouping of conversations.
- *
- * The instructions are appended to the model's brief for every chat in the
- * project, which is the substance of the feature.
- */
 export interface Project {
   id: string
   name: string
@@ -377,13 +283,6 @@ export interface Project {
 
 /* ---------- Coding workspaces ---------- */
 
-/**
- * How much a model may do inside a workspace.
- *
- * The mode *is* the permission. It is chosen before the turn rather than asked
- * about mid-generation, and it is what decides which tools the model is even
- * shown.
- */
 export type WorkspaceMode = 'ask' | 'plan' | 'agent' | 'bypass'
 
 export interface Workspace {
@@ -394,7 +293,6 @@ export interface Workspace {
   mode: WorkspaceMode
   created_at: string
   updated_at: string
-  /** Whether the folder is still on disk. Checked on every read. */
   root_exists: boolean
   conversation_count: number
 }
@@ -403,7 +301,6 @@ export interface WorkspaceModeInfo {
   id: WorkspaceMode
   label: string
   blurb: string
-  /** Tool names this mode offers, so the UI can show what changes. */
   tools: string[]
 }
 
@@ -418,13 +315,6 @@ export interface CodingTool {
 
 /* ---------- Long-running processes ---------- */
 
-/**
- * A dev server or other command a workspace left running.
- *
- * `url` is what the preview panel points at. It is read out of the process's own
- * output rather than guessed, so it is absent until the server has said where it
- * is listening.
- */
 export interface RunningProcess {
   id: string
   workspace_id: string
@@ -455,7 +345,6 @@ export interface FolderListing {
 
 /* ---------- Free-tier pool ---------- */
 
-/** A provider with a free tier, and whether a key for it is stored. */
 export interface FreeProvider {
   slug: string
   name: string
@@ -465,31 +354,19 @@ export interface FreeProvider {
   keyHint: string | null
   models: string[]
   hasKey: boolean
-  /**
-   * Set while the provider is being skipped after refusing.
-   *
-   * `model_gone` was missing here while the server was already sending it, so
-   * that tag silently never rendered.
-   */
   trouble: 'rate_limited' | 'rejected' | 'model_gone' | null
-  /** Whether the allowance renews, runs out, or is a shared endpoint. */
   tier: 'recurring' | 'keyless' | 'starter_credit' | 'expiring_trial'
-  /** A shared endpoint: no account, no key, and rate limited by address. */
   keyless: boolean
   privacy: { logged: boolean; trains: boolean }
-  /** A trial that has passed its date. Its key is no longer used. */
   expired: boolean
-  /** What the user said this provider's allowance is, if they said. */
   limit: FreeLimit | null
 }
 
-/** A ceiling the user typed in. Kuro cannot discover these. */
 export interface FreeLimit {
   tokensPerDay?: number
   tokensPerMonth?: number
 }
 
-/** One provider's spend inside a window. */
 export interface FreeProviderUsage {
   providerSlug: string
   name: string
@@ -497,7 +374,6 @@ export interface FreeProviderUsage {
   promptTokens: number
   completionTokens: number
   totalTokens: number
-  /** Turns whose provider sent no counts, so the totals are a floor. */
   unreportedTurns: number
   limit: FreeLimit | null
 }
@@ -515,14 +391,12 @@ export interface FreeUsage {
   day: FreeWindow
   month: FreeWindow
   averages: {
-    /** Null when nothing reported, rather than a division by zero. */
     tokensPerTurn: number | null
     tokensPerDayThisMonth: number | null
   }
 }
 
 export interface FreeFlavour {
-  /** The model id to select in the picker. */
   id: string
   flavour: string
   label: string
@@ -535,16 +409,9 @@ export interface FreeOverview {
   flavours: FreeFlavour[]
   keyCount: number
   availableCount: number
-  /** Whether the shared, unauthenticated endpoints may answer. */
   allowKeyless: boolean
 }
 
-/**
- * One file change a model made.
- *
- * The contents themselves stay on the server — they are whole files — so this
- * carries only the shape of the change and whether it can still be put back.
- */
 export interface WorkspaceChange {
   id: string
   path: string
@@ -553,13 +420,11 @@ export interface WorkspaceChange {
   createdAt: string
   undone: boolean
   undoable: boolean
-  /** True when the model created this file, so undoing removes it. */
   created: boolean
   beforeLines: number | null
   afterLines: number | null
 }
 
-/** What a model is worth choosing *for*, as opposed to whether it will run. */
 export type Purpose = 'coding' | 'vision' | 'audio' | 'text' | 'all_round'
 
 export interface PurposeInfo {
@@ -579,7 +444,6 @@ export interface RecommendedModel {
   family: string
   capabilities: string[]
   purposes: Purpose[]
-  /** The heading this model is filed under when shown once. */
   primaryPurpose: Purpose
   contextLength: number
   approxSizeBytes: number
@@ -619,16 +483,9 @@ export interface Conversation {
   archived: boolean
   created_at: string
   updated_at: string
-  /** The conversation this one was branched from, when it was. */
   forked_from_id: string | null
 }
 
-/**
- * Prefix on the stand-in row shown while a message is still being sent.
- *
- * Such a row has no server-side id yet, so anything that addresses a message by
- * id — forking, editing — has to wait for the real one.
- */
 export const OPTIMISTIC_ID_PREFIX = 'optimistic-'
 
 export function isOptimistic(messageId: string): boolean {
@@ -641,13 +498,6 @@ export interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   reasoning_content: string | null
-  /**
-   * The tool trail for this turn, as recorded by the server.
-   *
-   * `arguments` has always been stored and was simply not declared here, so a
-   * reopened conversation showed `edit_file` where a live one showed which file
-   * was edited. The same turn should not read differently tomorrow.
-   */
   tool_calls:
     | { name: string; ok: boolean; preview: string; arguments?: Record<string, unknown> }[]
     | null
@@ -699,15 +549,8 @@ export interface PullPreview {
   fit: FitEstimate
 }
 
-/**
- * How hard to think.
- *
- * `ultra` is offered only in a coding workspace: a chat has no project to read
- * and no build to run, so the extra rounds it buys have nothing to buy.
- */
 export type Effort = 'low' | 'balanced' | 'high' | 'max' | 'ultra'
 
-/** Error carrying the server's own message, so the UI never invents wording. */
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -745,16 +588,8 @@ const post = <T>(path: string, body?: unknown) =>
 
 export const api = {
   status: () => request<ServerStatus>('/api/status'),
-  /** Unload every engine and stop the daemon. */
   shutdown: () => post<{ stopping: boolean; unloadingEngines: number }>('/api/shutdown'),
-  /** Relaunch the daemon. The successor starts before this one exits. */
   restart: () => post<{ restarting: boolean; port: number }>('/api/restart'),
-  /**
-   * Resolve once the server answers again, or reject on timeout.
-   *
-   * Used after a restart: the browser cannot know when the successor is ready, and
-   * a fixed delay would either be wrong or feel slow.
-   */
   waitUntilHealthy: async (timeoutMs = 30_000): Promise<void> => {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -762,7 +597,6 @@ export const api = {
         const response = await fetch('/api/health', { cache: 'no-store' })
         if (response.ok) return
       } catch {
-        // Expected while the port is between owners.
       }
       await new Promise((resolve) => setTimeout(resolve, 400))
     }
@@ -780,7 +614,6 @@ export const api = {
       request<{ models: RecommendedModel[]; purposes: PurposeInfo[] }>(
         '/api/models/recommended',
       ),
-    /** Search Hugging Face. An empty query returns the most-downloaded. */
     searchHub: (query: string, limit?: number) => {
       const params = new URLSearchParams()
       if (query.trim()) params.set('q', query.trim())
@@ -817,7 +650,6 @@ export const api = {
       }),
     remove: (id: string) => request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
     messages: (id: string) => request<{ messages: Message[] }>(`/api/conversations/${id}/messages`),
-    /** Branch a chat into a new one, up to and including `upToMessageId`. */
     fork: (id: string, upToMessageId?: string) =>
       post<Conversation>(`/api/conversations/${id}/fork`, { up_to_message_id: upToMessageId }),
   },
@@ -846,7 +678,6 @@ export const api = {
       ),
     changes: (id: string) =>
       request<{ changes: WorkspaceChange[] }>(`/api/workspaces/${id}/changes`),
-    /** One change with both sides of it, for the diff view. */
     change: (id: string, changeId: string) =>
       request<{
         id: string
@@ -855,7 +686,6 @@ export const api = {
         createdAt: string
         undone: boolean
         created: boolean
-        /** Null when the file did not exist, or was too large to snapshot. */
         before: string | null
         after: string | null
       }>(`/api/workspaces/${id}/changes/${changeId}`),
@@ -874,12 +704,10 @@ export const api = {
       request<{ process: RunningProcess; lines: string[] }>(
         `/api/workspaces/${id}/processes/${processId}/log`,
       ),
-    /** Take one finished process off the list. Running ones are refused. */
     forgetProcess: (id: string, processId: string) =>
       request<{ forgotten: boolean }>(`/api/workspaces/${id}/processes/${processId}`, {
         method: 'DELETE',
       }),
-    /** Take every finished process off the list at once. */
     clearProcesses: (id: string) =>
       request<{ cleared: number }>(`/api/workspaces/${id}/processes`, { method: 'DELETE' }),
     stopProcess: (id: string, processId: string) =>
@@ -888,7 +716,6 @@ export const api = {
       ),
   },
 
-  /** Walking this machine's folders, so nothing has to be typed as a path. */
   fs: {
     browse: (path?: string, showHidden = false) => {
       const params = new URLSearchParams()
@@ -897,14 +724,6 @@ export const api = {
       const suffix = params.toString()
       return request<FolderListing>(`/api/fs/browse${suffix ? `?${suffix}` : ''}`)
     },
-    /**
-     * Open the operating system's own folder dialog.
-     *
-     * `available: false` means this platform has none wired up; `cancelled`
-     * means the dialog opened and was dismissed. Both are ordinary outcomes,
-     * not errors, so the caller falls back to the built-in list rather than
-     * showing a failure.
-     */
     choose: () =>
       post<{
         available: boolean
@@ -970,7 +789,6 @@ export const api = {
         body: JSON.stringify(patch),
       }),
     remove: (id: string) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
-    /** `null` moves the conversation out of any project. */
     moveConversation: (conversationId: string, projectId: string | null) =>
       post<{ projectId: string | null }>(`/api/conversations/${conversationId}/project`, {
         projectId,
@@ -981,22 +799,17 @@ export const api = {
     overview: () => request<ToolsOverview>('/api/tools'),
     setDefaults: (patch: { groups?: ToolGroup[]; memoryPreload?: boolean }) =>
       post<ToolsOverview>('/api/tools/defaults', patch),
-    /** The whole set is sent, not a diff, so concurrent toggles cannot disagree. */
     setSkills: (enabled: string[]) => post<ToolsOverview>('/api/tools/skills', { enabled }),
-    /** Add a skill from a SKILL.md the user picked off their disk. */
     uploadSkill: (filename: string, content: string) =>
       post<ToolsOverview>('/api/tools/skills/upload', { filename, content }),
-    /** Pull every SKILL.md out of a GitHub repository. */
     importSkills: (url: string) =>
       post<ToolsOverview & { imported: SkillImport }>('/api/tools/skills/import', { url }),
-    /** Remove one the user added. Built-ins are refused by the server. */
     deleteSkill: (slug: string) =>
       request<ToolsOverview>(`/api/tools/skills/${encodeURIComponent(slug)}`, {
         method: 'DELETE',
       }),
     configureSearch: (patch: { provider?: string; baseUrl?: string; apiKey?: string }) =>
       post<ToolsOverview>('/api/tools/search', patch),
-    /** Run a real search, so a user never has to send a message to find out. */
     testSearch: (query?: string) =>
       post<{ ok: boolean; provider: string; results?: SearchResult[]; error?: string }>(
         '/api/tools/search/test',
@@ -1015,7 +828,6 @@ export const api = {
   },
 
   mcp: {
-    /** `connect` dials every enabled server; off by default so loads are instant. */
     servers: (connect = false) =>
       request<{ servers: McpServer[] }>(`/api/mcp/servers${connect ? '?connect=true' : ''}`),
     registry: () => request<{ entries: McpRegistryEntry[] }>('/api/mcp/registry'),
@@ -1066,7 +878,6 @@ export type ChatEvent =
   | { type: 'token'; content: string }
   | { type: 'reasoning'; content: string }
   | { type: 'error'; message: string }
-  /** Something went wrong that did not stop the turn — a failed search, say. */
   | { type: 'notice'; message: string }
   | { type: 'tool_call'; name: string; arguments: Record<string, unknown> }
   | { type: 'tool_result'; name: string; ok: boolean; preview: string }
@@ -1081,24 +892,14 @@ export type ChatEvent =
       toolRounds: number
     }
 
-/** What a turn is asked to do, whether it is a new message or a rewritten one. */
 export interface TurnRequest {
   content: string
   model?: string
   effort?: Effort
-  /** Tool groups on for this message. */
   tools?: ToolGroup[]
-  /** Search before answering, rather than hoping the model asks. */
   web_search?: boolean
 }
 
-/**
- * Send a message and yield events as they arrive.
- *
- * `EventSource` cannot issue a POST, so the stream is read from the response
- * body directly. Bytes are decoded incrementally and only complete events are
- * emitted, which keeps multi-byte characters intact across chunk boundaries.
- */
 export function streamMessage(
   conversationId: string,
   body: TurnRequest,
@@ -1107,13 +908,6 @@ export function streamMessage(
   return streamTurn(`/api/conversations/${conversationId}/messages`, 'POST', body, signal)
 }
 
-/**
- * Rewrite a message and answer again from that point.
- *
- * The server drops the edited message and everything after it before
- * generating, so the events that arrive here describe a transcript that now
- * ends where the edit was made.
- */
 export function streamEditMessage(
   conversationId: string,
   messageId: string,
@@ -1161,8 +955,6 @@ async function* streamTurn(
     const { done, value } = await reader.read()
     if (done) break
 
-    // `stream: true` holds back a partial multi-byte character until the rest
-    // of it arrives.
     buffer += decoder.decode(value, { stream: true })
 
     let separator = buffer.indexOf('\n\n')
@@ -1214,9 +1006,7 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${bytes} B`
 }
 
-/** Prefix marking a model as belonging to a provider rather than this machine. */
 const REMOTE_PREFIX = 'cloud:'
-/** Prefix marking a model as the pooled free tiers rather than one provider. */
 const FREE_PREFIX = 'free:'
 
 const FREE_FLAVOURS = ['auto', 'coding', 'reasoning', 'fast']
@@ -1226,21 +1016,17 @@ export function isFreeModel(id: string): boolean {
   return rest !== null && FREE_FLAVOURS.includes(rest)
 }
 
-/** Whether picking this model sends the conversation off the machine. */
 export function isRemoteModel(id: string): boolean {
   if (isFreeModel(id)) return true
   return id.startsWith(REMOTE_PREFIX) && id.slice(REMOTE_PREFIX.length).includes('/')
 }
 
-/** Strip the quantization suffix so lists stay readable. */
 export function friendlyModelName(id: string): string {
   if (isFreeModel(id)) {
     const flavour = id.slice(FREE_PREFIX.length)
     return flavour === 'auto' ? 'Kuro Free' : `Kuro Free · ${flavour}`
   }
   if (isRemoteModel(id)) {
-    // Everything after the connector id is the provider's own name for it,
-    // which may itself contain slashes.
     const rest = id.slice(REMOTE_PREFIX.length)
     return rest.slice(rest.indexOf('/') + 1)
   }
@@ -1253,7 +1039,6 @@ export function quantOf(id: string): string | null {
   return parts.length > 1 ? (parts[1]?.toUpperCase() ?? null) : null
 }
 
-/** Owner half of a `publisher/name` model id, when there is one. */
 export function publisherOf(id: string): string | null {
   const name = friendlyModelName(id)
   const slash = name.indexOf('/')

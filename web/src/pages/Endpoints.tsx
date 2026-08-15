@@ -10,22 +10,6 @@ import {
 import { Switch } from './Tools'
 import { CloudIcon, ExternalIcon, KeyIcon, RefreshIcon, TrashIcon } from '../components/icons'
 
-/**
- * The shared implementation behind Providers and Cloud.
- *
- * Both screens do the same thing — store a key, probe an OpenAI-compatible
- * endpoint, list what it offers — and the reason they are two screens is that
- * they are two different decisions. Adding OpenAI is agreeing to pay a company
- * per token for their model. Adding a RunPod endpoint is running *your* model on
- * a GPU you rented, where the model, the quantisation and the context length are
- * all still your choices. The first is closer to signing up for a service; the
- * second is closer to running locally on a bigger machine.
- *
- * They shared a screen originally and it made the second look like a variant of
- * the first. Splitting the presentation while keeping one code path is the honest
- * arrangement: the mechanism really is identical, and saying so twice in two
- * components would be the actual duplication.
- */
 
 const KIND_LABEL: Record<ProviderPreset['kind'], string> = {
   aggregator: 'Many models, one key',
@@ -38,9 +22,7 @@ export interface EndpointsPageProps {
   surface: Surface
   title: string
   intro: string
-  /** The "how this fits" bullets, which differ between the two screens. */
   notes: string[]
-  /** Placeholder for the base URL field, when the preset asks for one. */
   urlPlaceholder: string
 }
 
@@ -56,12 +38,9 @@ export function EndpointsPage({
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['providers'] })
-    // The composer's picker reads these models from the models endpoint.
     void queryClient.invalidateQueries({ queryKey: ['models'] })
   }
 
-  // Both screens read the same endpoint and show their own half of it, so
-  // connecting on one and looking at the other never disagrees.
   const connected = (endpoints.data?.providers ?? []).filter(
     (provider) => provider.surface === surface,
   )

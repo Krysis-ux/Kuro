@@ -21,24 +21,8 @@ import { Logo } from './Logo'
 import { MessageActions } from './MessageActions'
 import { RichText } from './RichText'
 
-/**
- * How a reply's markdown is rendered.
- *
- * Defined once, at module scope, because react-markdown compares this object by
- * identity — building it inside the component would rebuild every code block on
- * every streamed token, which both flickers and loses the "Copied" state of a
- * button somebody has just pressed.
- */
 const MARKDOWN_COMPONENTS = { pre: MarkdownPre, a: MarkdownLink } as const
 
-/**
- * A link in a reply.
- *
- * Given its own colour and always opened in a new tab. Both are the same point:
- * a link is the one part of an answer that can be *checked*, and it should
- * neither look like the prose around it nor cost you the conversation to
- * follow.
- */
 function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
   return (
     <a className="rich-link" href={href} target="_blank" rel="noopener noreferrer">
@@ -47,27 +31,15 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
   )
 }
 
-// Defined with the streaming loop that produces them, and re-exported here
-// because this is where callers already import the transcript from.
 export type { StreamingState, StreamingTool } from '../lib/turns'
 
 interface MessageListProps {
   messages: Message[]
   streaming: StreamingState | null
   error: string | null
-  /** Things that went wrong without ending the turn. */
   notices?: string[]
-  /** Branch a new conversation ending at this message. */
   onFork: (messageId: string) => void
-  /** Replace a user message and answer again from there. */
   onEdit: (messageId: string, content: string) => void
-  /**
-   * Open a file the turn touched.
-   *
-   * Absent on surfaces that have nowhere to show one — a chat can read a
-   * project but has no file panel — and the paths render as plain text there
-   * rather than as buttons that would do nothing.
-   */
   onOpenPath?: (path: string) => void
 }
 
@@ -86,8 +58,6 @@ export function MessageList({
         <MessageRow
           key={message.id}
           message={message}
-          // A turn still being generated has nothing to fork or edit yet, and
-          // an optimistic row has no id the server would recognise.
           actionable={!isOptimistic(message.id) && streaming === null}
           onFork={() => onFork(message.id)}
           onEdit={(content) => onEdit(message.id, content)}
@@ -160,8 +130,6 @@ function MessageRow({ message, actionable, onFork, onEdit, onOpenPath }: Message
   const tools = message.tool_calls ?? []
   const sources = message.web_sources ?? []
 
-  // An assistant row with no text is a turn that failed before producing
-  // anything; showing an empty bubble would be more confusing than hiding it.
   if (!message.content.trim() && !message.reasoning_content && tools.length === 0) return null
 
   const hasStats =
@@ -244,14 +212,6 @@ function MessageRow({ message, actionable, onFork, onEdit, onOpenPath }: Message
   )
 }
 
-/**
- * A user message being rewritten.
- *
- * Sends on Enter and cancels on Escape, matching the composer, since this is
- * the same act of writing a message. Submitting is what truncates the
- * conversation, so an accidental Enter is worth guarding: an unchanged or empty
- * message just closes the editor rather than discarding the replies below it.
- */
 function MessageEditor({
   initial,
   onSubmit,
@@ -361,14 +321,6 @@ function StreamingRow({
   )
 }
 
-/**
- * The heartbeat under a turn in progress.
- *
- * Counts up from the last event rather than from the start of the turn, so it
- * answers the question people actually have — how long since anything happened
- * — and stays silent for the first few seconds, when nothing is wrong yet and a
- * timer would only be noise.
- */
 function Working({ label, since }: { label: string; since: number }) {
   const [quiet, setQuiet] = useState(0)
 
@@ -394,36 +346,20 @@ function Working({ label, since }: { label: string; since: number }) {
   )
 }
 
-/** One tool call as the activity panel shows it. */
 interface ToolStep {
   name: string
   state: 'running' | 'done' | 'failed'
-  /** The call's arguments, which is what says *what* it was done to. */
   args?: Record<string, unknown>
-  /** What came back, truncated by the server. */
   detail?: string
 }
 
-/** What a tool call was, in words rather than in its wire name. */
 interface ToolAction {
   kind: 'read' | 'edit' | 'write' | 'run' | 'search' | 'list' | 'web' | 'other'
   verb: string
-  /** The file, command or query it acted on. Rendered in mono. */
   target: string
-  /** Set when `target` is a path in the workspace, so it can be opened. */
   path?: string
 }
 
-/**
- * Read a tool call as a sentence.
- *
- * The transcript used to print the wire name and then whichever argument
- * happened to be a string first — `edit_file` followed by a hundred characters
- * of the code being replaced. That is the raw call, not what happened, and it
- * is exactly backwards from what somebody watching wants: *which file*, and
- * *what did you do to it*. The arguments are known per tool, so there is no
- * reason to guess at them.
- */
 function describeTool(name: string, args: Record<string, unknown> = {}): ToolAction {
   const text = (key: string): string | undefined => {
     const value = args[key]
@@ -440,8 +376,6 @@ function describeTool(name: string, args: Record<string, unknown> = {}): ToolAct
     case 'read_file': {
       const from = count('start_line')
       const to = count('end_line')
-      // The range matters: "read lines 240-255" and "read the file" are
-      // different acts, and only one of them explains a wrong answer.
       const range = from ? `:${from}${to ? `-${to}` : '+'}` : ''
       return { kind: 'read', verb: 'Read', target: `${path ?? 'a file'}${range}`, path }
     }
@@ -473,8 +407,6 @@ function describeTool(name: string, args: Record<string, unknown> = {}): ToolAct
     case 'recall':
       return { kind: 'other', verb: 'Recalled', target: text('query') ?? '' }
     default: {
-      // An MCP tool, whose arguments this build has never seen. Its name is the
-      // most honest thing available, so it is shown as the name.
       const first = Object.values(args).find((value) => typeof value === 'string')
       return {
         kind: 'other',
@@ -496,18 +428,6 @@ const ACTION_ICON: Record<ToolAction['kind'], ReactNode> = {
   other: <ToolIcon size={11} />,
 }
 
-/**
- * What the model did before answering.
- *
- * Collapsed to a single line by default and expandable to show the query sent and
- * what came back. Hosted assistants all do some version of this, and the reason is
- * not decoration: when a model answers using a tool, the answer is only as good as
- * the tool result, and a user who cannot see that result has no way to tell a good
- * answer from a confident one.
- *
- * Open by default while streaming — that is exactly when a person is wondering
- * what the spinner is doing — and closed once the reply has arrived.
- */
 function ToolActivity({
   steps,
   defaultOpen = false,
@@ -523,10 +443,6 @@ function ToolActivity({
   const failed = steps.filter((step) => step.state === 'failed').length
   const current = steps[steps.length - 1]
 
-  // While it is working, the summary says what it is working *on*. "Using a
-  // tool…" is true of every turn and therefore tells you nothing; "Editing
-  // src/lib/turns.ts" is the answer to the question actually being asked, which
-  // is whether this is going anywhere.
   const now = current ? describeTool(current.name, current.args) : null
   const summary =
     running && now
@@ -558,14 +474,6 @@ function ToolActivity({
   )
 }
 
-/**
- * One step, as a line rather than as a dump.
- *
- * The result is folded away unless the step failed. A successful `read_file`
- * returning four hundred lines of the file it read is noise — the interesting
- * thing about it is that it happened, and which file — whereas a failure is
- * only useful *with* its message, which is why that one opens itself.
- */
 function ToolStepRow({
   step,
   onOpenPath,
@@ -595,9 +503,6 @@ function ToolStepRow({
 
         {action.target &&
           (action.path && onOpenPath ? (
-            // Underlined and clickable, because a file the model touched is the
-            // thing you most want to look at next and the transcript is where
-            // you are already looking.
             <button
               className="tool-step-path mono"
               onClick={() => onOpenPath(action.path as string)}
@@ -633,12 +538,6 @@ function ToolStepRow({
   )
 }
 
-/**
- * Pages the turn drew on.
- *
- * Listed by the interface rather than left to the model, because a small model
- * asked to cite its sources will frequently invent a plausible URL instead.
- */
 function Sources({ sources }: { sources: { title: string; url: string }[] }) {
   return (
     <div className="sources">

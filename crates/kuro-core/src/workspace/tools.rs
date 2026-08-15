@@ -1,18 +1,3 @@
-//! The tools a coding workspace offers.
-//!
-//! Nine, and the split between them is the permission ladder rather than a
-//! taxonomy. Five are about the code as text — look around, read, search, change
-//! a part, write a whole file — and four are about the code as a running thing:
-//! run a command, start a server, look at what it is saying, stop it.
-//!
-//! The count matters. A small local model given twenty overlapping tools picks
-//! badly and often picks nothing, so a mode never shows more than it needs:
-//! Plan sees three, Agent and Bypass see all nine.
-//!
-//! Every file tool is scoped to the workspace root, and every one that changes a
-//! file records what was there before so the changes panel can put it back. A
-//! command is different in kind and is not pretended otherwise — see
-//! [`super::exec`] for what is and is not contained about running one.
 
 use std::time::Duration;
 
@@ -24,12 +9,9 @@ use super::{exec, search, ToolRisk, Workspace, WorkspaceMode};
 use crate::db::Db;
 use crate::tools::{files, ToolOutcome, ToolSpec};
 
-/// How long to wait for a just-started server to announce its address.
 const SERVER_SETTLE: Duration = Duration::from_secs(12);
-/// Lines of a server's output returned to the model at once.
 const LOG_LINES: usize = 60;
 
-/// A tool that acts on the workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodingTool {
     ProjectTree,
@@ -300,11 +282,6 @@ impl CodingTool {
     }
 }
 
-/// Which tools a mode offers.
-///
-/// Filtered here rather than refused at call time: a model that is never shown
-/// `write_file` cannot decide to try it, which is both a stronger guarantee and
-/// a much easier one to explain than a call that fails afterwards.
 pub fn tools_for_mode(mode: WorkspaceMode) -> Vec<CodingTool> {
     CodingTool::ALL
         .iter()
@@ -313,18 +290,13 @@ pub fn tools_for_mode(mode: WorkspaceMode) -> Vec<CodingTool> {
         .collect()
 }
 
-/// What the coding tools need in order to run.
 pub struct WorkspaceContext<'a> {
     pub db: &'a Db,
     pub workspace: &'a Workspace,
-    /// Recorded against each change so the panel can say which turn made it.
     pub conversation_id: Option<&'a str>,
-    /// Background processes belonging to the daemon, so a dev server started in
-    /// one turn is still serving in the next.
     pub processes: &'a ProcessRegistry,
 }
 
-/// Everything the interface needs to describe a tool.
 #[derive(Debug, Clone, Serialize)]
 pub struct CodingToolDescription {
     pub name: String,
@@ -345,15 +317,11 @@ pub fn describe_tools() -> Vec<CodingToolDescription> {
         .collect()
 }
 
-/// Run one coding tool.
 pub async fn run(
     tool: CodingTool,
     arguments: &Value,
     context: &WorkspaceContext<'_>,
 ) -> ToolOutcome {
-    // Checked again here even though the tool was filtered out of the offered
-    // set. The two paths have different inputs — one the mode, one the model's
-    // chosen name — and a write must not depend on a filter elsewhere holding.
     if !context.workspace.mode.allows(tool.risk()) {
         return ToolOutcome::failed(format!(
             "`{}` is not available in {} mode",
@@ -382,12 +350,6 @@ pub async fn run(
     }
 }
 
-/// Run a command and wait for it.
-///
-/// The vet happens here rather than at the boundary because the refusal has to
-/// reach the *model*, not the user: told plainly that `terraform` is not on the
-/// allowlist and that Bypass mode would run it, a model says so and asks. Told
-/// nothing, it retries the same command three more times.
 async fn run_command(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     let Some(command) = string_argument(arguments, "command") else {
         return ToolOutcome::failed("`command` is required and must be a string");
@@ -397,10 +359,6 @@ async fn run_command(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolO
         return ToolOutcome::failed(refusal.to_string());
     }
 
-    // Refused rather than run, because running it means waiting three minutes
-    // for a timeout and reporting a failure for something that was working. The
-    // refusal names the tool that does work, which is the only part of this
-    // that changes what the model does next.
     if let Some(reason) = exec::looks_like_a_server(&command) {
         return ToolOutcome::failed(format!(
             "`{command}` was not run because {reason}, and `run_command` waits for what it \
@@ -419,9 +377,6 @@ async fn run_command(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolO
     match exec::run(&context.workspace.root, &command, timeout).await {
         Ok(outcome) => {
             let described = outcome.describe();
-            // A non-zero exit is reported as a failure so the model does not read
-            // past it, but it is not a tool error: the tool did exactly what was
-            // asked. Both facts are in the text.
             if outcome.succeeded() {
                 ToolOutcome::ok(described)
             } else {
@@ -454,8 +409,6 @@ async fn run_start_server(arguments: &Value, context: &WorkspaceContext<'_>) -> 
         Err(error) => return ToolOutcome::failed(error),
     };
 
-    // Waiting here is the difference between a useful answer and "started, no
-    // address yet" on every single call.
     let settled = context
         .processes
         .settle(&started.id, SERVER_SETTLE)
@@ -563,15 +516,8 @@ fn run_tree(context: &WorkspaceContext<'_>) -> ToolOutcome {
     }
 }
 
-/// Lines returned when the model asks for a range but not a size.
 const DEFAULT_RANGE_LINES: usize = 200;
 
-/// Lines above which a whole-file read is cut short and says so.
-///
-/// Not a safety limit — [`files::MAX_READ_BYTES`] is that. This is a context
-/// limit, and on the models Kuro is built for it is the one that bites first:
-/// a 2,000-line file is most of a small model's window spent before it has
-/// read the question, and the answer is usually in twenty of those lines.
 const WHOLE_FILE_LINE_LIMIT: usize = 400;
 
 fn run_read(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
@@ -595,9 +541,6 @@ fn run_read(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     let lines: Vec<&str> = text.lines().collect();
     let total = lines.len();
 
-    // Numbered on the way out, because every other tool here speaks in line
-    // numbers — a search result, a compiler error, the range for the next read —
-    // and a model that has to count lines itself gets it wrong.
     let render = |from: usize, to: usize| -> String {
         lines[from..to]
             .iter()
@@ -611,9 +554,6 @@ fn run_read(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
         if total <= WHOLE_FILE_LINE_LIMIT {
             return ToolOutcome::ok(format!("`{path}` ({total} lines):\n\n{}", render(0, total)));
         }
-        // Truncated rather than refused, and told how to get the rest — a
-        // refusal here would leave the model with no way forward, and a silent
-        // cut would have it reason about a file it has only seen the start of.
         return ToolOutcome::ok(format!(
             "`{path}` ({total} lines, showing the first {WHOLE_FILE_LINE_LIMIT}):\n\n{}\n\n\
              … {} more lines. Call read_file again with `start_line` for the rest, or \
@@ -623,8 +563,6 @@ fn run_read(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
         ));
     }
 
-    // One-based and inclusive, which is how every editor, compiler error and
-    // search result in this project already counts.
     let from = start.unwrap_or(1).max(1) as usize - 1;
     if from >= total {
         return ToolOutcome::failed(format!(
@@ -646,14 +584,6 @@ fn run_read(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     ))
 }
 
-/// Find files by name, rather than by what is inside them.
-///
-/// The gap this fills: `search_files` looks *inside* files for a string, and
-/// `project_tree` lists everything. Neither answers "where are the test files"
-/// or "which components exist", which is how somebody actually starts on an
-/// unfamiliar project — and without it the model's only route to that question
-/// was to list the entire tree and read it, which on a real repository is
-/// hundreds of paths of context spent on a question a pattern answers exactly.
 fn run_find(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     let Some(pattern) = string_argument(arguments, "pattern") else {
         return ToolOutcome::failed("`pattern` is required and must be a string");
@@ -680,13 +610,6 @@ fn run_search(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome 
     }
 }
 
-/// Replace an exact snippet.
-///
-/// The uniqueness requirement is the whole safety property. A `find` that occurs
-/// twice is ambiguous, and picking one is how an agent silently changes the
-/// wrong call site; the model is told to include more context instead. A `find`
-/// that occurs zero times almost always means the model is editing from memory,
-/// and saying so plainly gets a re-read rather than a retry of the same guess.
 fn run_edit(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     let Some(path) = string_argument(arguments, "path") else {
         return ToolOutcome::failed("`path` is required and must be a string");
@@ -749,8 +672,6 @@ fn run_write(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     let Some(path) = string_argument(arguments, "path") else {
         return ToolOutcome::failed("`path` is required and must be a string");
     };
-    // An empty file is a legitimate thing to write, so this is read directly
-    // rather than through the blank-rejecting helper.
     let Some(content) = arguments.get("content").and_then(Value::as_str) else {
         return ToolOutcome::failed("`content` is required and must be a string");
     };
@@ -761,8 +682,6 @@ fn run_write(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
         Err(error) => return ToolOutcome::failed(error),
     };
 
-    // Read before writing so an overwrite can be undone. A file that does not
-    // exist yet reads as absent, which is what marks the change as a creation.
     let before = files::read_file(&resolved).ok();
 
     match files::write_file(&resolved, content) {
@@ -774,11 +693,6 @@ fn run_write(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     }
 }
 
-/// Record a change so it can be undone.
-///
-/// Best effort: a change that has already happened on disk must still be
-/// reported to the model even if the log write fails, because telling it the
-/// edit failed would send it round again on a file that is already edited.
 fn record(
     context: &WorkspaceContext<'_>,
     path: &str,
@@ -883,8 +797,6 @@ mod tests {
 
     #[tokio::test]
     async fn planning_refuses_a_write_even_when_the_tool_is_called_directly() {
-        // The offered set is one filter; this is the other. A write must not
-        // depend on a filter somewhere else having held.
         let fixture = Fixture::new(WorkspaceMode::Plan);
 
         let outcome = fixture
@@ -952,9 +864,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_read_is_numbered_so_the_next_call_can_name_a_range() {
-        // Every other tool here speaks in line numbers — a search hit, a
-        // compiler error, the range for the next read — and a model asked to
-        // count lines itself gets it wrong.
         let fixture = Fixture::new(WorkspaceMode::Agent);
         std::fs::write(fixture.workspace.root.join("src/n.rs"), "one\ntwo\nthree\n")
             .expect("write");
@@ -988,8 +897,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_long_file_is_cut_short_and_says_how_to_get_the_rest() {
-        // Truncating silently would have the model reason about a file it has
-        // only seen the start of; refusing would leave it with no way forward.
         let fixture = Fixture::new(WorkspaceMode::Agent);
         let body: String = (1..=900).map(|n| format!("line {n}\n")).collect();
         std::fs::write(fixture.workspace.root.join("src/huge.rs"), body).expect("write");
@@ -1040,7 +947,6 @@ mod tests {
 
         assert!(outcome.is_error);
         assert!(outcome.content.contains("2 times"), "got: {}", outcome.content);
-        // Nothing was changed, so the model can retry with more context.
         let after = std::fs::read_to_string(fixture.workspace.root.join("src/dup.rs")).unwrap();
         assert_eq!(after, "let x = 1;\nlet x = 1;\n");
     }
@@ -1087,7 +993,6 @@ mod tests {
             .expect("changes");
 
         assert_eq!(changes.len(), 2);
-        // Newest first.
         assert_eq!(changes[0].path, "src/new.rs");
         assert_eq!(changes[0].kind, "write");
         assert!(changes[0].before.is_none(), "a new file has nothing before it");

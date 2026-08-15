@@ -242,7 +242,7 @@ verify — the `Checking your work` skill makes it do that by default.
 
 - macOS on Apple Silicon or Intel. Other platforms are structured for but not
   yet built — see `asset_pattern` in `crates/kuro-core/src/engine/bootstrap.rs`.
-- [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 18+ to build.
+- [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20+ to build.
 
 ## Building
 
@@ -278,8 +278,7 @@ packaging/macos/build-dmg.sh --host-only  # this machine's architecture only
 
 Writes `dist/Kuro-<version>.dmg`. The universal build compiles twice and adds
 the second toolchain target on first run, so `--host-only` is much faster while
-iterating. The bundle is unsigned; `NOTARISATION` at the end of that script has
-the two commands to add once there is a Developer ID.
+iterating. The bundle is unsigned.
 
 If Rust was installed through Homebrew's `rustup`, its binaries are not on the
 default `PATH`:

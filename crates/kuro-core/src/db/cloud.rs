@@ -232,12 +232,12 @@ mod tests {
         let db = Db::open_in_memory().expect("open");
         let created = insert(&db);
 
-        db.set_cloud_ok(&created.id, &["anthropic/claude-opus-5".to_string()])
+        db.set_cloud_ok(&created.id, &["vendor/model-name".to_string()])
             .expect("ok");
 
         let reloaded = db.get_cloud_connector(&created.id).expect("get").expect("present");
         assert_eq!(reloaded.status, CloudStatus::Ok);
-        assert_eq!(reloaded.models, vec!["anthropic/claude-opus-5".to_string()]);
+        assert_eq!(reloaded.models, vec!["vendor/model-name".to_string()]);
         assert!(reloaded.last_tested_at.is_some());
         assert_eq!(reloaded.last_error, None);
     }

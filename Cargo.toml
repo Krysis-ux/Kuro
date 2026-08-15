@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/kuro-core", "crates/kuro-server", "crates/kuro-cli"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "Kuro LLM — a minimal local model server"
 
