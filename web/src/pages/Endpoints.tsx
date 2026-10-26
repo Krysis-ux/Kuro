@@ -8,6 +8,7 @@ import {
   type Surface,
 } from '../lib/api'
 import { Switch } from './Tools'
+import { ProviderLogo } from '../components/BrandLogo'
 import { CloudIcon, ExternalIcon, KeyIcon, RefreshIcon, TrashIcon } from '../components/icons'
 
 /**
@@ -173,6 +174,7 @@ function PresetCard({
   return (
     <div className={`store-card ${connected ? 'is-installed' : ''}`}>
       <div className="store-card-head">
+        <ProviderLogo slug={preset.slug} label={preset.name} size={32} />
         <span className="store-card-name">{preset.name}</span>
         {connected && <span className="tag tag-live">connected</span>}
       </div>
@@ -293,6 +295,7 @@ function EndpointRow({ provider, onChanged }: { provider: Provider; onChanged: (
 
   return (
     <div className={`server-row ${provider.enabled ? '' : 'is-off'}`}>
+      <ProviderLogo slug={provider.provider} label={provider.label} size={32} />
       <div className="server-row-main">
         <div className="server-row-head">
           <span

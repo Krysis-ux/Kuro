@@ -1,5 +1,6 @@
 //! Discovering and fetching model weights.
 
+pub mod card;
 pub mod curated;
 pub mod download;
 pub mod hf;

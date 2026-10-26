@@ -96,6 +96,13 @@
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--border);
+
+  /* Surface depth: a sheen and top edge catching light, a shadow underneath. */
+  --panel-sheen: rgba(255, 255, 255, 0.025);
+  --panel-edge: rgba(255, 255, 255, 0.035);
+  --panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --card-lift: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --hero-glow: rgba(255, 255, 255, 0.06);
 }
 
 :root[data-theme='light'] {
@@ -122,6 +129,12 @@
   --link: #1f5fb0;
 
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
+
+  --panel-sheen: rgba(255, 255, 255, 0);
+  --panel-edge: rgba(255, 255, 255, 0.8);
+  --panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.03);
+  --card-lift: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --hero-glow: rgba(0, 0, 0, 0.035);
 }
 
 @media (prefers-color-scheme: light) {
@@ -149,5 +162,11 @@
     --link: #1f5fb0;
 
     --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
+
+  --panel-sheen: rgba(255, 255, 255, 0);
+  --panel-edge: rgba(255, 255, 255, 0.8);
+  --panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.03);
+  --card-lift: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --hero-glow: rgba(0, 0, 0, 0.035);
   }
 }
