@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -14,6 +14,12 @@ import { ProvidersPage } from './pages/Providers'
 import { SettingsPage } from './pages/Settings'
 import { ToolsPage } from './pages/Tools'
 import { applyTheme, useUi } from './store/ui'
+
+// Loaded on first visit: the model-card renderer parses and sanitizes HTML,
+// which no other page needs.
+const ModelDetailPage = lazy(() =>
+  import('./pages/ModelDetail').then((module) => ({ default: module.ModelDetailPage })),
+)
 
 export function App() {
   const theme = useUi((state) => state.theme)
@@ -34,6 +40,7 @@ export function App() {
           <Route path="/projects" element={<ErrorBoundary label="projects"><ProjectsPage /></ErrorBoundary>} />
           <Route path="/projects/:id" element={<ErrorBoundary label="projects"><ProjectPage /></ErrorBoundary>} />
           <Route path="/models" element={<ErrorBoundary label="models"><ModelsPage /></ErrorBoundary>} />
+          <Route path="/models/:owner/:name" element={<ErrorBoundary label="model"><Suspense><ModelDetailPage /></Suspense></ErrorBoundary>} />
           <Route path="/free" element={<ErrorBoundary label="free"><FreePage /></ErrorBoundary>} />
           <Route path="/tools" element={<ErrorBoundary label="tools"><ToolsPage /></ErrorBoundary>} />
           <Route path="/providers" element={<ErrorBoundary label="providers"><ProvidersPage /></ErrorBoundary>} />

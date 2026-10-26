@@ -243,7 +243,7 @@ pub fn quant_from_filename(filename: &str) -> Option<String> {
 }
 
 /// True for one shard of a multi-part GGUF, e.g. `model-00002-of-00003.gguf`.
-fn is_split_part(filename: &str) -> bool {
+pub(crate) fn is_split_part(filename: &str) -> bool {
     let lower = filename.to_ascii_lowercase();
     let Some(stem) = lower.strip_suffix(".gguf") else {
         return false;

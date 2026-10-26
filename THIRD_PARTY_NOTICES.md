@@ -36,3 +36,15 @@ Kuro can connect to third-party API providers and to servers the user runs
 themselves. Those services are governed by their own terms, agreed between the
 user and the operator. Kuro passes requests to the endpoint the user configured
 and holds no relationship with the operator.
+
+## Brand logos
+
+The model and provider logos in `web/src/assets/logos/` are redistributed with
+this repository. They come from **LobeHub Icons**
+(<https://github.com/lobehub/lobe-icons>, package `@lobehub/icons-static-svg`
+1.101.0), published by LobeHub under the **MIT Licence**. The macOS app bundles
+the same files. Some have had their SVG path data rewritten so arc commands
+spell out each flag, which macOS's SVG renderer requires; the drawings are
+otherwise unchanged. The marks themselves
+remain trademarks of their respective owners; Kuro shows them only to identify
+whose model or service is being listed, and implies no endorsement.

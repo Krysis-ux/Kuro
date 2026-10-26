@@ -1,6 +1,6 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use kuro_core::catalog::{self, search, CURATED_MODELS};
+use kuro_core::catalog::{self, card, search, CURATED_MODELS};
 use kuro_core::free;
 use kuro_core::hardware::estimate_fit;
 use kuro_core::KuroError;
@@ -56,6 +56,43 @@ pub async fn search_hub(
         .collect();
 
     Ok(Json(json!({ "models": described })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DetailsQuery {
+    pub repo: String,
+}
+
+/// Everything the Hub publishes about one repository, with each weights file
+/// annotated with how it fits this machine and whether it is already here.
+pub async fn hub_details(
+    State(state): State<SharedState>,
+    Query(query): Query<DetailsQuery>,
+) -> AppResult<Json<Value>> {
+    let model_card = card::fetch_model_card(&state.outbound, &query.repo).await?;
+    let installed = state.db.list_models()?;
+
+    let files: Vec<Value> = model_card
+        .files
+        .iter()
+        .map(|file| {
+            let is_installed = installed.iter().any(|model| {
+                model.hf_repo.as_deref() == Some(model_card.repo.as_str())
+                    && model.hf_file.as_deref() == Some(file.filename.as_str())
+            });
+            json!({
+                "filename": file.filename,
+                "quant": file.quant,
+                "size": file.size,
+                "fit": estimate_fit(file.size, &state.hardware),
+                "installed": is_installed,
+            })
+        })
+        .collect();
+
+    let mut encoded = serde_json::to_value(&model_card).unwrap_or_else(|_| json!({}));
+    encoded["files"] = json!(files);
+    Ok(Json(encoded))
 }
 
 /// Models the user has pulled, each annotated with whether it is loaded and how

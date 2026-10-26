@@ -113,6 +113,7 @@ fn native_routes() -> Router<SharedState> {
         .route("/api/models/recommended", get(models::recommended_models))
         .route("/api/models/loaded", get(models::loaded_models))
         .route("/api/models/search", get(models::search_hub))
+        .route("/api/models/details", get(models::hub_details))
         .route("/api/models/pull", post(models::pull_model))
         .route("/api/models/preview", post(models::preview_pull))
         .route("/api/models/{id}", get(models::get_model))

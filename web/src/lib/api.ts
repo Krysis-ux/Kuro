@@ -68,6 +68,59 @@ export interface HubModel {
   installed: boolean
 }
 
+/** One weights file in a repository, with how it fits this machine. */
+export interface HubFile {
+  filename: string
+  quant: string | null
+  size: number
+  fit: FitEstimate
+  installed: boolean
+}
+
+export interface HubPaper {
+  /** The arXiv id. */
+  id: string
+  /** Null when the Hub has no page for the paper; the arXiv link still works. */
+  title: string | null
+  summary: string | null
+  published_at: string | null
+  upvotes: number | null
+  authors: string[]
+}
+
+/** Everything the Hub publishes about one repository. */
+export interface HubModelCard {
+  repo: string
+  author: string | null
+  downloads: number
+  likes: number
+  created_at: string | null
+  last_modified: string | null
+  pipeline_tag: string | null
+  library_name: string | null
+  license: string | null
+  tags: string[]
+  gated: boolean
+  base_models: string[]
+  datasets: string[]
+  languages: string[]
+  spaces: string[]
+  gguf: {
+    total: number | null
+    architecture: string | null
+    context_length: number | null
+    chat_template: string | null
+  } | null
+  /** The model card as markdown, front matter removed. */
+  readme: string | null
+  papers: HubPaper[]
+  /** Single-file GGUF weights, smallest first. */
+  files: HubFile[]
+  /** Quantizations published only as split shards, which cannot be loaded yet. */
+  split_quants: string[]
+  has_projector: boolean
+}
+
 /* ---------- Tools ---------- */
 
 export type ToolGroup = 'web' | 'memory' | 'projects'
@@ -623,6 +676,9 @@ export const api = {
         `/api/models/search${suffix ? `?${suffix}` : ''}`,
       )
     },
+    /** The model card, papers and every weights file of one Hub repository. */
+    details: (repo: string) =>
+      request<HubModelCard>(`/api/models/details?repo=${encodeURIComponent(repo)}`),
     loaded: () => request<{ loaded: LoadedEngine[] }>('/api/models/loaded'),
     preview: (model: string) => post<PullPreview>('/api/models/preview', { model }),
     pull: (model: string) => post<{ downloadId: string }>('/api/models/pull', { model }),
