@@ -152,7 +152,7 @@ fn to_hit(model: HubModel) -> SearchHit {
     let mut has_single_part = false;
 
     for file in &files {
-        if is_split_part(file) {
+        if super::hf::is_split_part(file) {
             continue;
         }
         has_single_part = true;
@@ -220,25 +220,6 @@ fn param_count_from_name(name: &str) -> Option<String> {
                 && upper.chars().next().is_some_and(|c| c.is_ascii_digit())
         })
         .map(|token| token.to_ascii_uppercase())
-}
-
-/// Mirrors `hf::is_split_part`, which is private to that module.
-fn is_split_part(filename: &str) -> bool {
-    let lower = filename.to_ascii_lowercase();
-    let Some(stem) = lower.strip_suffix(".gguf") else {
-        return false;
-    };
-
-    let mut parts = stem.rsplit('-');
-    let Some(total) = parts.next() else { return false };
-    let Some(of) = parts.next() else { return false };
-    let Some(index) = parts.next() else { return false };
-
-    of == "of"
-        && !total.is_empty()
-        && !index.is_empty()
-        && total.chars().all(|c| c.is_ascii_digit())
-        && index.chars().all(|c| c.is_ascii_digit())
 }
 
 /// Estimate whether a hit will run here, using the size of its smallest

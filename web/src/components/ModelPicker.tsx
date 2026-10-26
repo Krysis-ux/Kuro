@@ -19,6 +19,8 @@ import {
   GiftIcon,
   SearchIcon,
 } from './icons'
+import { ModelLogo, ProviderLogo } from './BrandLogo'
+import { modelBrand } from '../lib/brands'
 
 /** Tallest the menu gets. Matches the `max-height` budget used in the CSS. */
 const MENU_HEIGHT = 460
@@ -144,6 +146,7 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
   const activeQuant = active ? quantOf(active) : null
   const activeIsRemote = active ? isRemoteModel(active) : false
   const activeIsFree = active ? isFreeModel(active) : false
+  const activeName = active ? friendlyModelName(active) : null
 
   // Searching opens everything: a closed section that contains the only match is
   // a search that appears to have found nothing.
@@ -175,6 +178,8 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
       >
         {activeIsFree ? (
           <GiftIcon size={13} />
+        ) : activeName && modelBrand(activeName) ? (
+          <ModelLogo name={activeName} size={14} bare />
         ) : activeIsRemote ? (
           <CloudIcon size={13} />
         ) : (
@@ -283,9 +288,9 @@ function ModelGroup({
   const icon = group.free ? (
     <GiftIcon size={11} />
   ) : group.remote ? (
-    <CloudIcon size={11} />
+    <ProviderLogo slug={group.provider ?? ''} label={group.label} size={14} bare />
   ) : (
-    <CubeIcon size={11} />
+    <ModelLogo name={group.label} owner={group.label} size={14} bare />
   )
 
   return (
@@ -336,7 +341,7 @@ function ModelGroup({
               </span>
 
               <span className="model-option-name">
-                {option.pooled && <GiftIcon size={12} />}
+                {option.pooled ? <GiftIcon size={12} /> : !group.free && <OptionLogo name={option.name} group={group} />}
                 {option.name}
               </span>
 
@@ -515,7 +520,20 @@ interface Group {
   remote: boolean
   /** The pooled free tiers, which are remote but not a provider you pay. */
   free: boolean
+  /** The provider's slug, for its logo. Absent on a local group. */
+  provider?: string
   options: Option[]
+}
+
+/**
+ * The maker's mark on one row. A provider's model whose name names no maker
+ * gets the provider's mark instead, so a remote row is never a bare letter.
+ */
+function OptionLogo({ name, group }: { name: string; group: Group }) {
+  if (group.remote && !modelBrand(name)) {
+    return <ProviderLogo slug={group.provider ?? ''} label={group.label} size={14} bare />
+  }
+  return <ModelLogo name={name} owner={group.remote ? null : group.label} size={14} bare />
 }
 
 /**
@@ -585,7 +603,7 @@ function buildGroups(
     local.set(publisher, held)
   }
 
-  const byProvider = new Map<string, { label: string; options: Option[] }>()
+  const byProvider = new Map<string, { label: string; provider: string; options: Option[] }>()
 
   for (const model of remote) {
     // A speciality is worth searching by: "coder" should find every coding
@@ -595,6 +613,7 @@ function buildGroups(
 
     const held = byProvider.get(model.connector_id) ?? {
       label: model.connector_label,
+      provider: model.provider,
       options: [],
     }
     held.options.push({
@@ -630,9 +649,10 @@ function buildGroups(
   // The free pool goes directly after the local models and ahead of the paid
   // providers, because it is the closest thing to "free" that is not local, and
   // somebody scanning this list is usually scanning in that order.
-  const remoteGroups: Group[] = [...byProvider].map(([id, { label, options }]) => ({
+  const remoteGroups: Group[] = [...byProvider].map(([id, { label, provider, options }]) => ({
     key: `remote:${id}`,
     label,
+    provider,
     remote: true,
     free: id === 'kuro-free',
     // A pooled row is the one most people want and the one nobody would find by

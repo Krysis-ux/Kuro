@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ProviderLogo } from '../components/BrandLogo'
 import {
   api,
   type FreeProvider,
@@ -385,6 +386,7 @@ function ProviderRow({ provider }: { provider: FreeProvider }) {
 
   return (
     <div className={`server-row ${provider.hasKey ? '' : 'is-off'}`}>
+      <ProviderLogo slug={provider.slug} label={provider.name} size={32} />
       <div className="server-row-main">
         <div className="server-row-head">
           <span
