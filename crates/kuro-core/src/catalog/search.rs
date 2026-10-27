@@ -212,7 +212,8 @@ fn quant_rank(quant: &str) -> u8 {
 
 /// Parameter count as stated by the repository name, e.g. `Qwen3-4B` → `4B`.
 fn param_count_from_name(name: &str) -> Option<String> {
-    name.split(['-', '_', '.'])
+    // Not split on `.`, which would read `Qwen-1.5B` as `5B`.
+    name.split(['-', '_'])
         .find(|token| {
             let upper = token.to_ascii_uppercase();
             (upper.ends_with('B') || upper.ends_with("B0"))
@@ -351,6 +352,8 @@ mod tests {
         assert_eq!(param_count_from_name("Qwen3-4B-Instruct-GGUF").as_deref(), Some("4B"));
         assert_eq!(param_count_from_name("Llama-3.2-1B-GGUF").as_deref(), Some("1B"));
         assert_eq!(param_count_from_name("bge-small-en-v1.5-GGUF"), None);
+        assert_eq!(param_count_from_name("DeepSeek-R1-Distill-Qwen-1.5B-GGUF").as_deref(), Some("1.5B"));
+        assert_eq!(param_count_from_name("Qwen2.5-0.5B-Instruct-GGUF").as_deref(), Some("0.5B"));
     }
 
     #[test]
