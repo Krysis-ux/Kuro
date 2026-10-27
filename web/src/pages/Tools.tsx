@@ -11,6 +11,7 @@ import {
   type ToolsOverview,
 } from '../lib/api'
 import { AddServerDialog } from '../components/AddServerDialog'
+import { ProviderLogo } from '../components/BrandLogo'
 import {
   BrainIcon,
   CheckIcon,
@@ -261,6 +262,7 @@ function BuiltinSection({
               disabled={configure.isPending}
             >
               <div className="provider-choice-head">
+                <ProviderLogo slug={provider.id} label={provider.name} size={22} />
                 <span>{provider.name}</span>
                 {provider.id === search.provider && <CheckIcon size={13} />}
                 {!provider.needsApiKey && !provider.needsBaseUrl && (

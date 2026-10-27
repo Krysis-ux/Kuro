@@ -1,80 +1,85 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { HubAvatar, ModelLogo } from '../components/BrandLogo'
 import {
   api,
   formatBytes,
   formatCount,
+  publisherOf,
   relativeTime,
   type FitVerdict,
   type HubModel,
+  type RecommendedModel,
 } from '../lib/api'
 import {
   CheckIcon,
   DownloadIcon,
   ExternalIcon,
+  HeartIcon,
   SearchIcon,
   TrashIcon,
 } from '../components/icons'
 
 type Source = 'recommended' | 'hub'
 
+/** Where a repository's detail page lives. */
+export function modelPath(repo: string): string {
+  return `/models/${repo.split('/').map(encodeURIComponent).join('/')}`
+}
+
+/**
+ * Start a download and refresh everything that shows what is installed.
+ *
+ * Shared with the detail page, which downloads the same way and needs the
+ * same lists to notice.
+ */
+export function usePull(onDone?: () => void) {
+  const queryClient = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+
+  const pull = useMutation({
+    mutationFn: (model: string) => api.models.pull(model),
+    onSuccess: () => {
+      setError(null)
+      onDone?.()
+      for (const key of ['models', 'recommended', 'downloads', 'hub', 'hub-card']) {
+        void queryClient.invalidateQueries({ queryKey: [key] })
+      }
+    },
+    onError: (caught: Error) => setError(caught.message),
+  })
+
+  return { pull, error }
+}
+
 export function ModelsPage() {
   const queryClient = useQueryClient()
   const [reference, setReference] = useState('')
-  const [pullError, setPullError] = useState<string | null>(null)
   const [source, setSource] = useState<Source>('recommended')
+  // Which model the user has asked to delete, pending confirmation. Deleting
+  // weights is one of the few things in Kuro with nothing behind it.
   const [pendingDelete, setPendingDelete] = useState<{ id: string; bytes: number } | null>(
     null,
   )
 
   const installed = useQuery({ queryKey: ['models'], queryFn: api.models.list })
   const recommended = useQuery({ queryKey: ['recommended'], queryFn: api.models.recommended })
-
-  const downloads = useQuery({
-    queryKey: ['downloads'],
-    queryFn: api.downloads.list,
-    refetchInterval: (query) => {
-      const active = query.state.data?.downloads.some(
-        (download) => download.status === 'downloading' || download.status === 'queued',
-      )
-      return active ? 700 : false
-    },
-  })
-
-  const refreshAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ['models'] })
-    void queryClient.invalidateQueries({ queryKey: ['recommended'] })
-    void queryClient.invalidateQueries({ queryKey: ['downloads'] })
-    void queryClient.invalidateQueries({ queryKey: ['hub'] })
-  }
-
-  const pull = useMutation({
-    mutationFn: (model: string) => api.models.pull(model),
-    onSuccess: () => {
-      setReference('')
-      setPullError(null)
-      refreshAll()
-    },
-    onError: (error: Error) => setPullError(error.message),
-  })
+  const { pull, error: pullError } = usePull(() => setReference(''))
 
   const remove = useMutation({
     mutationFn: (id: string) => api.models.remove(id),
     onSuccess: () => {
       setPendingDelete(null)
-      refreshAll()
+      void queryClient.invalidateQueries({ queryKey: ['models'] })
+      void queryClient.invalidateQueries({ queryKey: ['recommended'] })
+      void queryClient.invalidateQueries({ queryKey: ['hub'] })
     },
   })
 
-  const activeDownloads =
-    downloads.data?.downloads.filter(
-      (download) => download.status === 'downloading' || download.status === 'queued',
-    ) ?? []
-
-  if (activeDownloads.length === 0 && downloads.isFetched && installed.isStale) {
-    void queryClient.invalidateQueries({ queryKey: ['models'] })
-  }
+  const models = installed.data?.models ?? []
+  const totalBytes = models.reduce((sum, { model }) => sum + (model.file_size_bytes ?? 0), 0)
 
   return (
     <div className="page">
@@ -83,101 +88,77 @@ export function ModelsPage() {
         <p className="muted">Weights are stored on this machine and never leave it.</p>
       </header>
 
-      <section className="panel">
-        <h2 className="panel-title">Add by name</h2>
-        <form
-          className="pull-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (reference.trim()) pull.mutate(reference.trim())
-          }}
-        >
-          <input
-            className="input"
-            placeholder="owner/repository  ·  or a Hugging Face URL"
-            value={reference}
-            onChange={(event) => setReference(event.target.value)}
-          />
-          <button className="btn btn-solid" disabled={!reference.trim() || pull.isPending}>
-            {pull.isPending ? <span className="spinner" /> : <DownloadIcon size={15} />}
-            Download
-          </button>
-        </form>
-        <p className="faint form-hint">
-          Add <code className="mono">:Q5_K_M</code> to choose a quantization. Only GGUF weights can
-          run — use the search below if you do not already know what you want.
-        </p>
-        {pullError && <p className="form-error">{pullError}</p>}
-      </section>
+      <DownloadsPanel />
 
-      {activeDownloads.length > 0 && (
-        <section className="panel">
-          <h2 className="panel-title">Downloading</h2>
-          {activeDownloads.map((download) => {
-            const fraction =
-              download.total_bytes && download.total_bytes > 0
-                ? download.downloaded_bytes / download.total_bytes
-                : 0
+      <section className="panel">
+        <div className="panel-head">
+          <h2 className="panel-title">Your library</h2>
+          {models.length > 0 && (
+            <span className="faint panel-meta">
+              {models.length} {models.length === 1 ? 'model' : 'models'} ·{' '}
+              {formatBytes(totalBytes)}
+            </span>
+          )}
+        </div>
+
+        {installed.isFetched && models.length === 0 && (
+          <p className="faint">Nothing installed yet. Pick one from the list below.</p>
+        )}
+
+        <div className="library">
+          {models.map(({ model, loaded, fit }) => {
+            const owner = publisherOf(model.id)
+            const title = model.display_name || model.id
             return (
-              <div key={download.id} className="download">
-                <div className="download-head">
-                  <span>{download.label}</span>
-                  <span className="faint mono">
-                    {formatBytes(download.downloaded_bytes)} / {formatBytes(download.total_bytes)}
-                  </span>
+              <div key={model.id} className="library-row">
+                <ModelLogo name={model.hf_repo ?? model.id} owner={owner} size={40} />
+
+                <div className="library-row-main">
+                  {model.hf_repo ? (
+                    <Link className="library-row-name" to={modelPath(model.hf_repo)}>
+                      {title}
+                    </Link>
+                  ) : (
+                    <span className="library-row-name">{title}</span>
+                  )}
+                  <div className="library-row-tags">
+                    {model.quant && <span className="quant">{model.quant}</span>}
+                    {model.param_count && <span className="tag">{model.param_count}</span>}
+                    {model.capabilities.map((capability) => (
+                      <span key={capability} className="tag">
+                        {capability}
+                      </span>
+                    ))}
+                    {loaded && <span className="tag tag-live">loaded</span>}
+                    {model.status === 'error' && <span className="tag tag-error">error</span>}
+                    {owner && <span className="faint library-row-owner">via {owner}</span>}
+                  </div>
+                  {model.error && <p className="form-error">{model.error}</p>}
                 </div>
-                <div className="progress">
-                  <div className="progress-fill" style={{ width: `${fraction * 100}%` }} />
-                </div>
+
+                <span className="faint mono library-row-size">
+                  {formatBytes(model.file_size_bytes)}
+                </span>
+                {fit && <FitBadge verdict={fit.verdict} label={fit.label} note={fit.note} />}
+
+                <button
+                  className="btn btn-ghost btn-icon"
+                  aria-label={`Delete ${model.id}`}
+                  onClick={() =>
+                    setPendingDelete({ id: model.id, bytes: model.file_size_bytes ?? 0 })
+                  }
+                >
+                  <TrashIcon size={15} />
+                </button>
               </div>
             )
           })}
-        </section>
-      )}
-
-      <section className="panel">
-        <h2 className="panel-title">Installed</h2>
-        {installed.data?.models.length === 0 && (
-          <p className="faint">Nothing installed yet. Pick one from the list below.</p>
-        )}
-        <div className="model-rows">
-          {installed.data?.models.map(({ model, loaded, fit }) => (
-            <div key={model.id} className="model-row">
-              <div className="model-row-main">
-                <span className="model-row-name">{model.id}</span>
-                <div className="model-row-tags">
-                  {model.quant && <span className="quant">{model.quant}</span>}
-                  {model.capabilities.map((capability) => (
-                    <span key={capability} className="tag">
-                      {capability}
-                    </span>
-                  ))}
-                  {loaded && <span className="tag tag-live">loaded</span>}
-                  {model.status === 'error' && <span className="tag tag-error">error</span>}
-                </div>
-                {model.error && <p className="form-error">{model.error}</p>}
-              </div>
-
-              <span className="faint mono model-row-size">
-                {formatBytes(model.file_size_bytes)}
-              </span>
-              {fit && <FitBadge verdict={fit.verdict} label={fit.label} note={fit.note} />}
-
-              <button
-                className="btn btn-ghost btn-icon"
-                aria-label={`Delete ${model.id}`}
-                onClick={() => setPendingDelete({ id: model.id, bytes: model.file_size_bytes ?? 0 })}
-              >
-                <TrashIcon size={15} />
-              </button>
-            </div>
-          ))}
         </div>
       </section>
 
       <section className="panel">
         <div className="panel-head">
-          <h2 className="panel-title">Find a model</h2>
+          <h2 className="panel-title">Discover</h2>
           <div className="segmented">
             {(
               [
@@ -219,34 +200,12 @@ export function ModelsPage() {
                   </div>
                   <div className="model-cards">
                     {forThis.map((model) => (
-                <div key={model.slug} className="model-card">
-                  <div className="model-card-head">
-                    <span className="model-card-name">{model.displayName}</span>
-                    <FitBadge
-                      verdict={model.fit.verdict}
-                      label={model.fit.label}
-                      note={model.fit.note}
-                    />
-                  </div>
-                  <p className="muted model-card-blurb">{model.blurb}</p>
-                  <div className="model-card-tags">
-                    <span className="tag">{model.paramCount}</span>
-                    <span className="quant">{model.defaultQuant}</span>
-                    <span className="tag">{formatBytes(model.approxSizeBytes)}</span>
-                    {model.capabilities.map((capability) => (
-                      <span key={capability} className="tag">
-                        {capability}
-                      </span>
-                    ))}
-                  </div>
-                  <button
-                    className="btn model-card-action"
-                    disabled={model.installed || pull.isPending}
-                    onClick={() => pull.mutate(model.slug)}
-                  >
-                    {model.installed ? 'Installed' : 'Download'}
-                  </button>
-                </div>
+                      <RecommendedCard
+                        key={model.slug}
+                        model={model}
+                        pulling={pull.isPending}
+                        onPull={() => pull.mutate(model.slug)}
+                      />
                     ))}
                   </div>
                 </div>
@@ -254,8 +213,35 @@ export function ModelsPage() {
             })}
           </>
         ) : (
-          <HubSearch onPull={(reference) => pull.mutate(reference)} pulling={pull.isPending} />
+          <HubSearch onPull={(repo) => pull.mutate(repo)} pulling={pull.isPending} />
         )}
+        {pullError && <p className="form-error">{pullError}</p>}
+      </section>
+
+      <section className="panel">
+        <h2 className="panel-title">Add by name</h2>
+        <form
+          className="pull-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (reference.trim()) pull.mutate(reference.trim())
+          }}
+        >
+          <input
+            className="input"
+            placeholder="owner/repository  ·  or a Hugging Face URL"
+            value={reference}
+            onChange={(event) => setReference(event.target.value)}
+          />
+          <button className="btn btn-solid" disabled={!reference.trim() || pull.isPending}>
+            {pull.isPending ? <span className="spinner" /> : <DownloadIcon size={15} />}
+            Download
+          </button>
+        </form>
+        <p className="faint form-hint">
+          Add <code className="mono">:Q5_K_M</code> to choose a quantization. Only GGUF weights can
+          run — or open any model above to see every quantization it publishes.
+        </p>
       </section>
 
       {pendingDelete && (
@@ -282,11 +268,125 @@ export function ModelsPage() {
   )
 }
 
+/** Downloads in flight, polled often enough for the bars to feel live. */
+export function DownloadsPanel() {
+  const queryClient = useQueryClient()
+  const downloads = useQuery({
+    queryKey: ['downloads'],
+    queryFn: api.downloads.list,
+    refetchInterval: (query) => {
+      const active = query.state.data?.downloads.some(
+        (download) => download.status === 'downloading' || download.status === 'queued',
+      )
+      return active ? 700 : false
+    },
+  })
+
+  const active =
+    downloads.data?.downloads.filter(
+      (download) => download.status === 'downloading' || download.status === 'queued',
+    ) ?? []
+
+  // A finished download changes what is installed, so refresh once the last one lands.
+  const activeCount = active.length
+  const wasActive = useRef(false)
+  useEffect(() => {
+    if (wasActive.current && activeCount === 0) {
+      for (const key of ['models', 'recommended', 'hub', 'hub-card']) {
+        void queryClient.invalidateQueries({ queryKey: [key] })
+      }
+    }
+    wasActive.current = activeCount > 0
+  }, [activeCount, queryClient])
+
+  if (active.length === 0) return null
+
+  return (
+    <section className="panel">
+      <h2 className="panel-title">Downloading</h2>
+      {active.map((download) => {
+        const fraction =
+          download.total_bytes && download.total_bytes > 0
+            ? download.downloaded_bytes / download.total_bytes
+            : 0
+        return (
+          <div key={download.id} className="download">
+            <ModelLogo name={download.label} size={28} />
+            <div className="download-main">
+              <div className="download-head">
+                <span>{download.label}</span>
+                <span className="faint mono">
+                  {formatBytes(download.downloaded_bytes)} / {formatBytes(download.total_bytes)}
+                </span>
+              </div>
+              <div className="progress">
+                <div className="progress-fill" style={{ width: `${fraction * 100}%` }} />
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </section>
+  )
+}
+
+function RecommendedCard({
+  model,
+  pulling,
+  onPull,
+}: {
+  model: RecommendedModel
+  pulling: boolean
+  onPull: () => void
+}) {
+  return (
+    <article className="model-card">
+      <Link className="card-link" to={modelPath(model.repo)} aria-label={`About ${model.displayName}`} />
+      <div className="model-card-head">
+        <ModelLogo name={model.repo} size={40} />
+        <div className="model-card-title">
+          <span className="model-card-name">{model.displayName}</span>
+          <span className="faint model-card-sub">
+            {model.paramCount} · {formatBytes(model.approxSizeBytes)}
+          </span>
+        </div>
+      </div>
+      <p className="muted model-card-blurb">{model.blurb}</p>
+      <div className="model-card-tags">
+        <span className="quant">{model.defaultQuant}</span>
+        {model.capabilities.map((capability) => (
+          <span key={capability} className="tag">
+            {capability}
+          </span>
+        ))}
+      </div>
+      <div className="model-card-foot">
+        <FitBadge verdict={model.fit.verdict} label={model.fit.label} note={model.fit.note} />
+        <button
+          className="btn btn-sm card-action"
+          disabled={model.installed || pulling}
+          onClick={onPull}
+        >
+          {model.installed ? <CheckIcon size={13} /> : <DownloadIcon size={13} />}
+          {model.installed ? 'Installed' : 'Download'}
+        </button>
+      </div>
+    </article>
+  )
+}
+
+/**
+ * Search Hugging Face from inside Kuro.
+ *
+ * Filtered to GGUF, so nothing in the results is a model that cannot run here —
+ * which is the main thing the Hub's own search will not do for you. Opening a
+ * result shows every quantization with its real size and fit.
+ */
 function HubSearch({
   onPull,
   pulling,
 }: {
-  onPull: (reference: string) => void
+  onPull: (repo: string) => void
   pulling: boolean
 }) {
   const [query, setQuery] = useState('')
@@ -336,9 +436,9 @@ function HubSearch({
         </p>
       )}
 
-      <div className="hub-rows">
+      <div className="hub-grid">
         {results.data?.models.map((model) => (
-          <HubRow key={model.repo} model={model} onPull={onPull} pulling={pulling} />
+          <HubCard key={model.repo} model={model} onPull={onPull} pulling={pulling} />
         ))}
         {results.data?.models.length === 0 && <p className="faint">Nothing matched.</p>}
       </div>
@@ -346,95 +446,84 @@ function HubSearch({
   )
 }
 
-function HubRow({
+function HubCard({
   model,
   onPull,
   pulling,
 }: {
   model: HubModel
-  onPull: (reference: string) => void
+  onPull: (repo: string) => void
   pulling: boolean
 }) {
-  const [quant, setQuant] = useState(model.quants[0] ?? '')
-
   const blocked = model.split_only || model.gated
 
   return (
-    <div className="hub-row">
-      <div className="hub-row-main">
-        <div className="hub-row-head">
-          <span className="hub-row-name">{model.name}</span>
-          {model.owner && <span className="faint">{model.owner}</span>}
-          {model.param_count && <span className="tag">{model.param_count}</span>}
-          {model.installed && (
-            <span className="tag tag-live">
-              <CheckIcon size={10} /> installed
+    <article className="model-card hub-card-item">
+      <Link className="card-link" to={modelPath(model.repo)} aria-label={`About ${model.repo}`} />
+      <div className="model-card-head">
+        <ModelLogo name={model.name} owner={model.owner} size={40} />
+        <div className="model-card-title">
+          <span className="model-card-name">{model.name}</span>
+          {model.owner && (
+            <span className="owner-line faint">
+              <HubAvatar owner={model.owner} size={14} />
+              {model.owner}
             </span>
           )}
-          {model.gated && <span className="tag tag-warn">licence needed</span>}
-          {model.split_only && <span className="tag tag-warn">split shards</span>}
         </div>
-
-        <div className="hub-row-meta faint">
-          <span>{formatCount(model.downloads)} downloads</span>
-          {model.likes > 0 && <span>{formatCount(model.likes)} likes</span>}
-          {model.last_modified && <span>updated {relativeTime(model.last_modified)}</span>}
-          <a
-            className="external-link"
-            href={`https://huggingface.co/${model.repo}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Repository
-            <ExternalIcon size={11} />
-          </a>
-        </div>
-
-        {model.split_only && (
-          <p className="faint">
-            Published only as multi-part shards, which Kuro cannot load yet. Look for a smaller
-            quantization in a single file.
-          </p>
-        )}
-        {model.gated && (
-          <p className="faint">
-            Gated — accept its licence on Hugging Face first, then download by name above.
-          </p>
-        )}
       </div>
 
-      {model.quants.length > 0 && (
-        <div className="hub-row-quants">
-          {model.quants.map((option) => (
-            <button
-              key={option}
-              className={`quant quant-button ${option === quant ? 'is-on' : ''}`}
-              onClick={() => setQuant(option)}
-              title={`Download the ${option} build`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="hub-card-stats faint">
+        <span>
+          <DownloadIcon size={12} />
+          {formatCount(model.downloads)}
+        </span>
+        {model.likes > 0 && (
+          <span>
+            <HeartIcon size={12} />
+            {formatCount(model.likes)}
+          </span>
+        )}
+        {model.last_modified && <span>{relativeTime(model.last_modified)}</span>}
+      </div>
 
-      {model.fit && (
-        <FitBadge verdict={model.fit.verdict} label={model.fit.label} note={model.fit.note} />
-      )}
+      <div className="model-card-tags">
+        {model.param_count && <span className="tag">{model.param_count}</span>}
+        {model.quants.length > 0 && (
+          <span className="tag">
+            {model.quants.length} {model.quants.length === 1 ? 'quant' : 'quants'}
+          </span>
+        )}
+        {model.installed && (
+          <span className="tag tag-live">
+            <CheckIcon size={10} /> installed
+          </span>
+        )}
+        {model.gated && <span className="tag tag-warn">licence needed</span>}
+        {model.split_only && <span className="tag tag-warn">split shards</span>}
+      </div>
 
-      <button
-        className="btn btn-sm"
-        disabled={blocked || pulling}
-        onClick={() => onPull(quant ? `${model.repo}:${quant}` : model.repo)}
-      >
-        <DownloadIcon size={13} />
-        Download
-      </button>
-    </div>
+      <div className="model-card-foot">
+        {model.fit ? (
+          <FitBadge verdict={model.fit.verdict} label={model.fit.label} note={model.fit.note} />
+        ) : (
+          <span />
+        )}
+        <button
+          className="btn btn-sm card-action"
+          disabled={blocked || pulling}
+          title={blocked ? 'Open it to see why this one cannot be downloaded' : undefined}
+          onClick={() => onPull(model.repo)}
+        >
+          <DownloadIcon size={13} />
+          Download
+        </button>
+      </div>
+    </article>
   )
 }
 
-function FitBadge({
+export function FitBadge({
   verdict,
   label,
   note,
