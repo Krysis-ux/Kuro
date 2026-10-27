@@ -152,7 +152,7 @@ fn to_hit(model: HubModel) -> SearchHit {
     let mut has_single_part = false;
 
     for file in &files {
-        if is_split_part(file) {
+        if super::hf::is_split_part(file) {
             continue;
         }
         has_single_part = true;
@@ -212,7 +212,8 @@ fn quant_rank(quant: &str) -> u8 {
 
 /// Parameter count as stated by the repository name, e.g. `Qwen3-4B` → `4B`.
 fn param_count_from_name(name: &str) -> Option<String> {
-    name.split(['-', '_', '.'])
+    // Not split on `.`, which would read `Qwen-1.5B` as `5B`.
+    name.split(['-', '_'])
         .find(|token| {
             let upper = token.to_ascii_uppercase();
             (upper.ends_with('B') || upper.ends_with("B0"))
@@ -220,25 +221,6 @@ fn param_count_from_name(name: &str) -> Option<String> {
                 && upper.chars().next().is_some_and(|c| c.is_ascii_digit())
         })
         .map(|token| token.to_ascii_uppercase())
-}
-
-/// Mirrors `hf::is_split_part`, which is private to that module.
-fn is_split_part(filename: &str) -> bool {
-    let lower = filename.to_ascii_lowercase();
-    let Some(stem) = lower.strip_suffix(".gguf") else {
-        return false;
-    };
-
-    let mut parts = stem.rsplit('-');
-    let Some(total) = parts.next() else { return false };
-    let Some(of) = parts.next() else { return false };
-    let Some(index) = parts.next() else { return false };
-
-    of == "of"
-        && !total.is_empty()
-        && !index.is_empty()
-        && total.chars().all(|c| c.is_ascii_digit())
-        && index.chars().all(|c| c.is_ascii_digit())
 }
 
 /// Estimate whether a hit will run here, using the size of its smallest
@@ -370,6 +352,8 @@ mod tests {
         assert_eq!(param_count_from_name("Qwen3-4B-Instruct-GGUF").as_deref(), Some("4B"));
         assert_eq!(param_count_from_name("Llama-3.2-1B-GGUF").as_deref(), Some("1B"));
         assert_eq!(param_count_from_name("bge-small-en-v1.5-GGUF"), None);
+        assert_eq!(param_count_from_name("DeepSeek-R1-Distill-Qwen-1.5B-GGUF").as_deref(), Some("1.5B"));
+        assert_eq!(param_count_from_name("Qwen2.5-0.5B-Instruct-GGUF").as_deref(), Some("0.5B"));
     }
 
     #[test]

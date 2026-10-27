@@ -19,6 +19,8 @@ import {
   GiftIcon,
   SearchIcon,
 } from './icons'
+import { ModelLogo, ProviderLogo } from './BrandLogo'
+import { modelBrand } from '../lib/brands'
 
 const MENU_HEIGHT = 460
 const VIEWPORT_MARGIN = 12
@@ -98,6 +100,7 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
   const activeQuant = active ? quantOf(active) : null
   const activeIsRemote = active ? isRemoteModel(active) : false
   const activeIsFree = active ? isFreeModel(active) : false
+  const activeName = active ? friendlyModelName(active) : null
 
   const searching = query.trim().length > 0
 
@@ -123,6 +126,8 @@ export function ModelPicker({ installed, remote, selected, onSelect }: ModelPick
       >
         {activeIsFree ? (
           <GiftIcon size={13} />
+        ) : activeName && modelBrand(activeName) ? (
+          <ModelLogo name={activeName} size={14} bare />
         ) : activeIsRemote ? (
           <CloudIcon size={13} />
         ) : (
@@ -214,9 +219,9 @@ function ModelGroup({
   const icon = group.free ? (
     <GiftIcon size={11} />
   ) : group.remote ? (
-    <CloudIcon size={11} />
+    <ProviderLogo slug={group.provider ?? ''} label={group.label} size={14} bare />
   ) : (
-    <CubeIcon size={11} />
+    <ModelLogo name={group.label} owner={group.label} size={14} bare />
   )
 
   return (
@@ -261,7 +266,7 @@ function ModelGroup({
               </span>
 
               <span className="model-option-name">
-                {option.pooled && <GiftIcon size={12} />}
+                {option.pooled ? <GiftIcon size={12} /> : !group.free && <OptionLogo name={option.name} group={group} />}
                 {option.name}
               </span>
 
@@ -400,7 +405,20 @@ interface Group {
   label: string
   remote: boolean
   free: boolean
+  /** The provider's slug, for its logo. Absent on a local group. */
+  provider?: string
   options: Option[]
+}
+
+/**
+ * The maker's mark on one row. A provider's model whose name names no maker
+ * gets the provider's mark instead, so a remote row is never a bare letter.
+ */
+function OptionLogo({ name, group }: { name: string; group: Group }) {
+  if (group.remote && !modelBrand(name)) {
+    return <ProviderLogo slug={group.provider ?? ''} label={group.label} size={14} bare />
+  }
+  return <ModelLogo name={name} owner={group.remote ? null : group.label} size={14} bare />
 }
 
 function brandOf(id: string, family: string | null | undefined): string {
@@ -448,7 +466,7 @@ function buildGroups(
     local.set(publisher, held)
   }
 
-  const byProvider = new Map<string, { label: string; options: Option[] }>()
+  const byProvider = new Map<string, { label: string; provider: string; options: Option[] }>()
 
   for (const model of remote) {
     const searchable = [model.name, model.connector_label, ...model.specialities]
@@ -456,6 +474,7 @@ function buildGroups(
 
     const held = byProvider.get(model.connector_id) ?? {
       label: model.connector_label,
+      provider: model.provider,
       options: [],
     }
     held.options.push({
@@ -486,9 +505,10 @@ function buildGroups(
     })
   }
 
-  const remoteGroups: Group[] = [...byProvider].map(([id, { label, options }]) => ({
+  const remoteGroups: Group[] = [...byProvider].map(([id, { label, provider, options }]) => ({
     key: `remote:${id}`,
     label,
+    provider,
     remote: true,
     free: id === 'kuro-free',
     options: [...options].sort((left, right) => Number(right.pooled) - Number(left.pooled)),
