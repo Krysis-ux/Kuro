@@ -19,8 +19,9 @@ The app is not signed by Apple yet, so the first launch needs **right-click →
 Open** rather than a double-click. macOS then offers the same warning with an
 Open button on it; after that it starts normally.
 
-Kuro runs as an ordinary app: it starts the server and opens the interface in
-your browser. Quitting Kuro stops the server and unloads any model.
+Kuro is a native Mac app and needs macOS 14 or later. It starts the server and
+shows its own window; the same interface is also at http://127.0.0.1:8420 in a
+browser. Quitting Kuro stops the server and unloads any model.
 
 ### From source
 
@@ -276,9 +277,12 @@ packaging/macos/build-dmg.sh              # universal (Apple Silicon + Intel)
 packaging/macos/build-dmg.sh --host-only  # this machine's architecture only
 ```
 
-Writes `dist/Kuro-<version>.dmg`. The universal build compiles twice and adds
-the second toolchain target on first run, so `--host-only` is much faster while
-iterating. The bundle is unsigned.
+Writes `dist/Kuro-<version>.dmg`, assembling the app with
+`packaging/macos/build-app.sh`: the native SwiftUI app, with the server, the
+`kuro` command and the browser interface inside it. It needs Rust, Node.js and
+the Xcode Command Line Tools. The universal build compiles twice and adds the
+second toolchain target on first run, so `--host-only` is much faster while
+iterating. The bundle is ad-hoc signed only.
 
 If Rust was installed through Homebrew's `rustup`, its binaries are not on the
 default `PATH`:
