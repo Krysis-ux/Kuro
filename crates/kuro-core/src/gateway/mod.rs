@@ -12,7 +12,7 @@
 //! No tool *execution* here. Claude Code runs its own tools, so a `tool_use`
 //! block is translated and passed on, and its result translated back.
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 pub mod stream;
 
@@ -273,11 +273,6 @@ pub fn wants_stream(anthropic: &Value) -> bool {
 /// The model name the caller asked for, if any.
 pub fn requested_model(anthropic: &Value) -> Option<&str> {
     anthropic.get("model").and_then(Value::as_str)
-}
-
-/// The value as a JSON object, if it is one.
-pub fn is_object(value: &Value) -> Option<&Map<String, Value>> {
-    value.as_object()
 }
 
 #[cfg(test)]

@@ -25,8 +25,6 @@ use crate::{KuroError, Result};
 pub const MAX_READ_BYTES: u64 = 256 * 1024;
 /// Largest write (bytes). Over this is refused rather than silently truncated.
 pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
-/// Entries listed for one directory before the rest are summarised.
-const MAX_ENTRIES: usize = 200;
 
 /// How much of the filesystem the model may touch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -91,11 +89,6 @@ pub struct FilePermissions {
 }
 
 impl FilePermissions {
-    /// Whether the file tools should be offered at all (a tier with no folders
-    /// grants nothing).
-    pub fn is_usable(&self) -> bool {
-        self.access.allows_read() && !self.roots.is_empty()
-    }
 
     /// The roots, canonicalised; roots that no longer exist are dropped.
     fn resolved_roots(&self) -> Vec<PathBuf> {
@@ -329,66 +322,6 @@ fn denied_reason(path: &Path) -> Option<&'static str> {
     None
 }
 
-/// One entry in a listing.
-#[derive(Debug, Clone)]
-pub struct Entry {
-    pub name: String,
-    pub is_dir: bool,
-    pub bytes: u64,
-}
-
-/// List a folder's contents.
-pub fn list_directory(path: &Path) -> Result<Vec<Entry>> {
-    let metadata = std::fs::metadata(path)
-        .map_err(|error| KuroError::other(format!("could not read `{}`: {error}", path.display())))?;
-
-    if !metadata.is_dir() {
-        return Err(KuroError::bad_request(format!(
-            "`{}` is a file, not a folder. Use read_file for it.",
-            path.display()
-        )));
-    }
-
-    let mut entries: Vec<Entry> = std::fs::read_dir(path)
-        .map_err(|error| KuroError::other(format!("could not list `{}`: {error}", path.display())))?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| {
-            let metadata = entry.metadata().ok();
-            Entry {
-                name: entry.file_name().to_string_lossy().to_string(),
-                is_dir: metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false),
-                bytes: metadata.as_ref().map(|m| m.len()).unwrap_or(0),
-            }
-        })
-        .collect();
-
-    // Folders first, then alphabetical; stable across calls.
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
-    Ok(entries)
-}
-
-pub fn format_listing(path: &Path, entries: &[Entry]) -> String {
-    if entries.is_empty() {
-        return format!("`{}` is empty.", path.display());
-    }
-
-    let shown = entries.len().min(MAX_ENTRIES);
-    let mut out = format!("Contents of `{}`:\n", path.display());
-
-    for entry in entries.iter().take(shown) {
-        if entry.is_dir {
-            out.push_str(&format!("  {}/\n", entry.name));
-        } else {
-            out.push_str(&format!("  {} ({})\n", entry.name, human_bytes(entry.bytes)));
-        }
-    }
-
-    if entries.len() > shown {
-        out.push_str(&format!("  … and {} more\n", entries.len() - shown));
-    }
-    out
-}
-
 /// The whole file as text, for an undo snapshot: up to [`MAX_WRITE_BYTES`], beyond
 /// what a model may read. `None` when it is larger, not text, or unreadable.
 pub fn read_snapshot(path: &Path) -> Option<String> {
@@ -535,7 +468,6 @@ mod tests {
 
         assert_eq!(permissions.access, FileAccess::Off);
         assert!(permissions.roots.is_empty());
-        assert!(!permissions.is_usable());
         assert!(permissions.resolve_path("/etc/hosts", false).is_err());
     }
 
@@ -546,7 +478,6 @@ mod tests {
             roots: Vec::new(),
         };
 
-        assert!(!permissions.is_usable());
         let error = permissions.resolve_path("/etc/hosts", false).unwrap_err().to_string();
         assert!(error.contains("no folder"), "got: {error}");
     }
@@ -742,31 +673,6 @@ mod tests {
         let error = write_file(&root.join("huge.txt"), &content).unwrap_err().to_string();
 
         assert!(error.contains("write limit"), "got: {error}");
-    }
-
-    #[test]
-    fn listings_put_folders_first_and_are_alphabetical() {
-        let (_permissions, root) = granted(FileAccess::Read);
-        std::fs::create_dir_all(root.join("zeta")).expect("mkdir");
-        std::fs::write(root.join("alpha.txt"), "a").expect("write");
-
-        let entries = list_directory(&root).expect("list");
-
-        assert_eq!(entries[0].name, "zeta");
-        assert!(entries[0].is_dir);
-        assert_eq!(entries[1].name, "alpha.txt");
-        assert!(format_listing(&root, &entries).contains("zeta/"));
-    }
-
-    #[test]
-    fn listing_a_file_says_to_read_it_instead() {
-        let (_permissions, root) = granted(FileAccess::Read);
-        let file = root.join("note.txt");
-        std::fs::write(&file, "hello").expect("write");
-
-        let error = list_directory(&file).unwrap_err().to_string();
-
-        assert!(error.contains("read_file"), "got: {error}");
     }
 
     #[test]

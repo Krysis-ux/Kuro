@@ -325,11 +325,6 @@ impl Effort {
         }
     }
 
-    /// Whether this level is only meaningful on the coding surface.
-    pub fn coding_only(self) -> bool {
-        self == Self::Ultra
-    }
-
     /// The highest level a surface offers.
     pub fn ceiling(coding: bool) -> Self {
         if coding {
@@ -458,8 +453,6 @@ mod tests {
         // A chat has nothing to spend it on.
         assert_eq!(Effort::ceiling(true), Effort::Ultra);
         assert_eq!(Effort::ceiling(false), Effort::Max);
-        assert!(Effort::Ultra.coding_only());
-        assert!(!Effort::Max.coding_only());
     }
 
     #[test]

@@ -40,18 +40,6 @@ impl Db {
         })
     }
 
-    pub fn get_user_skill(&self, slug: &str) -> Result<Option<UserSkillRecord>> {
-        self.with(|conn| {
-            let mut statement = conn.prepare(
-                "SELECT slug, name, blurb, category, instructions, approx_tokens, source,
-                        created_at, updated_at
-                 FROM user_skills WHERE slug = ?1",
-            )?;
-            let mut rows = statement.query_map(params![slug], read)?;
-            Ok(rows.next().transpose()?)
-        })
-    }
-
     /// Store a skill, replacing one of the same slug (re-importing a repository
     /// updates its skills).
     pub fn put_user_skill(&self, skill: &UserSkillRecord) -> Result<()> {

@@ -1088,11 +1088,6 @@ impl FreePool {
         }
     }
 
-    /// Forget a provider's catalogue, so the next request reads it again.
-    pub fn forget_live_models(&self, slug: &str) {
-        self.live.lock().expect("free pool lock").remove(slug);
-    }
-
     /// Claim the right to read the catalogues, if nobody else holds it.
     ///
     /// `true` means the caller should do the read and then call
@@ -1970,9 +1965,6 @@ mod tests {
 
         pool.set_live_models("groq", vec!["llama-3.3-70b-versatile".to_string()]);
         assert!(!pool.needs_catalogue("groq"), "just read");
-
-        pool.forget_live_models("groq");
-        assert!(pool.needs_catalogue("groq"), "forgotten after a 404");
     }
 
     #[test]
