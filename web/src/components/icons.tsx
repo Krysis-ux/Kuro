@@ -340,3 +340,60 @@ export const HeartIcon = (props: IconProps) => (
     <path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" />
   </Svg>
 )
+
+export const QuestionIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.6M12 17h.01" />
+  </Svg>
+)
+
+export const ArrowLeftIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M19 12H5M11 6l-6 6 6 6" />
+  </Svg>
+)
+
+export const ComposeIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5" />
+    <path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z" />
+  </Svg>
+)
+
+export const UserIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 21a8 8 0 0 1 16 0" />
+  </Svg>
+)
+
+export const UsersIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <circle cx="9" cy="8" r="3.5" />
+    <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.3a6.5 6.5 0 0 1 3.5 5.7" />
+  </Svg>
+)
+
+export const ServerIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="3" y="4" width="18" height="7" rx="2" />
+    <rect x="3" y="13" width="18" height="7" rx="2" />
+    <path d="M7 7.5h.01M7 16.5h.01" />
+  </Svg>
+)
+
+export const DriveIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M22 12H2M5.5 5h13l3.5 7v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-5z" />
+    <path d="M6 16h.01M10 16h.01" />
+  </Svg>
+)
+
+export const CpuIcon = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="5" y="5" width="14" height="14" rx="2" />
+    <rect x="9" y="9" width="6" height="6" rx="1" />
+    <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+  </Svg>
+)

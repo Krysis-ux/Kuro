@@ -6,7 +6,8 @@ import Foundation
 /// (`/rust`). Skills stay in the text where they were written, so the model
 /// reads the request and the reason for the guidance together.
 public struct SlashCommand: Hashable, Sendable, Identifiable {
-    public enum Kind: Hashable, Sendable { case toggle, skill }
+    /// `custom` is one of the user's saved commands: its text replaces the word.
+    public enum Kind: Hashable, Sendable { case toggle, skill, custom }
 
     public let name: String
     public let hint: String
@@ -23,6 +24,47 @@ public struct SlashCommand: Hashable, Sendable, Identifiable {
         self.aliases = aliases
         self.state = state
         self.kind = kind
+    }
+}
+
+/// A slash command the user saved: typing `/name` drops `text` into the message.
+public struct CustomCommand: Codable, Hashable, Sendable, Identifiable {
+    /// Where the caret lands once the text is in. Removed from the text.
+    public static let inputMarker = "{input}"
+
+    public var name: String
+    public var hint: String
+    public var text: String
+
+    public var id: String { name }
+
+    public init(name: String, hint: String = "", text: String) {
+        self.name = name
+        self.hint = hint
+        self.text = text
+    }
+
+    /// Lowercase letters, digits and dashes, so it can be typed after a slash.
+    public static func normalise(_ raw: String) -> String {
+        var out = ""
+        for character in raw.lowercased() {
+            if character.isLetter || character.isNumber {
+                out.append(character)
+            } else if !out.isEmpty, out.last != "-" {
+                out.append("-")
+            }
+        }
+        while out.hasSuffix("-") { out.removeLast() }
+        return out
+    }
+
+    /// The text to insert, and the caret's offset into it (UTF-16): where the
+    /// first `{input}` was, or the end.
+    public func filled() -> (text: String, caret: Int) {
+        guard let range = text.range(of: Self.inputMarker) else { return (text, text.utf16.count) }
+        let before = String(text[..<range.lowerBound])
+        let after = String(text[range.upperBound...]).replacingOccurrences(of: Self.inputMarker, with: "")
+        return (before + after, before.utf16.count)
     }
 }
 

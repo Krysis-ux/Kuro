@@ -33,7 +33,9 @@ struct ProviderLogo: View {
     var bare = false
 
     var body: some View {
-        if let brand = Brands.provider(slug) ?? Brands.model(slug) {
+        // llama.cpp is an engine, not a maker: matching its slug against model names
+        // would give it Meta's mark because of the "llama" in it.
+        if let brand = Brands.provider(slug) ?? (slug == "llamacpp" ? nil : Brands.model(slug)) {
             BrandTile(brand: brand, size: size, bare: bare)
         } else {
             Monogram(text: label, size: size, bare: bare)

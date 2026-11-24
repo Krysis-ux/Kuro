@@ -140,6 +140,18 @@ public struct KuroClient: Sendable {
 
     public func deleteConversation(_ id: String) async throws { try await raw("DELETE", "api/conversations/\(id)") }
 
+    public func archivedConversations() async throws -> [Conversation] {
+        try await list("api/conversations", key: "conversations", query: ["archived": "true"])
+    }
+
+    /// `nil` leaves a flag as it is.
+    public func setConversationFlags(_ id: String, pinned: Bool? = nil, archived: Bool? = nil) async throws {
+        var body: Body = [:]
+        if let pinned { body["pinned"] = pinned }
+        if let archived { body["archived"] = archived }
+        try await raw("PATCH", "api/conversations/\(id)", body: body)
+    }
+
     public func messages(_ conversationId: String) async throws -> [Message] {
         try await list("api/conversations/\(conversationId)/messages", key: "messages")
     }
@@ -232,6 +244,22 @@ public struct KuroClient: Sendable {
     public func settings() async throws -> [String: JSONValue] { try await get("api/settings") }
     public func patchSettings(_ patch: Body) async throws { try await raw("PATCH", "api/settings", body: patch) }
 
+    /// The user's saved slash commands, kept in settings so every interface shares them.
+    public func customCommands() async throws -> [CustomCommand] {
+        struct Stored: Decodable {
+            let commands: [CustomCommand]?
+            enum CodingKeys: String, CodingKey { case commands = "commands.custom" }
+        }
+        return (try await get("api/settings") as Stored).commands ?? []
+    }
+
+    public func saveCustomCommands(_ commands: [CustomCommand]) async throws {
+        let stored: [[String: Any?]] = commands.map { ["name": $0.name, "hint": $0.hint, "text": $0.text] }
+        try await patchSettings(["commands.custom": stored])
+    }
+
+    public func usage(days: Int) async throws -> UsageReport { try await get("api/usage", query: ["days": String(days)]) }
+
     // MARK: Tools and skills
 
     public func tools() async throws -> ToolsOverview { try await get("api/tools") }
@@ -245,6 +273,29 @@ public struct KuroClient: Sendable {
         (try await call("POST", "api/tools/skills/import", body: ["url": url]) as SkillImportResult).imported
     }
     public func deleteSkill(_ slug: String) async throws { try await raw("DELETE", "api/tools/skills/\(Self.segment(slug))") }
+    // MARK: Subagents
+
+    /// `body`: `name`, `blurb`, `when`, `brief`, `skills` (slugs), `writes`.
+    public func createAgent(_ body: Body) async throws { try await raw("POST", "api/agents", body: body) }
+    public func updateAgent(_ slug: String, _ body: Body) async throws {
+        try await raw("PUT", "api/agents/\(Self.segment(slug))", body: body)
+    }
+    public func deleteAgent(_ slug: String) async throws { try await raw("DELETE", "api/agents/\(Self.segment(slug))") }
+
+    // MARK: Automations
+
+    public func automations() async throws -> [Automation] { try await list("api/automations", key: "automations") }
+    /// `body`: `name`, `prompt`, `model` (`nil` for the default), `schedule`, `enabled`.
+    public func createAutomation(_ body: Body) async throws { try await raw("POST", "api/automations", body: body) }
+    public func updateAutomation(_ id: String, _ body: Body) async throws {
+        try await raw("PUT", "api/automations/\(Self.segment(id))", body: body)
+    }
+    public func deleteAutomation(_ id: String) async throws { try await raw("DELETE", "api/automations/\(Self.segment(id))") }
+    /// Answers once the prompt is in the automation's chat; the reply follows there.
+    public func runAutomation(_ id: String) async throws -> Automation {
+        try await call("POST", "api/automations/\(Self.segment(id))/run")
+    }
+
     public func configureSearch(_ patch: Body) async throws { try await raw("POST", "api/tools/search", body: patch) }
     public func testSearch() async throws -> SearchTest { try await call("POST", "api/tools/search/test") }
 

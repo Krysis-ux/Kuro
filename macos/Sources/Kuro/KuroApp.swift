@@ -18,19 +18,17 @@ struct KuroApp: App {
                 Button("New Chat") { app.go(.newChat) }
                     .keyboardShortcut("n")
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { app.go(.settings(.general)) }
+                    .keyboardShortcut(",")
+            }
             CommandGroup(after: .sidebar) {
                 Button("Code") { app.go(.code) }.keyboardShortcut("1", modifiers: [.command, .option])
                 Button("Projects") { app.go(.projects) }.keyboardShortcut("2", modifiers: [.command, .option])
                 Button("Models") { app.go(.models) }.keyboardShortcut("3", modifiers: [.command, .option])
-                Button("Tools") { app.go(.tools) }.keyboardShortcut("4", modifiers: [.command, .option])
+                Button("Providers") { app.go(.settings(.providers)) }.keyboardShortcut("4", modifiers: [.command, .option])
                 Divider()
             }
-        }
-
-        Settings {
-            SettingsView()
-                .environment(app)
-                .preferredColorScheme(app.prefs.theme.scheme)
         }
     }
 }

@@ -1,9 +1,7 @@
-//! Server-sent event parsing.
-//!
-//! Used in both directions: the server parses the engine's OpenAI-style stream,
-//! and the CLI parses Kuro's own event stream. Chunks arrive on arbitrary byte
-//! boundaries, so bytes are buffered and only complete events are decoded —
-//! decoding early would split multi-byte characters.
+//! Server-sent event parsing, for both the engine's OpenAI-style stream and
+//! Kuro's own. Chunks arrive on arbitrary byte boundaries, so bytes are buffered
+//! and only complete events decoded (decoding early would split multi-byte
+//! characters).
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SseEvent {
@@ -12,9 +10,8 @@ pub struct SseEvent {
     pub data: String,
 }
 
-/// Remove and return every complete event in `buffer`.
-///
-/// Incomplete trailing bytes stay in the buffer for the next chunk.
+/// Remove and return every complete event in `buffer`; incomplete trailing
+/// bytes stay for the next chunk.
 pub fn drain_events(buffer: &mut Vec<u8>) -> Vec<SseEvent> {
     let mut events = Vec::new();
 
@@ -45,8 +42,7 @@ pub fn drain_events(buffer: &mut Vec<u8>) -> Vec<SseEvent> {
     events
 }
 
-/// Position and length of the first event separator, handling `\n\n` and
-/// `\r\n\r\n`.
+/// Position and length of the first `\n\n` or `\r\n\r\n` separator.
 fn find_block_end(buffer: &[u8]) -> Option<(usize, usize)> {
     let lf = find_subslice(buffer, b"\n\n").map(|position| (position, 2));
     let crlf = find_subslice(buffer, b"\r\n\r\n").map(|position| (position, 4));

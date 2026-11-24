@@ -40,34 +40,29 @@ struct WorkspaceView: View {
 
         // A plain HStack with drag handles: HSplitView sizes itself from its
         // children's ideal widths and pushed the window's sidebar off screen.
-        // Side panels shrink together when the window is too narrow for them.
         return GeometryReader { proxy in
-            let panels = (prefs.filesOpen ? prefs.filesWidth : 0)
-                + (openFile != nil ? prefs.viewerWidth : 0)
-                + (prefs.runningOpen ? prefs.runningWidth : 0)
-            let room = proxy.size.width - Self.conversationMinimum - 24
-            let scale = panels > 0 ? min(1, max(0, room) / panels) : 1
+            let fit = panels(width: proxy.size.width)
 
             HStack(spacing: 0) {
-                if prefs.filesOpen {
+                if fit.files {
                     WorkspaceSidebar(workspace: workspace, onOpen: { openFile = $0 })
-                        .frame(width: prefs.filesWidth * scale)
+                        .frame(width: prefs.filesWidth * fit.scale)
                     ResizeHandle(width: $prefs.filesWidth)
                 }
-                if let openFile {
+                if fit.viewer, let openFile {
                     FileViewer(workspaceId: workspaceId, path: openFile) { self.openFile = nil }
-                        .frame(width: prefs.viewerWidth * scale)
+                        .frame(width: prefs.viewerWidth * fit.scale)
                     ResizeHandle(width: $prefs.viewerWidth, range: 260...900, standard: 440)
                 }
                 conversation(workspace)
                     .frame(maxWidth: .infinity)
                 // Not `.inspector`: one that is open as the view appears sends AppKit into a layout loop.
-                if prefs.runningOpen {
+                if fit.running {
                     ResizeHandle(width: $prefs.runningWidth, range: 300...760, standard: 420, panelOnRight: true)
                     RunningPanel(workspace: workspace, processes: processes, view: $prefs.runningView) {
                         Task { await refreshProcesses() }
                     }
-                    .frame(width: prefs.runningWidth * scale)
+                    .frame(width: prefs.runningWidth * fit.scale)
                     .background(.background.secondary)
                 }
             }
@@ -101,6 +96,30 @@ struct WorkspaceView: View {
                 .help(live > 0 ? "\(live) running" : "Nothing is running")
             }
         }
+    }
+
+    private struct PanelFit {
+        var files: Bool
+        var viewer: Bool
+        var running: Bool
+        var scale: CGFloat = 1
+    }
+
+    /// Which side panels fit beside the conversation. Panels shrink together, but one that
+    /// would drop below 60% of its width is hidden instead: files first, then running, then the viewer.
+    private func panels(width: CGFloat) -> PanelFit {
+        let prefs = app.prefs
+        var fit = PanelFit(files: prefs.filesOpen, viewer: openFile != nil, running: prefs.runningOpen)
+        let room = max(0, width - Self.conversationMinimum - 24)
+        func total() -> CGFloat {
+            (fit.files ? prefs.filesWidth : 0) + (fit.viewer ? prefs.viewerWidth : 0) + (fit.running ? prefs.runningWidth : 0)
+        }
+        for panel in [\PanelFit.files, \.running, \.viewer] where total() * 0.6 > room {
+            fit[keyPath: panel] = false
+        }
+        let used = total()
+        fit.scale = used > 0 ? min(1, room / used) : 1
+        return fit
     }
 
     private var conversationsMenu: some View {
@@ -140,7 +159,7 @@ struct WorkspaceView: View {
                     Image(systemName: workspace.mode.systemImage)
                         .font(.system(size: 28, weight: .light))
                         .foregroundStyle(.tertiary)
-                    Text(workspace.mode.emptyLine)
+                    Text(workspace.mode.note)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 420)
@@ -175,7 +194,7 @@ struct WorkspaceView: View {
                 effortNote: "More effort means more rounds of reading, editing and running, and pulls in the skills that match this project. Ultracode brings all of them and lets a turn run as long as it needs.",
                 leading: { compact in AnyView(ModeSwitch(current: workspace.mode, modes: app.workspaceModes, compact: compact) { setMode($0) }) },
                 placeholder: workspace.mode.placeholder,
-                hint: workspace.mode.note,
+                hint: empty ? nil : workspace.mode.note,
                 disabledReason: workspace.rootExists ? nil : "This folder is no longer on disk, so nothing here can run.",
                 isRunning: turn?.isRunning ?? false,
                 onSend: { content, skills in send(content, skills: skills) },

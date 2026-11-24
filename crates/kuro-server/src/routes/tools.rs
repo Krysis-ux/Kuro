@@ -1,9 +1,8 @@
 //! Built-in tools, search configuration and memory.
 //!
-//! Separate from `/api/mcp` because these are Kuro's own capabilities rather than
-//! someone else's server. The interface presents them together; the API keeps them
-//! apart so that a user with no MCP servers at all still has a coherent tools
-//! screen.
+//! Separate from `/api/mcp` because these are Kuro's own capabilities. The UI
+//! presents them together; the API keeps them apart so a user with no MCP
+//! servers still has a coherent tools screen.
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
@@ -15,6 +14,8 @@ use kuro_core::settings::{
 };
 use kuro_core::tools::web_search::{self, SearchProvider};
 use kuro_core::tools::{describe_builtins, ToolGroup};
+use kuro_core::agents;
+use kuro_core::db::UserAgentRecord;
 use kuro_core::skills;
 use kuro_core::KuroError;
 use serde::Deserialize;
@@ -23,12 +24,9 @@ use serde_json::{json, Value};
 use crate::error::AppResult;
 use crate::state::SharedState;
 
-/// What one turn will actually carry, at each surface and effort.
-///
-/// The screen's honest headline. Switching a skill on adds it to the pool a
-/// turn chooses from; these are the ceilings on what any turn spends out of
-/// that pool, which is the number a user is really asking about when they look
-/// at the token count and start switching things off.
+/// What one turn will actually carry, at each surface and effort: the ceiling on
+/// what any turn spends from the pool of enabled skills. This is the headline
+/// number, not the all-skills total.
 fn budget_summary() -> Value {
     let describe = |surface: Surface| {
         [Effort::Low, Effort::Balanced, Effort::High, Effort::Max, Effort::Ultra]
@@ -69,25 +67,14 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
             }))
             .collect::<Vec<_>>(),
         "skills": {
-            // Only what is a real choice. The essentials are in every coding
-            // brief already, and rendering them with a switch would say they
-            // were optional.
+            // Only real choices: the essentials are already in every coding brief, and a switch
+            // would imply they are optional.
             "catalogue": skills::selectable(),
             "enabled": enabled_skills,
-            // What every enabled skill would cost if they all went in at once.
-            //
-            // Kept, but no longer the number the screen leads with, because it
-            // stopped being what a turn spends. Skills used to be concatenated
-            // into every prompt, so this total *was* the cost; a turn now ranks
-            // the enabled set against what was asked and sends what fits
-            // `budgetTokens`. Showing forty thousand as the running cost of
-            // leaving switches on would be describing a version of Kuro that no
-            // longer exists — and it is precisely the number that made people
-            // switch skills off to protect a context window that was never
-            // actually at risk.
+            // What every enabled skill would cost if all went in at once. Not the headline: a turn
+            // ranks the enabled set against the request and sends only what fits `budgetTokens`.
             "approxTokens": skills::approx_tokens(&active),
-            // What one turn will really carry, per surface and effort. The
-            // honest headline.
+            // What one turn will really carry, per surface and effort.
             "budgets": budget_summary(),
             "essentials": skills::essentials()
                 .iter()
@@ -97,10 +84,8 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
                     "blurb": skill.blurb,
                 }))
                 .collect::<Vec<_>>(),
-            // The user's own, listed separately from the catalogue they also
-            // appear in. Same skills, different question: the catalogue answers
-            // "what can Kuro do", and this answers "what did I add, where did
-            // it come from, and how do I take it back out".
+            // The user's own skills, which also appear in the catalogue: the catalogue
+            // answers "what can Kuro do", this one "what did I add, and from where".
             "custom": state
                 .db
                 .list_user_skills()?
@@ -116,6 +101,26 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
                 }))
                 .collect::<Vec<_>>(),
         },
+        // The specialists a coding turn can delegate to, for the Subagents page.
+        // Built-ins first, then the user's own, which carry what the editor needs.
+        "agents": agents::all()
+            .iter()
+            .map(|agent| json!({
+                "slug": agent.slug,
+                "name": agent.name,
+                "blurb": agent.blurb,
+                "when": agent.when,
+                "brief": agent.brief,
+                "writes": agent.writes,
+                "custom": !agents::is_builtin(agent.slug),
+                "skills": agent
+                    .resolved_skills()
+                    .iter()
+                    .map(|skill| skill.name)
+                    .collect::<Vec<_>>(),
+                "skillSlugs": agent.skills,
+            }))
+            .collect::<Vec<_>>(),
         "surfaces": {
             "chat": {
                 "autoOrchestrate": settings::auto_orchestrate(&state.db, Surface::Chat)?,
@@ -228,10 +233,8 @@ pub struct SearchTestRequest {
     pub query: Option<String>,
 }
 
-/// Run a real search against the current configuration.
-///
-/// The point of this button is that a user should never have to send a message to
-/// find out whether search works.
+/// Run a real search against the current configuration, so a user need not
+/// send a message to learn whether search works.
 pub async fn test_search(
     State(state): State<SharedState>,
     Json(request): Json<SearchTestRequest>,
@@ -290,9 +293,6 @@ pub async fn configure_defaults(
 
     overview(State(state)).await
 }
-
-/* ---------- Files ---------- */
-
 
 /* ---------- Memory ---------- */
 
@@ -357,11 +357,8 @@ pub struct UploadSkillRequest {
     pub content: String,
 }
 
-/// Add a skill from a `SKILL.md` the user picked.
-///
-/// The file is read here rather than uploaded as a multipart form: it is a few
-/// kilobytes of text, the client already has it as a string, and a JSON body is
-/// one fewer thing to get wrong in both directions.
+/// Add a skill from a `SKILL.md` the user picked. Sent as a JSON string rather
+/// than multipart: it is a few kilobytes of text the client already has.
 pub async fn upload_skill(
     State(state): State<SharedState>,
     Json(request): Json<UploadSkillRequest>,
@@ -390,10 +387,8 @@ pub async fn upload_skill(
     };
 
     state.db.put_user_skill(&record)?;
-    // Loaded before it is switched on, not after. `set_enabled` drops slugs it
-    // cannot resolve — which is the right rule and made the wrong thing happen
-    // here: the skill was stored, the enable was silently filtered out, and it
-    // arrived switched off with nothing to say why.
+    // Reload before enabling: `set_enabled` drops slugs it cannot resolve, so
+    // enabling first would leave the skill silently switched off.
     skills::custom::reload(&state.db)?;
     enable_new(&state, &parsed.slug)?;
 
@@ -406,11 +401,8 @@ pub struct ImportSkillsRequest {
     pub url: String,
 }
 
-/// Pull every `SKILL.md` out of a GitHub repository.
-///
-/// Built-in slugs are skipped rather than failing the import: a repository of
-/// forty skills that happens to contain one called `rust` should still deliver
-/// the other thirty-nine, and the response says which were left.
+/// Pull every `SKILL.md` out of a GitHub repository. Built-in slugs are skipped
+/// rather than failing the import, and the response says which were left.
 pub async fn import_skills(
     State(state): State<SharedState>,
     Json(request): Json<ImportSkillsRequest>,
@@ -435,8 +427,7 @@ pub async fn import_skills(
         added.push(entry.parsed.slug.clone());
     }
 
-    // Loaded before enabling, for the same reason as an upload: `set_enabled`
-    // cannot keep a slug it cannot resolve.
+    // Reload before enabling, as with an upload.
     skills::custom::reload(&state.db)?;
     for slug in &added {
         enable_new(&state, slug)?;
@@ -449,12 +440,10 @@ pub async fn import_skills(
             json!({
                 "repo": repo.slug(),
                 "added": added,
-                // Named rather than counted: "3 skipped" is a mystery, and
-                // "rust, go, python were already built in" is an answer.
+                // Named rather than counted, so the user can see which were skipped.
                 "skipped": skipped,
-                // Said out loud, because a skill whose instructions tell the
-                // model to run `scripts/convert.py` will not work and the
-                // reason is not visible from the card.
+                // A skill whose instructions tell the model to run `scripts/convert.py` will
+                // not work, and the card does not show why.
                 "needsScripts": needs_scripts,
             }),
         );
@@ -483,11 +472,96 @@ pub async fn delete_skill(
     overview(State(state)).await
 }
 
-/// Switch a newly added skill on.
-///
-/// Adding a skill and then having to go and find it in a list of sixty to turn
-/// it on is a second step nobody wants and everybody forgets. Enabling it is
-/// what asking for it meant.
+/// A subagent as the editor sends it.
+#[derive(Debug, Deserialize)]
+pub struct AgentBody {
+    name: String,
+    #[serde(default)]
+    blurb: String,
+    #[serde(default)]
+    when: String,
+    brief: String,
+    #[serde(default)]
+    skills: Vec<String>,
+    #[serde(default)]
+    writes: bool,
+}
+
+impl AgentBody {
+    fn into_record(self, slug: String) -> UserAgentRecord {
+        UserAgentRecord {
+            slug,
+            name: self.name.trim().to_string(),
+            blurb: self.blurb.trim().to_string(),
+            when: self.when.trim().to_string(),
+            brief: self.brief.trim().to_string(),
+            skills: self.skills,
+            writes: self.writes,
+        }
+    }
+}
+
+/// Add a subagent. Its slug comes from the name and must not clash with any agent.
+pub async fn create_agent(
+    State(state): State<SharedState>,
+    Json(body): Json<AgentBody>,
+) -> AppResult<Json<Value>> {
+    let slug = skills::custom::slugify(&body.name);
+    if agents::find(&slug).is_some() {
+        return Err(KuroError::bad_request(format!(
+            "There is already a subagent called `{slug}`. Pick another name."
+        ))
+        .into());
+    }
+    save_agent(&state, body.into_record(slug))?;
+    overview(State(state)).await
+}
+
+/// Change one of the user's subagents. Its slug stays, even if the name changes,
+/// so a conversation that delegated to it still reads the same.
+pub async fn update_agent(
+    State(state): State<SharedState>,
+    Path(slug): Path<String>,
+    Json(body): Json<AgentBody>,
+) -> AppResult<Json<Value>> {
+    if agents::is_builtin(&slug) {
+        return Err(KuroError::bad_request(format!(
+            "`{slug}` is part of Kuro, so it cannot be changed. Make your own instead."
+        ))
+        .into());
+    }
+    if !state.db.list_user_agents()?.iter().any(|held| held.slug == slug) {
+        return Err(KuroError::not_found(format!("subagent `{slug}`")).into());
+    }
+    save_agent(&state, body.into_record(slug))?;
+    overview(State(state)).await
+}
+
+pub async fn delete_agent(
+    State(state): State<SharedState>,
+    Path(slug): Path<String>,
+) -> AppResult<Json<Value>> {
+    if agents::is_builtin(&slug) {
+        return Err(KuroError::bad_request(format!(
+            "`{slug}` is part of Kuro, so it cannot be removed."
+        ))
+        .into());
+    }
+    if !state.db.delete_user_agent(&slug)? {
+        return Err(KuroError::not_found(format!("subagent `{slug}`")).into());
+    }
+    agents::reload(&state.db)?;
+    overview(State(state)).await
+}
+
+fn save_agent(state: &SharedState, record: UserAgentRecord) -> Result<(), KuroError> {
+    agents::check(&record)?;
+    state.db.put_user_agent(&record)?;
+    agents::reload(&state.db)?;
+    Ok(())
+}
+
+/// Switch a newly added skill on, so adding one does not need a second step.
 fn enable_new(state: &SharedState, slug: &str) -> Result<(), KuroError> {
     let mut enabled = skills::enabled_slugs(&state.db)?;
     if !enabled.iter().any(|held| held == slug) {
@@ -497,10 +571,8 @@ fn enable_new(state: &SharedState, slug: &str) -> Result<(), KuroError> {
     Ok(())
 }
 
-/// Replace the set of active skills.
-///
-/// The whole set is sent rather than a diff, so the client never has to reason
-/// about ordering two concurrent toggles.
+/// Replace the set of active skills. The whole set is sent, not a diff, so
+/// concurrent toggles need no ordering.
 pub async fn set_skills(
     State(state): State<SharedState>,
     Json(request): Json<SkillsRequest>,

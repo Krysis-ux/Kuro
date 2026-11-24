@@ -123,11 +123,8 @@ fn model_from_row(row: &Row<'_>) -> rusqlite::Result<ModelRecord> {
 }
 
 impl Db {
-    /// Register a model, replacing any previous row with the same id.
-    ///
-    /// Re-pulling a model the user already has is a normal action (for example
-    /// after deleting a corrupt file), so this is an upsert rather than an
-    /// error.
+    /// Register a model, replacing any row with the same id (re-pulling, e.g.
+    /// after deleting a corrupt file, is normal).
     pub fn upsert_model(&self, model: &NewModel) -> Result<()> {
         let capabilities = serde_json::to_string(&model.capabilities)?;
         self.with(|conn| {

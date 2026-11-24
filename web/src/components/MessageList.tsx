@@ -21,6 +21,15 @@ import { Logo } from './Logo'
 import { MessageActions } from './MessageActions'
 import { RichText } from './RichText'
 
+/** Drops `<tool_call>…</tool_call>` a small model wrote as text. Fenced code is kept. */
+function withoutToolCalls(text: string): string {
+  if (!text.includes('<tool_call>')) return text
+  return text
+    .split('```')
+    .map((part, i) => (i % 2 ? part : part.replace(/<tool_call>[\s\S]*?(<\/tool_call>|$)/g, '')))
+    .join('```')
+}
+
 /**
  * How a reply's markdown is rendered.
  *
@@ -190,7 +199,7 @@ function MessageRow({ message, actionable, onFork, onEdit, onOpenPath }: Message
 
         <div className="prose">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-            {message.content}
+            {withoutToolCalls(message.content)}
           </ReactMarkdown>
         </div>
 
@@ -337,7 +346,7 @@ function StreamingRow({
         {state.content && (
           <div className="prose">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-              {state.content}
+              {withoutToolCalls(state.content)}
             </ReactMarkdown>
           </div>
         )}

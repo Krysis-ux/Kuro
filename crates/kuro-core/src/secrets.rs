@@ -1,23 +1,23 @@
-//! Where API keys and bearer tokens live.
+//! API keys and bearer tokens, kept out of the database (which users copy and
+//! attach to bug reports) in a separate owner-only file; the database stores
+//! only a reference.
 //!
-//! Deliberately not the database. The SQLite file is the thing a user is most
-//! likely to copy, back up, or hand over when reporting a bug, and a provider
-//! key in it would travel along. Secrets go to a separate owner-only file, and
-//! the database stores only a reference to the entry.
-//!
-//! The file is written with mode `0600` and replaced atomically, so a crash
-//! mid-write cannot leave a half-truncated store behind. Values are never
-//! returned to the browser — the API reports whether a reference is set, never
-//! what it holds.
+//! The file is written `0600` and replaced atomically, so a crash mid-write
+//! cannot leave a truncated store. Values are never returned to the browser,
+//! only whether a reference is set.
 
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::{KuroError, Result};
 
-/// Owner read/write only. Anything broader would defeat the point of moving
-/// secrets out of the database.
+/// Serialises read-modify-write, so two keys saved at once both survive.
+/// ponytail: process-wide lock; fine while one daemon owns the file.
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Owner read/write only.
 #[cfg(unix)]
 const FILE_MODE: u32 = 0o600;
 
@@ -31,28 +31,26 @@ impl SecretStore {
         Self { path }
     }
 
-    /// Read one secret. `None` covers both "no store yet" and "no such entry",
-    /// because callers treat them the same way.
+    /// Read one secret. `None` means no store yet or no such entry.
     pub fn get(&self, reference: &str) -> Result<Option<String>> {
         Ok(self.read_all()?.remove(reference))
     }
 
-    /// Store a secret under `reference`, replacing any existing value.
-    ///
-    /// An empty or whitespace-only value is rejected rather than stored, so a
-    /// blank form field cannot silently turn a working connection into one that
-    /// authenticates with nothing.
+    /// Store a secret under `reference`, replacing any existing value. Blank
+    /// values are rejected so an empty form field cannot overwrite a working key.
     pub fn put(&self, reference: &str, value: &str) -> Result<()> {
         if value.trim().is_empty() {
             return Err(KuroError::bad_request("the key is empty"));
         }
 
+        let _guard = WRITE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut entries = self.read_all()?;
         entries.insert(reference.to_string(), value.trim().to_string());
         self.write_all(&entries)
     }
 
     pub fn delete(&self, reference: &str) -> Result<()> {
+        let _guard = WRITE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut entries = self.read_all()?;
         if entries.remove(reference).is_none() {
             return Ok(());
@@ -66,15 +64,21 @@ impl SecretStore {
 
     fn read_all(&self) -> Result<BTreeMap<String, String>> {
         match std::fs::read_to_string(&self.path) {
-            Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_default()),
+            // An unreadable store is an error, not an empty one: read as empty, the next
+            // save would write back that single key and destroy every other.
+            Ok(text) => serde_json::from_str(&text).map_err(|error| {
+                KuroError::other(format!(
+                    "{} is not valid JSON ({error}). Fix it or move it aside; Kuro will not overwrite it.",
+                    self.path.display()
+                ))
+            }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
             Err(error) => Err(error.into()),
         }
     }
 
-    /// Write via a temporary file in the same directory, then rename over the
-    /// target. Rename within a directory is atomic, so readers see either the
-    /// old store or the new one and never a partial write.
+    /// Write to a temp file in the same directory, then rename over the target;
+    /// the rename is atomic, so readers never see a partial write.
     fn write_all(&self, entries: &BTreeMap<String, String>) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -107,9 +111,8 @@ fn create_private(path: &Path) -> Result<std::fs::File> {
 
 #[cfg(not(unix))]
 fn create_private(path: &Path) -> Result<std::fs::File> {
-    // Kuro targets macOS today. On a platform without POSIX modes the file is
-    // still outside the database, which is the main goal, but the permission
-    // guarantee is weaker — worth tightening before shipping elsewhere.
+    // TODO: no POSIX modes here, so the file is not owner-only; tighten before
+    // shipping on a non-Unix platform.
     Ok(std::fs::File::create(path)?)
 }
 
@@ -186,6 +189,18 @@ mod tests {
 
         let mode = std::fs::metadata(&store.path).expect("stat").permissions().mode();
         assert_eq!(mode & 0o077, 0, "group and other must have no access");
+        std::fs::remove_file(&store.path).ok();
+    }
+
+    #[test]
+    fn a_corrupt_store_is_refused_rather_than_overwritten() {
+        let store = store();
+        std::fs::write(&store.path, "{\"provider:groq\": \"gsk-kept\", trunc").expect("seed");
+
+        assert!(store.put("provider:openai", "sk-new").is_err());
+        assert!(store.get("provider:groq").is_err());
+        let after = std::fs::read_to_string(&store.path).expect("read");
+        assert!(after.contains("gsk-kept"), "the other keys must survive: {after}");
         std::fs::remove_file(&store.path).ok();
     }
 }

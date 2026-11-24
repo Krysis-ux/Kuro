@@ -1,7 +1,5 @@
-//! Cached engine builds.
-//!
-//! One row per engine release tag that has been downloaded and extracted, so
-//! Kuro can reuse an engine across restarts instead of re-fetching it.
+//! Cached engine builds: one row per downloaded release tag, reused across
+//! restarts.
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::Serialize;

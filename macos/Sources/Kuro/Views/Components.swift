@@ -3,56 +3,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 import KuroKit
 
-/// The Kuro mark: eight petals over eight fainter ones, with the centre cut out.
-struct KuroMark: View {
-    var size: CGFloat = 24
-
-    var body: some View {
-        ZStack {
-            Petals(rotation: 22.5, inset: true).opacity(0.55)
-            Petals(rotation: 0, inset: false)
-        }
-        .mask(CentreHole().fill(style: FillStyle(eoFill: true)))
-        .frame(width: size, height: size)
-        .accessibilityLabel("Kuro")
-    }
-
-    private struct Petals: Shape {
-        let rotation: Double
-        /// The back ring's petals are shorter.
-        let inset: Bool
-
-        func path(in rect: CGRect) -> Path {
-            let scale = rect.width / 100
-            var petal = Path()
-            petal.move(to: CGPoint(x: 50, y: 50))
-            if inset {
-                petal.addCurve(to: CGPoint(x: 50, y: 15), control1: CGPoint(x: 39, y: 42), control2: CGPoint(x: 38, y: 25))
-                petal.addCurve(to: CGPoint(x: 50, y: 50), control1: CGPoint(x: 62, y: 25), control2: CGPoint(x: 61, y: 42))
-            } else {
-                petal.addCurve(to: CGPoint(x: 50, y: 6), control1: CGPoint(x: 36, y: 40), control2: CGPoint(x: 34, y: 18))
-                petal.addCurve(to: CGPoint(x: 50, y: 50), control1: CGPoint(x: 66, y: 18), control2: CGPoint(x: 64, y: 40))
-            }
-            var path = Path()
-            for step in 0..<8 {
-                let angle = Angle.degrees(Double(step) * 45 + rotation).radians
-                let turn = CGAffineTransform(translationX: 50, y: 50).rotated(by: angle).translatedBy(x: -50, y: -50)
-                path.addPath(petal, transform: turn)
-            }
-            return path.applying(CGAffineTransform(scaleX: scale, y: scale))
-        }
-    }
-
-    private struct CentreHole: Shape {
-        func path(in rect: CGRect) -> Path {
-            var path = Path(rect)
-            let radius = rect.width * 0.09
-            path.addEllipse(in: CGRect(x: rect.midX - radius, y: rect.midY - radius, width: radius * 2, height: radius * 2))
-            return path
-        }
-    }
-}
-
 /// A small capsule label.
 struct Tag: View {
     enum Tone { case neutral, live, warning, error }
@@ -126,7 +76,12 @@ struct ErrorText: View {
     init(_ message: String) { self.message = message }
 
     var body: some View {
-        Label(message, systemImage: "exclamationmark.triangle.fill")
+        // Server errors mark names with `backticks`; show them as code, not raw.
+        Label {
+            Text((try? AttributedString(markdown: message)) ?? AttributedString(message))
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+        }
             .font(.callout)
             .foregroundStyle(.red)
             .textSelection(.enabled)
@@ -259,18 +214,6 @@ struct QuietButtonStyle: ButtonStyle {
 }
 
 extension View {
-    /// Liquid Glass on macOS 26 and later, a material card before that.
-    @ViewBuilder
-    func glassCard(cornerRadius: CGFloat = 22) -> some View {
-        if #available(macOS 26.0, *) {
-            glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-        } else {
-            background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
-                .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
-        }
-    }
-
     /// Run an action and show its error inline.
     func perform(_ failure: Binding<String?>, _ work: @escaping () async throws -> Void) {
         Task { @MainActor in
@@ -307,6 +250,15 @@ enum Pick {
         panel.allowsMultipleSelection = multiple
         panel.allowedContentTypes = types
         return panel.runModal() == .OK ? panel.urls : []
+    }
+}
+
+extension View {
+    /// A grouped `Form` lays its section footers out trailing, which suits a button
+    /// but turns a paragraph into ragged right-aligned text. Notes read left to right.
+    func formNote() -> some View {
+        multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

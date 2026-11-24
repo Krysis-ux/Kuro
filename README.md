@@ -1,7 +1,7 @@
 # Kuro LLM
 
 A local model server. Download GGUF weights, run them on your own machine, and
-talk to them through a minimal web interface, a terminal, or the OpenAI API.
+talk to them through a native macOS app, a terminal, or the OpenAI API.
 
 Models run locally by default, and nothing leaves the machine unless you switch on
 something that says it will: web search, an MCP server, or an endpoint you hold the
@@ -19,13 +19,16 @@ The app is not signed by Apple yet, so the first launch needs **right-click →
 Open** rather than a double-click. macOS then offers the same warning with an
 Open button on it; after that it starts normally.
 
-Kuro runs as an ordinary app: it starts the server and opens the interface in
-your browser. Quitting Kuro stops the server and unloads any model.
+Kuro is a native SwiftUI app: it starts its server in the background and shows
+everything in its own window — no browser, no terminal. Quitting Kuro stops the
+server and unloads any model. (The server still serves a browser interface at
+<http://127.0.0.1:8420> for anyone who prefers one.)
 
 ### From source
 
-**Double-click `Start Kuro.command`.** It builds anything missing on the first
-run, starts the server, and opens the interface. Closing that window stops Kuro.
+**Double-click `Start Kuro.command`.** It builds whatever changed (the first run
+takes a few minutes) into `build/macos/Kuro.app` and opens it. Needs Rust and the
+Xcode Command Line Tools (`xcode-select --install`); Node.js is optional.
 
 From a terminal, if you prefer:
 
@@ -269,6 +272,16 @@ profile if none of them are. `Start Kuro.command` runs it for you, and the macOS
 app links its own copy the first time it launches, so this is only needed after
 a manual `cargo build`.
 
+### Building the app
+
+```bash
+packaging/macos/build-app.sh              # build/macos/Kuro.app for this Mac
+packaging/macos/build-app.sh --universal  # Apple Silicon + Intel
+```
+
+While working on the app itself, `cd macos && swift run Kuro` runs it against a
+`cargo build --release` server found in `target/`.
+
 ### Building the installer
 
 ```bash
@@ -328,7 +341,8 @@ running set and the next request starts a fresh one.
 | `crates/kuro-core` | Models, downloads, engine supervision, storage, hardware detection, tools, MCP client, providers, the model's system prompt. No HTTP, no CLI parsing. |
 | `crates/kuro-server` | The Axum daemon: routing, streaming, static files. |
 | `crates/kuro-cli` | The `kuro` command. A thin client over the same HTTP API the browser uses. |
-| `web` | React + TypeScript interface. Plain CSS with monochrome design tokens. |
+| `macos` | The native app (SwiftUI). `KuroKit` is the API client and pure logic, `Kuro` the app, `KuroChecks` its checks (`swift run KuroChecks`). |
+| `web` | The older React interface, still served by the daemon at `/`. |
 
 Data lives in `~/Library/Application Support/Kuro` — SQLite database, model
 weights, engine builds and per-engine logs. Set `KURO_HOME` to move it.

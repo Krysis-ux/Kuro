@@ -18,17 +18,12 @@ const RESET: &str = "\x1b[0m";
 /// Frames of the waiting spinner.
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// A spinner covering the wait before the first token.
+/// A spinner covering the wait before the first token (a local model loading, a
+/// reasoning model thinking, a free provider failing over), so a slow answer
+/// can be told from a hung one.
 ///
-/// That gap is not small and it is not always short. A local model has to load,
-/// a reasoning model thinks for a while before it says anything, and a free
-/// provider may be failing over between two endpoints — and until now every one
-/// of those looked identical from the terminal: a cursor on an empty line, with
-/// no way to tell a slow answer from a hung one.
-///
-/// On stderr, so that `kuro run qwen "…" > out.txt` still writes clean output.
-/// Skipped entirely when stderr is not a terminal, because escape codes in a
-/// log file are noise nobody asked for.
+/// On stderr, so `kuro run qwen "…" > out.txt` still writes clean output.
+/// Skipped when stderr is not a terminal, since escape codes in a log are noise.
 struct Thinking(Option<tokio::task::JoinHandle<()>>);
 
 impl Thinking {
@@ -58,8 +53,7 @@ impl Thinking {
     }
 }
 
-// A `?` anywhere in the streaming loop would otherwise leave the spinner
-// running over whatever error is printed next.
+// A `?` in the streaming loop would otherwise leave the spinner running over the next error.
 impl Drop for Thinking {
     fn drop(&mut self) {
         self.stop();
@@ -76,8 +70,7 @@ pub async fn run(
 
     let model_id = resolve_model(client, model).await?;
 
-    // Load before the first prompt so the wait is explained rather than
-    // appearing as an unresponsive terminal.
+    // Load before the first prompt so the wait is explained, not an unresponsive terminal.
     eprint!("{DIM}Loading {model_id}…{RESET}");
     let _ = std::io::stderr().flush();
     client
@@ -163,8 +156,7 @@ async fn send(
     let mut buffer: Vec<u8> = Vec::new();
     let mut stream = response.bytes_stream();
     let mut wrote_output = false;
-    // Runs until the first thing worth showing arrives, and is wiped by `Drop`
-    // on any path out of this loop.
+    // Runs until the first thing worth showing arrives; `Drop` wipes it on any exit path.
     let mut thinking = Thinking::start();
 
     while let Some(chunk) = stream.next().await {
@@ -201,8 +193,8 @@ async fn send(
                         payload["message"].as_str().unwrap_or("generation failed")
                     );
                 }
-                // `reasoning` is intentionally not printed: the terminal shows
-                // the answer, and thinking is available in the web interface.
+                // `reasoning` is intentionally not printed: the terminal shows the answer, and
+                // thinking is available in the web interface.
                 _ => {}
             }
         }

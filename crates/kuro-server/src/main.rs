@@ -1,8 +1,9 @@
 //! The Kuro LLM daemon.
 //!
-//! One process serves the JSON API, the OpenAI-compatible API and the web
-//! interface. Inference happens in separate `kuro-engine` child processes that
-//! this daemon starts, supervises and stops.
+//! One process serves the JSON API, the OpenAI- and Anthropic-compatible APIs
+//! and the web UI, for the browser, the CLI, the macOS app (`macos/`) and
+//! third-party clients. Inference runs in separate `kuro-engine` child
+//! processes that this daemon starts, supervises and stops.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -26,9 +27,7 @@ mod static_files;
 
 use state::AppState;
 
-/// Default port. Deliberately outside the ranges other local model servers
-/// claim by default — 8080, 11434, 1234 — so Kuro can run alongside whatever
-/// else is already on the machine.
+/// Default port, chosen to avoid the ones other local model servers use (8080, 11434, 1234).
 const DEFAULT_PORT: u16 = 8420;
 
 #[tokio::main]
@@ -44,9 +43,8 @@ async fn main() -> anyhow::Result<()> {
     let paths = Paths::resolve_and_create().context("preparing the Kuro data directory")?;
     let db = Db::open(&paths.database_file()).context("opening the Kuro database")?;
 
-    // Weights can be sent to another disk. Read once, here, so a directory that
-    // has become unwritable is a startup error rather than a download that fails
-    // several gigabytes in.
+    // The models directory can be moved to another disk. Read once here so an
+    // unwritable directory fails at startup, not several gigabytes into a download.
     let paths = match db
         .get_setting(kuro_core::settings::KEY_MODELS_DIRECTORY)
         .ok()
@@ -61,9 +59,7 @@ async fn main() -> anyhow::Result<()> {
     };
     let hardware = hardware::detect();
 
-    // A duplicate built-in tool name would make dispatch ambiguous, which is a
-    // programming mistake rather than a runtime condition — so it fails at
-    // startup rather than mid-conversation.
+    // A duplicate built-in tool name is a programming error; fail at startup, not mid-conversation.
     tools::assert_builtin_names_are_unique().context("checking the built-in tools")?;
 
     let port = resolve_port();
@@ -85,28 +81,24 @@ async fn main() -> anyhow::Result<()> {
         outbound.clone(),
     ));
 
-    // The pool keeps this in memory because it is read on a path that must not
-    // touch the database; the database is where it is decided.
+    // Kept in memory because it is read on a path that must not touch the database.
     let free = kuro_core::free::FreePool::new();
     free.set_allow_keyless(kuro_core::settings::allow_keyless(&db).unwrap_or(true));
-    // What the last run learned about each provider's catalogue.
-    //
-    // A cloud connector's models are in the database, so OpenRouter's four
-    // hundred are in the picker the moment it opens. A free provider's were in
-    // this process only — so after every restart the picker rendered with none
-    // of them, and since the model list is fetched once rather than polled, it
-    // stayed that way. Four working keys looked like four broken ones.
+    // Restore each provider's last-known catalogue so the picker is populated after a restart.
     free.restore_catalogues(routes::free::stored_catalogues(&db));
-    // And which providers were refusing when this last ran, so a rejected key
-    // is not silently retried and shown as available by a restart.
+    // Restore which providers were refusing, so a rejected key is not retried as if available.
     free.restore_troubles(routes::free::stored_troubles(&db));
-    // Skills the user added themselves, made usable before the first request.
-    // Loading them lazily would mean the first `/` palette of every run was
-    // missing whatever they imported yesterday.
+    // Load user-added skills before the first request so the `/` palette includes them.
     match kuro_core::skills::custom::reload(&db) {
         Ok(0) => {}
         Ok(count) => tracing::info!(count, "loaded skills you added"),
         Err(error) => tracing::warn!(%error, "could not load your own skills"),
+    }
+    // And user-written subagents, so the first coding turn can delegate to them.
+    match kuro_core::agents::reload(&db) {
+        Ok(0) => {}
+        Ok(count) => tracing::info!(count, "loaded subagents you wrote"),
+        Err(error) => tracing::warn!(%error, "could not load your own subagents"),
     }
 
     let app_state = Arc::new(AppState {
@@ -127,9 +119,10 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = Arc::new(AtomicBool::new(false));
     tokio::spawn(engines.clone().run_idle_loop(shutdown.clone()));
+    tokio::spawn(routes::automations::run_scheduler(app_state.clone()));
 
-    // Loopback only. Kuro has no authentication yet, so it must not be
-    // reachable from the network; LAN serving arrives with API keys.
+    // Loopback only: there is no authentication yet, so the server must not be
+    // reachable from the network. LAN serving arrives with API keys.
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = bind(address, port).await?;
 
@@ -141,8 +134,7 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await;
 
-    // Engines are child processes; leaving them running would hold gigabytes of
-    // memory after Kuro exits.
+    // Engines are child processes; stop them or they keep holding gigabytes of memory.
     shutdown.store(true, Ordering::Relaxed);
     tracing::info!("stopping engines");
     engines.unload_all().await;
@@ -150,23 +142,18 @@ async fn main() -> anyhow::Result<()> {
     result.context("server error")
 }
 
-/// Environment variable the outgoing process sets on its successor, so a restart
-/// knows to wait for the port instead of giving up on it.
+/// Set by the outgoing process on its successor so a restart waits for the port instead of failing.
 pub const RESTART_MARKER: &str = "KURO_RESTARTING";
 
-/// How long a restarting successor waits for the outgoing process to release the
-/// port. Generous, because shutting down means stopping engine child processes.
+/// How long a restarting successor waits for the old process to release the
+/// port. Generous, since shutdown stops the engine processes.
 const RESTART_BIND_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Take the listening socket.
 ///
-/// A normal start binds once and reports a clear error if the port is taken —
-/// almost always another copy of Kuro, and saying so immediately is right.
-///
-/// A *restart* is different: the process that asked for it is still shutting down
-/// and still holds the port for a moment. There the only correct behaviour is to
-/// wait, because failing would leave the user with no server and a browser tab
-/// pointed at nothing.
+/// A normal start fails at once if the port is taken (almost always another
+/// Kuro). A restart retries instead, because the outgoing process still holds
+/// the port briefly and failing would leave no server.
 async fn bind(address: SocketAddr, port: u16) -> anyhow::Result<TcpListener> {
     let restarting = std::env::var_os(RESTART_MARKER).is_some();
 

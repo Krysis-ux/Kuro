@@ -70,12 +70,13 @@ struct ChatView: View {
     private func welcome(_ composer: Composer) -> some View {
         VStack(spacing: 14) {
             Spacer()
-            KuroMark(size: 46)
-            Text("Kuro")
-                .font(.system(size: 30, weight: .semibold, design: .default))
+            KuroMark(size: 38)
+            Text("What should we work on?")
+                .font(.system(size: 26, weight: .medium))
             Text(welcomeLine)
+                .font(.callout)
                 .foregroundStyle(.secondary)
-                .padding(.bottom, 14)
+                .padding(.bottom, 12)
             composer.frame(maxWidth: 700)
             if let failure { ErrorText(failure) }
             Spacer()
@@ -86,9 +87,12 @@ struct ChatView: View {
     }
 
     private var welcomeLine: String {
-        if !app.models.models.isEmpty { return "Ask anything. Everything runs on this Mac." }
-        if !app.models.remote.isEmpty { return "No local models yet — a connected provider is standing in." }
-        return "Install a model to get started, or connect a provider."
+        if let model = app.prefs.chatModel ?? app.models.fallbackId(), Naming.isRemote(model) {
+            return "Running on your provider."
+        }
+        if !app.models.models.isEmpty { return "Running on this Mac." }
+        if !app.models.remote.isEmpty { return "No local models yet — using a provider." }
+        return "Install a model or connect a provider to start."
     }
 
     /// Send a message, creating the conversation first when there is none yet.
@@ -102,6 +106,7 @@ struct ChatView: View {
                     app.invalidate(.conversations)
                 } catch {
                     failure = error.localizedDescription
+                    prefs.setDraft("chat:new", content)
                     return
                 }
             }

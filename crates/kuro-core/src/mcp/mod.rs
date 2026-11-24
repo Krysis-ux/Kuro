@@ -24,14 +24,11 @@ use crate::secrets::SecretStore;
 use crate::tools::{sanitize_tool_name, unique_tool_name, ToolOrigin, ToolSpec};
 use crate::{KuroError, Result};
 
-/// How long a tool list is trusted before the server is asked again.
-///
-/// Long enough that opening the tools page repeatedly costs nothing; short enough
-/// that a server which gained a tool is picked up without a restart.
+/// How long a tool list is cached before the server is asked again.
 const TOOL_CACHE_TTL: Duration = Duration::from_secs(300);
 
-/// Prefix for a server's credential reference. Namespaced so an MCP token and a
-/// provider key can never collide in the credential store.
+/// A server's credential reference, namespaced so it cannot collide with a
+/// provider key.
 fn auth_reference(server_id: &str) -> String {
     format!("mcp:{server_id}")
 }
@@ -98,11 +95,8 @@ impl McpManager {
             .and_then(|reference| self.secrets.get(reference).ok().flatten())
     }
 
-    /// Connect to a server, record the outcome, and cache what it exposes.
-    ///
-    /// The result is stored on the row whether it succeeded or failed, so the
-    /// interface can show *why* a server is not working without the user having
-    /// to press anything.
+    /// Connect to a server, record the outcome on its row (success or the error,
+    /// so the UI can show why it is not working), and cache its tools.
     pub async fn refresh(&self, server_id: &str) -> Result<Vec<protocol::RemoteTool>> {
         let server = self
             .db
@@ -156,19 +150,16 @@ impl McpManager {
         match self.refresh(&server.id).await {
             Ok(tools) => tools,
             Err(error) => {
-                // A server being down must not stop the other servers' tools from
-                // reaching the model, so this is logged and skipped.
+                // A down server must not block other servers' tools.
                 tracing::warn!(server = %server.name, %error, "could not list MCP tools");
                 Vec::new()
             }
         }
     }
 
-    /// Every server with its tools, for the management page.
-    ///
-    /// `connect` decides whether unreachable servers are dialled again. The page
-    /// passes `false` on load so opening it is instant, and `true` when the user
-    /// asks for a refresh.
+    /// Every server with its tools, for the management page. `connect` decides
+    /// whether servers are dialled; the page passes `false` on load (instant) and
+    /// `true` on an explicit refresh.
     pub async fn list_with_tools(&self, connect: bool) -> Result<Vec<ServerWithTools>> {
         let servers = self.db.list_mcp_servers()?;
         let mut out = Vec::with_capacity(servers.len());
@@ -185,8 +176,7 @@ impl McpManager {
                     .unwrap_or_default()
             };
 
-            // Named exactly as `tool_specs` names them, so the page shows the name
-            // the model is actually given rather than the server's internal one.
+            // Named as `tool_specs` names them, so the page shows what the model sees.
             let mut taken: Vec<String> = Vec::new();
             let tools = remote
                 .iter()
@@ -215,10 +205,8 @@ impl McpManager {
         Ok(out)
     }
 
-    /// Tool specs from every enabled server, ready to offer to a model.
-    ///
-    /// `taken` carries the names already in use — the built-ins go in first — so
-    /// an MCP tool can never shadow `web_search`.
+    /// Tool specs from every enabled server. `taken` holds names already in use
+    /// (built-ins first) so an MCP tool cannot shadow `web_search`.
     pub async fn tool_specs(&self, taken: &mut Vec<String>) -> Result<Vec<ToolSpec>> {
         let servers: Vec<McpServerRecord> = self
             .db
@@ -279,16 +267,13 @@ impl McpManager {
     }
 }
 
-/// Namespace a tool with the server it came from.
-///
-/// Two servers offering `search` need distinct names, and a model choosing
-/// between `github_search` and `exa_search` picks better than one choosing between
-/// `search` and `search_2`.
+/// Namespace a tool with its server (`github_search`, not `search_2`), which
+/// models choose between more reliably.
 fn prefixed_name(server_name: &str, tool_name: &str) -> String {
     let prefix = sanitize_tool_name(server_name).to_ascii_lowercase();
     let tool = sanitize_tool_name(tool_name);
 
-    // A tool that already names its server does not need it twice.
+    // Don't repeat the server name.
     if tool.to_ascii_lowercase().starts_with(&prefix) {
         return tool;
     }
@@ -366,8 +351,7 @@ mod tests {
 
     #[test]
     fn a_hyphenated_tool_name_survives_prefixing() {
-        // MCP servers commonly use hyphens; engines accept them, so they must not
-        // be rewritten into underscores.
+        // Engines accept hyphens, so they must not become underscores.
         assert_eq!(
             prefixed_name("Context7", "resolve-library-id"),
             "context7_resolve-library-id"

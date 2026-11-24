@@ -18,11 +18,30 @@ struct McpPane: View {
     }
 
     var body: some View {
+        SettingsPage(pane: .mcp) {
+            HStack(spacing: 8) {
+                Button { Task { await load(connect: true) } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(SubtleButtonStyle())
+                .disabled(connecting)
+                .help("Reconnect all")
+                Button { adding = AddRequest(prefill: nil) } label: {
+                    Label("New", systemImage: "plus")
+                }
+                .buttonStyle(PrimaryButtonStyle())
+            }
+        } content: {
+            form
+        }
+    }
+
+    private var form: some View {
         Form {
             Section {
                 if let servers {
                     if servers.isEmpty {
-                        Text("None connected. Add one, or pick from the marketplace below.").foregroundStyle(.secondary)
+                        Text("None yet. Add one, or pick below.").foregroundStyle(.secondary)
                     }
                     ForEach(servers) { ServerRow(server: $0) }
                 } else {
@@ -30,15 +49,7 @@ struct McpPane: View {
                 }
                 if let failure { ErrorText(failure) }
             } header: {
-                HStack {
-                    Text("Connected Servers")
-                    Spacer()
-                    Button(connecting ? "Connecting…" : "Reconnect All") { Task { await load(connect: true) } }
-                        .buttonStyle(.borderless)
-                        .disabled(connecting)
-                    Button("Add Server…") { adding = AddRequest(prefill: nil) }
-                        .buttonStyle(.borderless)
-                }
+                Text(connecting ? "Installed · connecting…" : "Installed")
             }
 
             Section {
@@ -46,19 +57,17 @@ struct McpPane: View {
                     .labelsHidden()
                 let matches = filtered
                 if matches.isEmpty {
-                    Text(query.isEmpty ? "Nothing to show." : "Nothing matched “\(query)”. Any MCP server works — use Add Server.")
+                    Text(query.isEmpty ? "Nothing to show." : "Nothing matched. Any MCP server works — use New.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(matches) { entry in
                     MarketplaceRow(entry: entry) { adding = AddRequest(prefill: entry) }
                 }
             } header: {
-                Text("Marketplace")
-            } footer: {
-                Text("A curated list rather than a directory: each is keyless or run by the people who own what it connects to.")
+                TitleWithHelp("Marketplace", help: "A curated list: each is keyless or run by the people who own what it connects to.")
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .task(id: app.stamp(.mcp)) { await load(connect: servers == nil) }
         .sheet(item: $adding) { request in
             AddServerSheet(prefill: request.prefill, registry: registry) {
@@ -244,7 +253,10 @@ private struct AddServerSheet: View {
                     } header: {
                         Text("Recommended")
                     } footer: {
-                        if let selected { Text(selected.detail) }
+                        Group {
+                            if let selected { Text(selected.detail) }
+                        }
+                        .formNote()
                     }
                 }
 
@@ -283,7 +295,10 @@ private struct AddServerSheet: View {
                         TextField("Arguments", text: $args, prompt: Text("-y @modelcontextprotocol/server-filesystem ~/project"))
                             .font(.body.monospaced())
                     } footer: {
-                        Text("Space separated; quote paths with spaces. For the filesystem server, the folders it may read.")
+                        Group {
+                            Text("Space separated; quote paths with spaces. For the filesystem server, the folders it may read.")
+                        }
+                        .formNote()
                     }
                 }
 
@@ -296,7 +311,10 @@ private struct AddServerSheet: View {
                         }
                     }
                 } footer: {
-                    if useAuth { Text("Kept in an owner-only file, never in Kuro's database.") }
+                    Group {
+                        if useAuth { Text("Kept in an owner-only file, never in Kuro's database.") }
+                    }
+                    .formNote()
                 }
 
                 Section {

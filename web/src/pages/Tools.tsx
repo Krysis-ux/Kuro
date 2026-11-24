@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import { BackLink } from '../components/BackLink'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   api,
@@ -12,39 +11,34 @@ import {
 } from '../lib/api'
 import { AddServerDialog } from '../components/AddServerDialog'
 import { ProviderLogo } from '../components/BrandLogo'
+import { HelpTip, TitleWithHelp } from '../components/HelpTip'
 import {
-  BrainIcon,
   CheckIcon,
   ChevronIcon,
   GitHubIcon,
   ExternalIcon,
   GlobeIcon,
   KeyIcon,
-  PlugIcon,
   PlusIcon,
   RefreshIcon,
   SearchIcon,
-  SparkIcon,
-  StoreIcon,
-  ToolIcon,
   TrashIcon,
 } from '../components/icons'
 
-/**
- * Tools.
- *
- * Kuro's own capabilities and other people's MCP servers on one page, because the
- * distinction is an implementation detail — from the model's side they are the
- * same thing, and a user asking "can it search the web" should not have to know
- * which half answers that.
+/*
+ * The Agent panes of Settings: MCP servers, web search, built-in tools, skills
+ * and the memory list. Kuro's own capabilities and other people's MCP servers
+ * are the same thing from the model's side.
  */
-export function ToolsPage() {
+
+/* ---------- MCP servers ---------- */
+
+export function McpPane() {
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [prefill, setPrefill] = useState<McpRegistryEntry | null>(null)
   const [storeQuery, setStoreQuery] = useState('')
 
-  const overview = useQuery({ queryKey: ['tools'], queryFn: api.tools.overview })
   const servers = useQuery({
     queryKey: ['mcp', 'servers'],
     queryFn: () => api.mcp.servers(true),
@@ -64,64 +58,29 @@ export function ToolsPage() {
   }
 
   return (
-    <div className="page">
-      <header className="page-head">
-        <BackLink />
-        <h1>Tools</h1>
-        <p className="muted">
-          What a model can do besides produce text. Search and memory are built in; anything else
-          comes from a Model Context Protocol server.
-        </p>
-      </header>
-
-      {overview.isError && (
-        <section className="panel">
-          <h2 className="panel-title">Built in</h2>
-          <p className="form-error">
-            {overview.error instanceof Error
-              ? overview.error.message
-              : 'The built-in tools could not be read.'}
-          </p>
-          <div className="panel-foot">
-            <button className="btn btn-ghost btn-sm" onClick={() => void overview.refetch()}>
-              <RefreshIcon size={14} />
-              Try again
-            </button>
-            <span className="faint">
-              Kuro may have stopped. Everything on this page comes from the local daemon.
-            </span>
-          </div>
-        </section>
-      )}
-
-      <BuiltinSection overview={overview.data} onChanged={refreshAll} />
-
+    <>
       <section className="panel">
         <div className="panel-head">
-          <h2 className="panel-title">
-            <PlugIcon size={15} />
-            MCP servers
-          </h2>
+          <h2 className="panel-title">Connected</h2>
           <div className="panel-actions">
             <button
-              className="btn btn-ghost btn-sm"
+              className="btn"
               onClick={() => void servers.refetch()}
               disabled={servers.isFetching}
             >
               {servers.isFetching ? <span className="spinner" /> : <RefreshIcon size={14} />}
               Reconnect
             </button>
-            <button className="btn btn-solid btn-sm" onClick={() => openDialog(null)}>
+            <button className="btn btn-solid" onClick={() => openDialog(null)}>
               <PlusIcon size={14} />
               Add server
             </button>
           </div>
         </div>
 
+        {servers.isError && <p className="form-error">Kuro did not answer.</p>}
         {servers.data?.servers.length === 0 ? (
-          <p className="faint panel-note">
-            None connected. Add one below, or pick from the recommended list.
-          </p>
+          <span className="faint">None yet</span>
         ) : (
           <div className="server-rows">
             {servers.data?.servers.map((server) => (
@@ -134,34 +93,25 @@ export function ToolsPage() {
       <section className="panel">
         <div className="panel-head">
           <h2 className="panel-title">
-            <StoreIcon size={15} />
-            Marketplace
+            <TitleWithHelp
+              title="Marketplace"
+              help="A curated list, not a directory: each is keyless or run by whoever owns what it connects to. Any MCP server works through Add server."
+            />
           </h2>
           <div className="store-search">
             <SearchIcon size={13} className="search-icon" />
             <input
               className="input"
-              placeholder="Search servers…"
+              placeholder="Search servers"
               value={storeQuery}
               onChange={(event) => setStoreQuery(event.target.value)}
             />
           </div>
         </div>
-        <p className="faint panel-note">
-          A curated list rather than a directory. Everything here is either keyless or run by
-          the people who own the thing it connects to.
-        </p>
 
-        {registry.isError && (
-          <p className="form-error">The recommended list could not be read.</p>
-        )}
-
+        {registry.isError && <p className="form-error">The list could not be read.</p>}
         {matches.length === 0 && !registry.isLoading && (
-          <p className="faint panel-note">
-            {storeQuery.trim()
-              ? `Nothing matched "${storeQuery.trim()}". Any MCP server works — use Add server above.`
-              : 'Nothing to show.'}
-          </p>
+          <span className="faint">{storeQuery.trim() ? 'Nothing matched' : 'Nothing to show'}</span>
         )}
 
         <div className="store-grid">
@@ -182,17 +132,11 @@ export function ToolsPage() {
           }}
         />
       )}
-    </div>
+    </>
   )
 }
 
-/**
- * Match a search across everything a person might type.
- *
- * Name, blurb and detail all count, because somebody looking for a browser will
- * type "browser" and the entry is called Playwright. Matching only the name is
- * the difference between a search bar and a filter nobody can use.
- */
+/** Name, blurb and detail all count: someone after a browser types "browser", and the entry is Playwright. */
 function filterRegistry(entries: McpRegistryEntry[], query: string): McpRegistryEntry[] {
   const needle = query.trim().toLowerCase()
   if (!needle) return entries
@@ -204,21 +148,17 @@ function filterRegistry(entries: McpRegistryEntry[], query: string): McpRegistry
   )
 }
 
-/* ---------- Built-in tools ---------- */
+/* ---------- Web search ---------- */
 
-function BuiltinSection({
-  overview,
-  onChanged,
-}: {
-  overview: Awaited<ReturnType<typeof api.tools.overview>> | undefined
-  onChanged: () => void
-}) {
+export function SearchPane({ overview }: { overview: ToolsOverview }) {
   const queryClient = useQueryClient()
   const [testResult, setTestResult] = useState<{
     ok: boolean
     results?: SearchResult[]
     error?: string
   } | null>(null)
+  const [keyDraft, setKeyDraft] = useState('')
+  const [urlDraft, setUrlDraft] = useState('')
 
   const configure = useMutation({
     mutationFn: (patch: { provider?: string; baseUrl?: string; apiKey?: string }) =>
@@ -226,13 +166,7 @@ function BuiltinSection({
     onSuccess: (data) => {
       queryClient.setQueryData(['tools'], data)
       setTestResult(null)
-      onChanged()
     },
-  })
-
-  const setDefaults = useMutation({
-    mutationFn: (patch: { memoryPreload?: boolean }) => api.tools.setDefaults(patch),
-    onSuccess: (data) => queryClient.setQueryData(['tools'], data),
   })
 
   const test = useMutation({
@@ -240,33 +174,24 @@ function BuiltinSection({
     onSuccess: (data) => setTestResult(data),
   })
 
-  const [keyDraft, setKeyDraft] = useState('')
-  const [urlDraft, setUrlDraft] = useState('')
-
-  if (!overview) {
-    return (
-      <section className="panel">
-        <h2 className="panel-title">Built in</h2>
-        <p className="faint">Loading…</p>
-      </section>
-    )
-  }
-
   const { search } = overview
   const selected = search.providers.find((provider) => provider.id === search.provider)
 
   return (
     <>
       <section className="panel">
-        <h2 className="panel-title">
-          <GlobeIcon size={15} />
-          Web search
-        </h2>
-        <p className="faint panel-note">
-          Turn it on per message with the <strong>Web</strong> switch in the composer. Kuro searches
-          before the model answers, so it works on any model — including ones too small to ask for a
-          tool themselves.
-        </p>
+        <div className="panel-head">
+          <h2 className="panel-title">
+            <TitleWithHelp
+              title="Search With"
+              help="Turn it on per message with the Web switch in the composer. Kuro searches before the model answers, so it works on any model."
+            />
+          </h2>
+          <button className="btn" onClick={() => test.mutate()} disabled={test.isPending}>
+            {test.isPending ? <span className="spinner" /> : <GlobeIcon size={14} />}
+            Test
+          </button>
+        </div>
 
         <div className="provider-choices">
           {search.providers.map((provider) => (
@@ -275,6 +200,7 @@ function BuiltinSection({
               className={`provider-choice ${provider.id === search.provider ? 'is-on' : ''}`}
               onClick={() => configure.mutate({ provider: provider.id })}
               disabled={configure.isPending}
+              title={provider.note}
             >
               <div className="provider-choice-head">
                 <ProviderLogo slug={provider.id} label={provider.name} size={22} />
@@ -284,95 +210,8 @@ function BuiltinSection({
                   <span className="tag">no key</span>
                 )}
               </div>
-              <p className="muted">{provider.note}</p>
             </button>
           ))}
-        </div>
-
-        {search.needsApiKey && (
-          <Field
-            label="API key"
-            hint={
-              search.hasApiKey
-                ? 'A key is stored. Enter a new one to replace it.'
-                : `${selected?.name ?? 'This provider'} needs a key before search will work.`
-            }
-          >
-            <div className="inline-form">
-              <input
-                className="input"
-                type="password"
-                placeholder={search.hasApiKey ? '••••••••••••' : 'Paste the key'}
-                value={keyDraft}
-                onChange={(event) => setKeyDraft(event.target.value)}
-              />
-              <button
-                className="btn btn-solid btn-sm"
-                disabled={!keyDraft.trim() || configure.isPending}
-                onClick={() => {
-                  configure.mutate({ apiKey: keyDraft })
-                  setKeyDraft('')
-                }}
-              >
-                Save
-              </button>
-              {search.hasApiKey && (
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => configure.mutate({ apiKey: '' })}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          </Field>
-        )}
-
-        {search.needsBaseUrl && (
-          <Field label="Instance URL" hint="Where your SearXNG instance is reachable.">
-            <div className="inline-form">
-              <input
-                className="input"
-                placeholder={search.baseUrl ?? 'http://localhost:8888'}
-                value={urlDraft}
-                onChange={(event) => setUrlDraft(event.target.value)}
-              />
-              <button
-                className="btn btn-solid btn-sm"
-                disabled={!urlDraft.trim() || configure.isPending}
-                onClick={() => {
-                  configure.mutate({ baseUrl: urlDraft })
-                  setUrlDraft('')
-                }}
-              >
-                Save
-              </button>
-            </div>
-          </Field>
-        )}
-
-        {selected?.credentialsUrl && (
-          <a
-            className="external-link faint"
-            href={selected.credentialsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {search.needsApiKey ? 'Get a key' : 'How to run one'}
-            <ExternalIcon size={11} />
-          </a>
-        )}
-
-        <div className="panel-foot">
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => test.mutate()}
-            disabled={test.isPending}
-          >
-            {test.isPending ? <span className="spinner" /> : <GlobeIcon size={14} />}
-            Test search
-          </button>
-          <span className="faint">Runs a real query, so you never have to guess.</span>
         </div>
 
         {testResult && (
@@ -398,52 +237,92 @@ function BuiltinSection({
         )}
       </section>
 
-      <SkillsSection overview={overview} />
+      {(search.needsApiKey || search.needsBaseUrl) && (
+        <section className="panel">
+          {search.needsApiKey && (
+            <Field label="API key" hint={search.hasApiKey ? 'A key is stored. A new one replaces it.' : undefined}>
+              <div className="inline-form">
+                <input
+                  className="input"
+                  type="password"
+                  placeholder={search.hasApiKey ? '••••••••••••' : 'Paste the key'}
+                  value={keyDraft}
+                  onChange={(event) => setKeyDraft(event.target.value)}
+                />
+                <button
+                  className="btn btn-solid"
+                  disabled={!keyDraft.trim() || configure.isPending}
+                  onClick={() => {
+                    configure.mutate({ apiKey: keyDraft })
+                    setKeyDraft('')
+                  }}
+                >
+                  Save
+                </button>
+                {search.hasApiKey && (
+                  <button className="btn" onClick={() => configure.mutate({ apiKey: '' })}>
+                    Remove
+                  </button>
+                )}
+              </div>
+            </Field>
+          )}
 
-      <section className="panel">
-        <h2 className="panel-title">
-          <BrainIcon size={15} />
-          Memory
-        </h2>
-        <p className="faint panel-note">
-          Durable facts the model has been asked to keep. Stored on this machine, available in every
-          conversation, and never sent anywhere.
-        </p>
+          {search.needsBaseUrl && (
+            <Field label="Instance URL">
+              <div className="inline-form">
+                <input
+                  className="input"
+                  placeholder={search.baseUrl ?? 'http://localhost:8888'}
+                  value={urlDraft}
+                  onChange={(event) => setUrlDraft(event.target.value)}
+                />
+                <button
+                  className="btn btn-solid"
+                  disabled={!urlDraft.trim() || configure.isPending}
+                  onClick={() => {
+                    configure.mutate({ baseUrl: urlDraft })
+                    setUrlDraft('')
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </Field>
+          )}
 
-        <Toggle
-          label="Put memories in front of the model automatically"
-          hint="Without this, memory only works when the model thinks to look — which small models often do not."
-          checked={overview.memory.preload}
-          onChange={(preload) => setDefaults.mutate({ memoryPreload: preload })}
-        />
-
-        <div className="row">
-          <span className="faint">Stored</span>
-          <span>
-            {overview.memory.count} {overview.memory.count === 1 ? 'memory' : 'memories'}
-          </span>
-        </div>
-
-        <MemoryList />
-      </section>
-
-
-      <section className="panel">
-        <h2 className="panel-title">
-          <ToolIcon size={15} />
-          What the model sees
-        </h2>
-        <div className="tool-list">
-          {overview.builtins.map((tool) => (
-            <div key={tool.name} className="tool-list-row">
-              <code className="mono">{tool.name}</code>
-              <span className="tag">{tool.group}</span>
-              <p className="muted">{tool.description}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+          {selected?.credentialsUrl && (
+            <a
+              className="external-link faint"
+              href={selected.credentialsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {search.needsApiKey ? 'Get a key' : 'How to run one'}
+              <ExternalIcon size={11} />
+            </a>
+          )}
+        </section>
+      )}
     </>
+  )
+}
+
+/* ---------- Built-in tools ---------- */
+
+export function BuiltinPane({ overview }: { overview: ToolsOverview }) {
+  return (
+    <section className="panel">
+      <div className="tool-list">
+        {overview.builtins.map((tool) => (
+          <div key={tool.name} className="tool-list-row" title={tool.description}>
+            <code className="mono">{tool.name}</code>
+            <span className="tag">{tool.group}</span>
+            <span className="muted tool-list-desc">{tool.description}</span>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -527,7 +406,7 @@ function AddSkills({ custom }: { custom: CustomSkill[] }) {
           disabled={busy}
         />
         <button
-          className="btn btn-solid btn-sm"
+          className="btn btn-solid"
           onClick={() => url.trim() && importRepo.mutate(url.trim())}
           disabled={!url.trim() || busy}
           title="Read every SKILL.md in this repository"
@@ -536,7 +415,7 @@ function AddSkills({ custom }: { custom: CustomSkill[] }) {
           {importRepo.isPending ? 'Reading…' : 'Import'}
         </button>
         <button
-          className="btn btn-ghost btn-sm"
+          className="btn"
           onClick={() => fileRef.current?.click()}
           disabled={busy}
           title="Add a SKILL.md from this computer"
@@ -544,13 +423,8 @@ function AddSkills({ custom }: { custom: CustomSkill[] }) {
           <PlusIcon size={13} />
           {upload.isPending ? 'Adding…' : 'Upload'}
         </button>
+        <HelpTip text="A repository is read, not cloned: Kuro takes the instructions from each SKILL.md. Scripts a skill ships with are not imported." />
       </div>
-
-      <p className="faint panel-note">
-        A repository is read rather than cloned: Kuro looks for `SKILL.md` files and takes the
-        instructions in them. Scripts a skill ships alongside are not imported, and any skill
-        that expects them is named below.
-      </p>
 
       {failed && <p className="form-error">{failed}</p>}
 
@@ -564,7 +438,7 @@ function AddSkills({ custom }: { custom: CustomSkill[] }) {
           </span>
           {note.needsScripts.length > 0 && (
             <span className="faint">
-              These expect scripts that were not imported, so they may not work as written:{' '}
+              Need scripts that were not imported:{' '}
               <span className="mono">{note.needsScripts.join(', ')}</span>
             </span>
           )}
@@ -626,11 +500,7 @@ function shortSource(source: string): string {
   return source.replace(/^https?:\/\/github\.com\//, '')
 }
 
-function SkillsSection({
-  overview,
-}: {
-  overview: Awaited<ReturnType<typeof api.tools.overview>> | undefined
-}) {
+export function SkillsPane({ overview }: { overview: ToolsOverview }) {
   const queryClient = useQueryClient()
   const [expanded, setExpanded] = useState<string | null>(null)
 
@@ -638,8 +508,6 @@ function SkillsSection({
     mutationFn: (enabled: string[]) => api.tools.setSkills(enabled),
     onSuccess: (data) => queryClient.setQueryData(['tools'], data),
   })
-
-  if (!overview) return null
 
   const { catalogue, enabled, budgets } = overview.skills
 
@@ -687,12 +555,17 @@ function SkillsSection({
   }
 
   return (
+    <>
     <section className="panel">
       <div className="panel-head">
-        <h2 className="panel-title">
-          <SparkIcon size={15} />
-          Skills
-        </h2>
+        <h2 className="panel-title">Add Your Own</h2>
+      </div>
+      <AddSkills custom={overview.skills.custom ?? []} />
+    </section>
+
+    <section className="panel">
+      <div className="panel-head">
+        <h2 className="panel-title">Built In</h2>
         <div className="panel-head-actions">
           {enabled.length > 0 && (
             // Deliberately no longer the sum of everything switched on. That
@@ -710,7 +583,7 @@ function SkillsSection({
             </span>
           )}
           <button
-            className="btn btn-ghost btn-sm"
+            className="btn"
             onClick={() =>
               setMany(
                 catalogue.map((skill) => skill.slug),
@@ -722,32 +595,6 @@ function SkillsSection({
           </button>
         </div>
       </div>
-
-      <p className="faint panel-note">
-        Expertise you switch on. Each one adds specific instructions to the model's brief — the
-        same lever a hosted assistant uses, and the one that helps a small local model most.
-      </p>
-
-      <AddSkills custom={overview.skills.custom ?? []} />
-
-      {overview.skills.essentials.length > 0 && (
-        <div className="skill-essentials">
-          <div className="skill-group-head">Always on in a coding workspace</div>
-          <p className="faint panel-note">
-            These have no switch. Reading a file before editing it, and running the tests
-            rather than describing them, are not preferences — an assistant with them turned
-            off is one that destroys work, so there is nothing here to turn off.
-          </p>
-          <ul className="skill-essential-list">
-            {overview.skills.essentials.map((skill) => (
-              <li key={skill.slug}>
-                <span className="skill-card-name">{skill.name}</span>
-                <span className="muted">{skill.blurb}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {[...byCategory].map(([category, skills]) => (
         <div key={category} className="skill-group">
@@ -777,7 +624,7 @@ function SkillsSection({
                     onChange={() => toggle(skill.slug)}
                   />
                 </div>
-                <p className="muted skill-card-blurb">{skill.blurb}</p>
+                <span className="muted skill-card-blurb" title={skill.blurb}>{skill.blurb}</span>
                 <button
                   className="link-button faint"
                   onClick={() => setExpanded(expanded === skill.slug ? null : skill.slug)}
@@ -793,10 +640,11 @@ function SkillsSection({
         </div>
       ))}
     </section>
+    </>
   )
 }
 
-function MemoryList() {
+export function MemoryList() {
   const queryClient = useQueryClient()
   const [expanded, setExpanded] = useState(false)
 
@@ -816,8 +664,8 @@ function MemoryList() {
 
   if (!expanded) {
     return (
-      <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(true)}>
-        Review what is remembered
+      <button className="btn" onClick={() => setExpanded(true)}>
+        Review memories
       </button>
     )
   }
@@ -825,7 +673,7 @@ function MemoryList() {
   return (
     <div className="memory-list">
       {memories.data?.memories.length === 0 && (
-        <p className="faint">Nothing yet. Ask the model to remember something.</p>
+        <span className="faint">Nothing yet</span>
       )}
       {memories.data?.memories.map((memory) => (
         <div key={memory.id} className="memory-row">
@@ -849,8 +697,6 @@ function MemoryList() {
     </div>
   )
 }
-
-/* ---------- MCP servers ---------- */
 
 function ServerRow({ server, onChanged }: { server: McpServer; onChanged: () => void }) {
   const [showTools, setShowTools] = useState(false)
@@ -989,26 +835,21 @@ function StoreCard({
   entry: McpRegistryEntry
   onInstall: () => void
 }) {
-  const [expanded, setExpanded] = useState(false)
-
   return (
     <div className={`store-card ${entry.installed ? 'is-installed' : ''}`}>
       <div className="store-card-head">
         <span className="store-card-name">{entry.name}</span>
+        {entry.detail && <HelpTip text={entry.detail} />}
         {entry.requirement === 'none' && <span className="tag">works now</span>}
         {entry.requirement === 'api_key' && <span className="tag tag-warn">needs a key</span>}
         {entry.requirement === 'local_runtime' && <span className="tag">runs locally</span>}
       </div>
 
-      <p className="muted store-card-blurb">{expanded ? entry.detail : entry.blurb}</p>
-
-      <button className="link-button faint" onClick={() => setExpanded((open) => !open)}>
-        {expanded ? 'Less' : 'More'}
-      </button>
+      <span className="muted store-card-blurb">{entry.blurb}</span>
 
       <div className="store-card-foot">
         <button
-          className="btn btn-sm"
+          className="btn"
           disabled={entry.installed}
           onClick={onInstall}
         >
@@ -1049,33 +890,8 @@ function Field({
 }) {
   return (
     <div className="field field-stacked">
-      <div className="field-label">
-        <span>{label}</span>
-        {hint && <span className="faint field-hint">{hint}</span>}
-      </div>
+      <TitleWithHelp title={label} help={hint} />
       <div className="field-control">{children}</div>
-    </div>
-  )
-}
-
-function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string
-  hint?: string
-  checked: boolean
-  onChange: (value: boolean) => void
-}) {
-  return (
-    <div className="field">
-      <div className="field-label">
-        <span>{label}</span>
-        {hint && <span className="faint field-hint">{hint}</span>}
-      </div>
-      <Switch checked={checked} label={label} onChange={onChange} />
     </div>
   )
 }

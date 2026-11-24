@@ -1,9 +1,5 @@
-//! Host capability detection.
-//!
-//! V1 targets macOS, so this reads `sysctl` directly rather than taking on a
-//! cross-platform dependency. Everything the rest of Kuro needs goes through
-//! [`HardwareInfo`], so adding Windows or Linux later means adding one branch
-//! in [`detect`] rather than touching call sites.
+//! Host capability detection. macOS only for now: reads `sysctl` directly, and
+//! callers go through [`HardwareInfo`] so other platforms only touch [`detect`].
 
 use std::process::Command;
 
@@ -21,9 +17,8 @@ pub struct HardwareInfo {
     pub total_memory_bytes: u64,
     pub physical_cores: usize,
     pub logical_cores: usize,
-    /// Whether the GPU can be used for offload. On Apple Silicon this also
-    /// means GPU and CPU share one memory pool, which is why the fit estimate
-    /// budgets against total system memory.
+    /// Whether the GPU can be used for offload. On Apple Silicon the GPU and CPU
+    /// share one memory pool, so the fit estimate budgets total system memory.
     pub gpu_available: bool,
     pub gpu_backend: &'static str,
     /// Settings Kuro will use when the user leaves engine options on "Auto".
@@ -58,11 +53,9 @@ pub fn detect() -> HardwareInfo {
         gpu_backend: if gpu_available { "metal" } else { "cpu" },
         recommended: RecommendedEngineDefaults {
             context_size: 4096,
-            // The engine clamps this to the model's real layer count, so asking
-            // for more than exists is the documented way to say "offload all".
+            // The engine clamps to the model's layer count, so 999 means "all".
             gpu_layers: if gpu_available { 999 } else { 0 },
-            // Leave headroom rather than saturating every core, which keeps the
-            // machine responsive while generating.
+            // Physical cores only, to keep the machine responsive while generating.
             threads: physical_cores.max(1) as u32,
         },
     }

@@ -29,13 +29,11 @@ pub struct AppState {
     pub mcp: Arc<McpManager>,
     /// Remote model providers the user holds the key for.
     pub providers: Arc<ProviderRegistry>,
-    /// Providers with free tiers, pooled behind one model id. Holds only the
-    /// short-lived record of which ones are currently refusing; the keys
-    /// themselves live in the credential store.
+    /// Providers with free tiers, pooled behind one model id. Holds only which are
+    /// currently refusing; the keys live in the credential store.
     pub free: FreePool,
-    /// Dev servers and other long-running commands started from a workspace.
-    /// Held by the daemon rather than by a conversation, so a server started in
-    /// one turn is still serving in the next.
+    /// Dev servers and other long-running workspace commands. Owned by the daemon,
+    /// not a conversation, so they outlive the turn that started them.
     pub processes: ProcessRegistry,
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub port: u16,
@@ -48,8 +46,7 @@ impl AppState {
         (chrono::Utc::now() - self.started_at).num_seconds().max(0)
     }
 
-    /// Search configuration, with the provider's key read from the credential
-    /// store rather than from the settings table.
+    /// Search configuration, with the provider key read from the credential store.
     pub fn search_config(&self) -> kuro_core::Result<SearchConfig> {
         let stored = SearchSettings::resolve(&self.db)?;
         Ok(SearchConfig {
@@ -59,8 +56,7 @@ impl AppState {
         })
     }
 
-    /// Register a cancellation flag so `POST /downloads/{id}/cancel` can stop
-    /// a transfer that is already streaming.
+    /// Register a cancellation flag so `POST /downloads/{id}/cancel` can stop a transfer.
     pub async fn register_download(&self, download_id: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
         self.download_cancels

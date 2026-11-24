@@ -1,10 +1,7 @@
-//! Storage for what the model has been asked to remember.
-//!
-//! Recall is a substring match rather than an embedding search. That is a
-//! deliberate first version: it needs no second model resident in memory, it is
-//! predictable enough that a user can guess why something did or did not come
-//! back, and the table is small enough that scanning it costs nothing. Swapping
-//! in vector search later only changes [`Db::recall_memories`].
+//! Storage for what the model has been asked to remember. Recall is a substring
+//! match, not an embedding search: no second resident model, predictable
+//! results, and the table is small. Only [`Db::recall_memories`] changes if
+//! that is swapped for vector search.
 
 use rusqlite::{params, Row};
 use serde::Serialize;
@@ -12,8 +9,8 @@ use serde::Serialize;
 use super::{json_or, now, Db};
 use crate::Result;
 
-/// Upper bound on how much one memory can hold, so a tool call cannot paste an
-/// entire document into the recall context of every later conversation.
+/// Upper bound on one memory's size, so a tool call can't paste a whole
+/// document into every later recall.
 const MAX_CONTENT_CHARS: usize = 2000;
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,8 +23,7 @@ pub struct MemoryRecord {
 }
 
 impl Db {
-    /// Store a memory, or return the existing one if the same text is already
-    /// held. A model told the same fact twice should not accumulate duplicates.
+    /// Store a memory, or return the existing one if the same text is already held.
     pub fn remember(
         &self,
         content: &str,
@@ -94,10 +90,8 @@ impl Db {
         })
     }
 
-    /// Memories matching every word in the query, newest first.
-    ///
-    /// Requiring all words rather than any keeps a two-word question from
-    /// returning most of the table.
+    /// Memories matching every word in the query, newest first (all words, not
+    /// any, so a short query doesn't return most of the table).
     pub fn recall_memories(&self, query: &str, limit: usize) -> Result<Vec<MemoryRecord>> {
         let words: Vec<String> = query
             .split_whitespace()

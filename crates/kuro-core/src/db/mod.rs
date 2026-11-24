@@ -1,9 +1,5 @@
-//! SQLite storage.
-//!
-//! Kuro is a single-user local application, so it uses one connection behind a
-//! mutex rather than a pool. Every query here is a small indexed read or write
-//! against a local file, so the lock is held for microseconds and is never held
-//! across an `.await`.
+//! SQLite storage: one connection behind a mutex (single-user local app). Queries
+//! are small, so the lock is held briefly and never across an `.await`.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -12,6 +8,8 @@ use rusqlite::Connection;
 
 use crate::{KuroError, Result};
 
+mod agents;
+mod automations;
 mod cloud;
 mod conversations;
 mod downloads;
@@ -25,6 +23,8 @@ mod skills;
 mod usage;
 mod workspaces;
 
+pub use agents::UserAgentRecord;
+pub use automations::{AutomationInput, AutomationRecord, Schedule};
 pub use cloud::{CloudConnectorRecord, CloudStatus, NewCloudConnector};
 pub use conversations::{Conversation, Message, MessageCompletion, NewMessage};
 pub use downloads::{DownloadKind, DownloadRecord, DownloadStatus};
@@ -34,13 +34,13 @@ pub use models::{ModelRecord, ModelSource, ModelStatus, NewModel};
 pub use projects::{NewProject, ProjectRecord, ProjectUpdate};
 pub use runtimes::EngineRuntimeRecord;
 pub use skills::{UserSkillRecord, MAX_INSTRUCTION_CHARS as MAX_USER_SKILL_CHARS};
-pub use usage::ProviderUsage;
+pub use usage::{ModelUsage, ProviderUsage};
 pub use workspaces::{UndoPlan, WorkspaceChange, WorkspaceRecord};
 
 const SCHEMA: &str = include_str!("schema.sql");
 
-/// Indexes over columns that `add_column_if_missing` may have only just created.
-/// Run after that step; see the ordering note in [`Db::migrate`].
+/// Indexes over columns that `add_column_if_missing` may have just created; run
+/// after that step (see [`Db::migrate`]).
 const LATE_INDEXES: &str = "
     CREATE INDEX IF NOT EXISTS idx_conversations_project
         ON conversations (project_id, updated_at DESC);
@@ -52,11 +52,10 @@ const LATE_INDEXES: &str = "
         ON messages (provider_slug, created_at)
         WHERE provider_slug IS NOT NULL;
 ";
-// Bumped to 7 when `user_skills` arrived. The schema file is only replayed when
-// this number moves, so adding a `CREATE TABLE IF NOT EXISTS` without touching
-// it produces a table that exists on a fresh install and nowhere else — which
-// is a bug that passes every test, because tests open an empty database.
-const SCHEMA_VERSION: i32 = 7;
+// Bump whenever schema.sql changes: the file is only replayed when this number
+// moves, so a new table would otherwise exist only on fresh installs (and tests,
+// which open an empty database, would not notice).
+const SCHEMA_VERSION: i32 = 9;
 
 #[derive(Clone)]
 pub struct Db {
@@ -79,8 +78,7 @@ impl Db {
     }
 
     fn from_connection(conn: Connection) -> Result<Self> {
-        // WAL keeps reads from blocking the writer, which matters while a large
-        // download is checkpointing progress during an active chat.
+        // WAL so reads don't block the writer (download progress during a chat).
         let _mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
         conn.execute_batch(
             "PRAGMA foreign_keys = ON;
@@ -98,21 +96,23 @@ impl Db {
     fn migrate(&self) -> Result<()> {
         self.with(|conn| {
             let current: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-            if current >= SCHEMA_VERSION {
+            // Equal means nothing to do. Higher is not "up to date": another build of
+            // Kuro sharing this data folder may have stamped a bigger number without
+            // creating this build's tables, so replay on any difference. Every phase
+            // below is idempotent, so a replay is cheap and safe.
+            if current == SCHEMA_VERSION {
                 return Ok(());
             }
 
-            // Three ordered phases. The order is load-bearing.
+            // Three ordered phases; the order is load-bearing.
             //
-            // 1. Tables and indexes that depend only on themselves. Every
-            //    statement is `IF NOT EXISTS`, so replaying the whole file brings
-            //    an older database up to date.
+            // 1. Tables and indexes depending only on themselves. All are
+            //    `IF NOT EXISTS`, so replaying the file upgrades an older database.
             conn.execute_batch(SCHEMA)?;
 
-            // 2. Columns added to a table that already shipped. `IF NOT EXISTS` is
-            //    not available for `ALTER TABLE`, so each one is checked first
-            //    rather than adding it and swallowing the resulting error — a real
-            //    failure should still be reported.
+            // 2. Columns added to tables that already shipped. `ALTER TABLE` has no
+            //    `IF NOT EXISTS`, so each is checked first (a real failure must
+            //    still surface).
             add_column_if_missing(conn, "mcp_servers", "slug", "TEXT")?;
             add_column_if_missing(conn, "mcp_servers", "tool_count", "INTEGER")?;
             add_column_if_missing(conn, "mcp_servers", "auth_ref", "TEXT")?;
@@ -121,29 +121,24 @@ impl Db {
             add_column_if_missing(conn, "conversations", "project_id", "TEXT")?;
             add_column_if_missing(conn, "conversations", "forked_from_id", "TEXT")?;
             add_column_if_missing(conn, "conversations", "workspace_id", "TEXT")?;
-            // Which provider's allowance a turn spent. Distinct from
-            // `model_id`, which on a pooled turn records the pool.
+            // Provider whose allowance a turn spent; `model_id` records the pool.
             add_column_if_missing(conn, "messages", "provider_slug", "TEXT")?;
-            // Prompt tokens summed across every tool round, rather than the
-            // last round only. See `Aggregate::absorb`.
+            // Prompt tokens summed across all tool rounds (see `Aggregate::absorb`).
             add_column_if_missing(conn, "messages", "usage_prompt_tokens_total", "INTEGER")?;
 
-            // 3. Indexes over columns phase 2 may have just added. These cannot
-            //    live in the schema file: on a fresh database the column is part
-            //    of `CREATE TABLE` and the index would work there, but on an
-            //    upgrade the column does not exist when the file runs, the batch
-            //    fails, and the daemon refuses to start.
+            // 3. Indexes over columns phase 2 may have just added. They cannot live
+            //    in the schema file: on an upgrade the column does not exist yet
+            //    when the file runs, the batch fails, and the daemon won't start.
             conn.execute_batch(LATE_INDEXES)?;
 
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            // Never lower the stamp: the build that set a higher one must not be made
+            // to think its own tables are missing.
+            conn.pragma_update(None, "user_version", current.max(SCHEMA_VERSION))?;
             Ok(())
         })
     }
 
-    /// Run a closure with the connection held.
-    ///
-    /// Callers must not await inside `f`; all storage operations are synchronous
-    /// by design.
+    /// Run a closure with the connection held. Must not await inside `f`.
     pub(crate) fn with<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let guard = self
             .conn
@@ -153,16 +148,13 @@ impl Db {
     }
 }
 
-/// Current time as an RFC 3339 string, the storage format for every timestamp.
+/// Current time as RFC 3339, the storage format for all timestamps.
 pub(crate) fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-/// Add a column only if the table does not already have it.
-///
-/// SQLite has no `ADD COLUMN IF NOT EXISTS`, and adding it unconditionally and
-/// discarding the error would also discard a genuine failure. Asking the table
-/// first keeps the migration honest.
+/// Add a column only if the table lacks it (SQLite has no `ADD COLUMN IF NOT
+/// EXISTS`, and swallowing the error would hide real failures).
 fn add_column_if_missing(
     conn: &Connection,
     table: &str,
@@ -174,9 +166,8 @@ fn add_column_if_missing(
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    // An empty result means the table does not exist. That is not a failure: on a
-    // fresh database the schema file creates the table with this column already
-    // in it, so there is nothing to add.
+    // Empty means the table doesn't exist; the schema file creates it with the
+    // column already in it.
     if existing.is_empty() || existing.iter().any(|name| name == column) {
         return Ok(());
     }
@@ -187,10 +178,8 @@ fn add_column_if_missing(
     Ok(())
 }
 
-/// Decode a JSON column, falling back to a default rather than failing a read.
-///
-/// A row written by a newer version, or hand-edited, should not make an entire
-/// list endpoint return an error.
+/// Decode a JSON column, falling back to the default so one bad row (newer
+/// version, hand edit) doesn't fail a whole list.
 pub(crate) fn json_or<T: serde::de::DeserializeOwned + Default>(raw: Option<&str>) -> T {
     raw.and_then(|text| serde_json::from_str(text).ok())
         .unwrap_or_default()
@@ -208,15 +197,39 @@ mod tests {
             .expect("version");
         assert_eq!(version, SCHEMA_VERSION);
 
-        // Re-running migration must be a no-op rather than an error.
+        // Re-running must be a no-op.
         db.migrate().expect("idempotent migrate");
     }
 
-    /// The shape version 1 shipped with: no `project_id`, no `memories`, and
-    /// `mcp_servers`/`cloud_connectors` without the columns added since.
-    ///
-    /// Kept verbatim rather than generated, because the whole point is to migrate
-    /// from what real users actually have on disk.
+    #[test]
+    fn a_database_stamped_higher_by_another_build_still_gets_this_builds_tables() {
+        let db = Db::open_in_memory().expect("open");
+        db.with(|conn| {
+            conn.execute_batch("DROP TABLE user_agents;")?;
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION + 5)?;
+            Ok(())
+        })
+        .expect("simulate a newer build's database");
+
+        db.migrate().expect("migrate");
+
+        let (tables, version): (i64, i32) = db
+            .with(|conn| {
+                let tables = conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'user_agents'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let version = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+                Ok((tables, version))
+            })
+            .expect("inspect");
+        assert_eq!(tables, 1, "the missing table is created");
+        assert_eq!(version, SCHEMA_VERSION + 5, "the higher stamp is kept");
+    }
+
+    /// Schema as shipped in version 1 (no `project_id`, no `memories`, older
+    /// `mcp_servers`/`cloud_connectors`). Kept verbatim: it is what real users have.
     const V1_SCHEMA: &str = "
         CREATE TABLE conversations (
             id           TEXT PRIMARY KEY,
@@ -274,10 +287,8 @@ mod tests {
 
     #[test]
     fn upgrades_a_version_one_database_without_losing_anything() {
-        // This is the path every existing install takes. It is separate from the
-        // fresh-database test because the two fail in different ways: a fresh
-        // database gets `project_id` from `CREATE TABLE`, so an index over it
-        // succeeds there and fails only here.
+        // Separate from the fresh-database test: a fresh database gets `project_id`
+        // from `CREATE TABLE`, so an index over it only fails on upgrade.
         let db = Db::from_connection(version_one_database()).expect("migrate v1");
 
         let version: i32 = db
@@ -299,12 +310,11 @@ mod tests {
         assert!(db.list_projects().expect("projects").is_empty());
         assert_eq!(db.count_memories().expect("memories"), 0);
 
-        // Columns added after version 1, exercised through the accessors that
-        // read them rather than by inspecting the schema.
+        // Columns added after version 1, checked through the accessors that read them.
         assert!(db.list_mcp_servers().expect("mcp").is_empty());
         assert!(db.list_cloud_connectors().expect("providers").is_empty());
 
-        // And the index that caused the original failure now exists.
+        // The index over the added column exists.
         let indexes: Vec<String> = db
             .with(|conn| {
                 let mut stmt = conn.prepare(
@@ -353,8 +363,7 @@ mod tests {
 
     #[test]
     fn adding_a_column_to_a_table_that_does_not_exist_is_not_an_error() {
-        // Ordering inside `migrate` should not depend on which tables happen to
-        // exist yet.
+        // Migration order must not depend on which tables exist yet.
         let conn = Connection::open_in_memory().expect("open");
         add_column_if_missing(&conn, "not_a_table", "whatever", "TEXT").expect("no-op");
     }

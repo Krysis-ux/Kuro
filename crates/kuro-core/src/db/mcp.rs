@@ -1,9 +1,6 @@
-//! Storage for MCP tool servers.
-//!
-//! A row here is a *configuration*, not a connection. Whether a server is
-//! currently reachable is decided by the manager at connect time; `status` and
-//! `tool_count` are the cached result of the last attempt so the list page can
-//! render without dialling every server.
+//! Storage for MCP tool servers. A row is a *configuration*, not a connection;
+//! `status` and `tool_count` cache the last connection attempt so the list page
+//! needn't dial every server.
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -33,7 +30,7 @@ impl McpTransport {
     pub fn parse(raw: &str) -> Result<Self> {
         match raw {
             "stdio" => Ok(Self::Stdio),
-            // `http_sse` is what version 1 of the schema called it.
+            // `http_sse` is the schema v1 name.
             "http" | "http_sse" | "sse" => Ok(Self::Http),
             other => Err(KuroError::bad_request(format!(
                 "unknown MCP transport `{other}`; expected `stdio` or `http`"
@@ -84,8 +81,7 @@ pub struct McpServerRecord {
     /// Set when the server was installed from the recommended list.
     pub slug: Option<String>,
     pub tool_count: Option<i64>,
-    /// Reference into the credential store for this server's bearer token. The
-    /// token is never part of this record.
+    /// Credential-store reference for this server's bearer token (never the token).
     pub auth_ref: Option<String>,
     pub created_at: String,
 }
@@ -197,10 +193,9 @@ impl Db {
             .ok_or_else(|| KuroError::other("the server disappeared immediately after insert"))
     }
 
-    /// Point a server at its entry in the credential store.
-    ///
-    /// Separate from insert because the reference is derived from the id, which
-    /// does not exist until the row does.
+    /// Point a server at its entry in the credential store. Separate from insert
+    /// because the reference is derived from the id, which doesn't exist until the
+    /// row does.
     pub fn set_mcp_auth_ref(&self, id: &str, auth_ref: Option<&str>) -> Result<()> {
         self.with(|conn| {
             let changed = conn.execute(
@@ -267,9 +262,8 @@ fn read_server(row: &Row<'_>) -> rusqlite::Result<McpServerRecord> {
     Ok(McpServerRecord {
         id: row.get(0)?,
         name: row.get(1)?,
-        // A transport string this build does not recognise is treated as stdio
-        // rather than failing the whole list; the row is still editable and
-        // deletable in the UI.
+        // An unrecognised transport string is treated as stdio so one row doesn't
+        // fail the whole list; the row stays editable and deletable.
         transport: McpTransport::parse(&transport).unwrap_or(McpTransport::Stdio),
         command: row.get(3)?,
         args: json_or(args.as_deref()),

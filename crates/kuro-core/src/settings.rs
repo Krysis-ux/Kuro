@@ -1,9 +1,8 @@
 //! Typed access to the settings the backend itself acts on.
 //!
-//! The `settings` table is otherwise a free-form JSON key/value store that the
-//! frontend owns (display toggles, composer preferences and so on). Only the
-//! keys the Rust side needs to make decisions about are given typed accessors
-//! here, so adding a UI-only preference never requires a backend change.
+//! The `settings` table is otherwise a free-form JSON store owned by the
+//! frontend. Only keys the Rust side decides on get typed accessors here, so
+//! UI-only preferences need no backend change.
 
 use std::collections::HashMap;
 
@@ -32,12 +31,8 @@ pub const KEY_MEMORY_ABOUT_YOU: &str = "memory.aboutYou";
 
 /// What the user wants every model to know about them.
 ///
-/// Distinct from the memories a model saves with `remember`, and worth being
-/// distinct: those accumulate from conversations and are edited by deleting
-/// individual rows, whereas this is a paragraph somebody writes deliberately and
-/// rewrites when it stops being true. Asking people to teach it to the model one
-/// conversation at a time, when they already know what they want it to know, is
-/// the long way round.
+/// A paragraph the user writes and rewrites deliberately, unlike the memories a
+/// model accumulates with `remember`.
 pub fn about_you(db: &Db) -> Result<Option<String>> {
     Ok(db
         .get_setting(KEY_MEMORY_ABOUT_YOU)?
@@ -47,12 +42,9 @@ pub fn about_you(db: &Db) -> Result<Option<String>> {
 }
 
 /* --- Per-surface preferences ---
- *
- * Chat and coding are separate settings rather than one shared set, because the
- * right answer differs on almost every one of them. A chat that quietly started
- * running the tests would be alarming; a coding turn that did not would be
- * useless. Keeping them apart is what lets each have a sensible default instead
- * of a compromise that suits neither.
+ * Chat and coding have separate settings: the right default differs on almost
+ * every one (a chat that ran the tests unasked would alarm; a coding turn that
+ * did not would be useless).
  */
 
 /// Whether effort also selects skills and tool budget on the chat surface.
@@ -74,12 +66,9 @@ pub const KEY_FREE_ALLOWANCES: &str = "free.allowances";
 
 /// Whether shared, keyless endpoints may answer.
 ///
-/// On by default, which is what makes Kuro Free do something useful before the
-/// user has signed up for anything. The cost is real and stated on the screen:
-/// these are shared endpoints, rate-limited per address, and several log or
-/// train on what they receive. They are always ranked below any provider the
-/// user holds a key for, so turning this on can only add an answer where there
-/// would otherwise have been an error.
+/// On by default so Kuro Free works before any sign-up. These endpoints are
+/// shared, rate-limited per address, and several log or train on what they
+/// receive, so they always rank below providers the user holds a key for.
 pub fn allow_keyless(db: &Db) -> Result<bool> {
     Ok(db
         .get_setting(KEY_FREE_ALLOW_KEYLESS)?
@@ -89,10 +78,8 @@ pub fn allow_keyless(db: &Db) -> Result<bool> {
 
 /// A ceiling the user typed in for one provider.
 ///
-/// Optional and unverified. Providers state their allowances in half a dozen
-/// incompatible units — requests per minute, tokens per day, neurons, dollars
-/// of credit — and change them without notice, so Kuro asks rather than
-/// guesses, and shows a bar only where somebody has answered.
+/// Optional and unverified: providers state allowances in incompatible units and
+/// change them without notice, so Kuro asks rather than guesses.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Allowance {
     #[serde(rename = "tokensPerDay", skip_serializing_if = "Option::is_none")]
@@ -113,9 +100,8 @@ pub fn free_allowances(db: &Db) -> Result<HashMap<String, Allowance>> {
     let Some(value) = db.get_setting(KEY_FREE_ALLOWANCES)? else {
         return Ok(HashMap::new());
     };
-    // A stored value Kuro cannot read is treated as none rather than as an
-    // error: this is optional decoration on a screen, and failing the whole
-    // free-models page over it would take away the place it is edited.
+    // An unreadable stored value counts as none: failing the free-models page
+    // would remove the place it is edited.
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
@@ -131,9 +117,7 @@ pub fn set_free_allowance(db: &Db, slug: &str, allowance: Option<Allowance>) -> 
 
 /// Whether effort should also pick skills and a tool budget.
 ///
-/// On by default on both surfaces. The alternative — an effort dial that only
-/// moves a temperature — is the state this replaced, and it made the control
-/// look decorative because on most turns it was.
+/// On by default; otherwise effort only moves a temperature.
 pub fn auto_orchestrate(db: &Db, surface: crate::orchestrate::Surface) -> Result<bool> {
     let key = match surface {
         crate::orchestrate::Surface::Chat => KEY_CHAT_AUTO_ORCHESTRATE,
@@ -144,9 +128,7 @@ pub fn auto_orchestrate(db: &Db, surface: crate::orchestrate::Surface) -> Result
 
 /// The effort a surface starts at.
 ///
-/// Coding defaults higher than chat. A coding turn's first few rounds are spent
-/// reading the project rather than answering, so the setting that looks
-/// extravagant in a chat is merely adequate in a workspace.
+/// Coding defaults higher: its first rounds go on reading the project.
 pub fn default_effort(db: &Db, surface: crate::orchestrate::Surface) -> Result<Effort> {
     let (key, fallback) = match surface {
         crate::orchestrate::Surface::Chat => (KEY_CHAT_DEFAULT_EFFORT, Effort::Balanced),
@@ -161,13 +143,9 @@ pub fn default_effort(db: &Db, surface: crate::orchestrate::Surface) -> Result<E
 
 /// The mode a newly opened workspace starts in.
 ///
-/// Agent, because that is the mode the Code page is built around: every change
-/// it makes is recorded with the previous contents and is one click from being
-/// undone, which is the whole reason that panel exists. Starting in Plan would
-/// mean the common case — "change this for me" — is answered by a description of
-/// a change, and the user's first action in a new workspace is always to switch
-/// the mode. Bypass is never a default; it is the only one that turns a
-/// protection off rather than on.
+/// Agent, because the Code page is built around it: every change is recorded with
+/// the previous contents and is one click from undo. Bypass is never a default;
+/// it is the only mode that turns a protection off.
 pub fn default_workspace_mode(db: &Db) -> Result<crate::workspace::WorkspaceMode> {
     Ok(db
         .get_setting(KEY_CODE_DEFAULT_MODE)?
@@ -223,9 +201,8 @@ impl EngineSettings {
 
 /// Web search preferences.
 ///
-/// The API key is deliberately absent: it lives in the credential store, and the
-/// settings endpoint is readable by the browser. Keeping the two apart means the
-/// UI can show which provider is selected without ever being able to read its key.
+/// The API key is deliberately absent: it lives in the credential store and the
+/// settings endpoint is readable by the browser.
 #[derive(Debug, Clone)]
 pub struct SearchSettings {
     pub provider: SearchProvider,
@@ -233,9 +210,8 @@ pub struct SearchSettings {
 }
 
 impl SearchSettings {
-    /// Credential-store reference for the search provider's key. One reference
-    /// rather than one per provider, because only one provider is active at a time
-    /// and a stale key for an unselected provider is a liability, not a feature.
+    /// Credential-store reference for the search provider's key. A single reference:
+    /// only one provider is active, and a stale key for another is a liability.
     pub const KEY_REFERENCE: &'static str = "search:api-key";
 
     pub fn resolve(db: &Db) -> Result<Self> {
@@ -255,15 +231,9 @@ impl SearchSettings {
 
 /// Tool groups a new conversation starts with.
 ///
-/// Memory is on by default and web is not. Memory only ever reads what the user
-/// themselves asked to be saved, whereas search sends the query off the machine —
-/// which is exactly the thing this application promises not to do unprompted.
+/// Memory and Projects are on, web is not: search sends the query off the
+/// machine, which this application promises not to do unprompted.
 pub fn default_tool_groups(db: &Db) -> Result<Vec<ToolGroup>> {
-    // Memory and project reading, but not web. Both of the defaults only ever
-    // touch things the user themselves put here — facts they asked to be saved,
-    // folders they opened on the Code page — whereas search sends the query off
-    // the machine, which is exactly the thing this application promises not to
-    // do unprompted.
     let fallback = || vec![ToolGroup::Memory, ToolGroup::Projects];
 
     let Some(stored) = db.get_setting(KEY_DEFAULT_TOOL_GROUPS)? else {
@@ -303,12 +273,9 @@ fn read_i64(db: &Db, key: &str) -> Result<Option<i64>> {
 
 /// How much compute to spend on a reply.
 ///
-/// This is the single control shown in the chat composer. It bundles the
-/// parameters a beginner should not have to reason about; the raw sampling
-/// knobs still live in Settings for power users.
-/// Declaration order is the ordering: `Low < Balanced < High < Max`. Several
-/// callers ask "is this at least High", and a hand-written comparison would be
-/// one more thing to keep in step with this list.
+/// The single control in the chat composer; the raw sampling knobs live in
+/// Settings. Declaration order is the ordering (`Low < Balanced < High < Max <
+/// Ultra`), so callers can ask "at least High".
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default,
 )]
@@ -321,11 +288,8 @@ pub enum Effort {
     Max,
     /// Everything, and only offered when coding.
     ///
-    /// A chat has nothing to spend this on: there is no project to read, no
-    /// build to run, and past a point more rounds of web search is just a slower
-    /// wrong answer. A coding turn does — so this is the level that stops
-    /// rationing, turns on every skill the project justifies, and lets the tool
-    /// loop run as long as it is allowed to.
+    /// A chat has nothing to spend this on. It stops rationing: every justified skill
+    /// on, and the tool loop runs as long as it is allowed to.
     Ultra,
 }
 
@@ -403,10 +367,8 @@ impl Effort {
                 max_tokens: 8192,
                 reasoning_effort: Some("high"),
             },
-            // Deliberately not hotter than Max. Ultra buys persistence — more
-            // rounds, more tools, more expertise in the brief — and turning the
-            // temperature up as well would trade the reliability that a long
-            // agentic run depends on for variety nobody asked for.
+            // Not hotter than Max: Ultra buys persistence, and more randomness would cost
+            // the reliability a long agentic run needs.
             Self::Ultra => EffortParams {
                 temperature: 0.7,
                 top_p: 0.95,
@@ -493,8 +455,7 @@ mod tests {
 
     #[test]
     fn ultra_is_offered_when_coding_and_nowhere_else() {
-        // A chat has nothing to spend it on, and offering a level that does
-        // nothing there would make the whole control look arbitrary.
+        // A chat has nothing to spend it on.
         assert_eq!(Effort::ceiling(true), Effort::Ultra);
         assert_eq!(Effort::ceiling(false), Effort::Max);
         assert!(Effort::Ultra.coding_only());
@@ -503,8 +464,6 @@ mod tests {
 
     #[test]
     fn ultra_buys_persistence_rather_than_randomness() {
-        // Turning the temperature up as well would trade the reliability a long
-        // agentic run depends on for variety nobody asked for.
         let max = Effort::Max.params();
         let ultra = Effort::Ultra.params();
 

@@ -5,11 +5,9 @@ use serde_json::{Map, Value};
 use crate::error::{AppError, AppResult};
 use crate::state::SharedState;
 
-/// Every stored setting.
-///
-/// Keys the frontend owns (display toggles, composer preferences) live here
-/// alongside the handful the backend reads, so the UI needs no backend change
-/// to add a preference.
+/// Every stored setting. Frontend-owned keys (display toggles, composer
+/// preferences) live alongside the ones the backend reads, so the UI can add a
+/// preference without a backend change.
 pub async fn get_settings(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     Ok(Json(Value::Object(state.db.all_settings()?)))
 }

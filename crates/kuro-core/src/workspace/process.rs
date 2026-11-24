@@ -1,24 +1,12 @@
-//! Long-running processes a workspace started.
+//! Long-running processes a workspace started (dev servers, watchers).
 //!
-//! `npm test` finishes. `npm run dev` does not, and it is the more interesting
-//! of the two: it is the one that produces something to look at. A model that
-//! can only run commands that terminate can check whether code compiles but
-//! never whether the page renders.
+//! A background process has an id, its output goes into a ring buffer the model
+//! and the interface can both read, and the local address it prints on startup is
+//! picked out of that output so the interface can point a preview at it.
 //!
-//! So a background process is a first-class thing here rather than a command
-//! that happens not to have exited. It has an id, its output is kept in a ring
-//! buffer both the model and the interface can read, and the address it printed
-//! on startup is picked out of that output so the interface can point a frame at
-//! it. That last part is what makes "look at it" possible: a dev server
-//! announces `http://localhost:5173`, and nothing else in the system would know
-//! that unless the line were read.
-//!
-//! ## Lifetime
-//!
-//! Processes belong to the daemon, not to a conversation. A dev server started
-//! in one turn is still serving in the next, which is the behaviour anyone would
-//! expect and the only one that makes iterating on a page possible. They are
-//! killed when the daemon exits, and can be stopped explicitly at any point.
+//! Processes belong to the daemon, not to a conversation: a dev server started in
+//! one turn keeps serving in the next. They are killed when the daemon exits and
+//! can be stopped explicitly at any time.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -28,17 +16,11 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-/// Lines of output kept per process.
-///
-/// A dev server rebuilding on every keystroke produces a great deal of it, and
-/// the useful part is always the recent part.
+/// Lines of output kept per process (the recent ones).
 const MAX_LOG_LINES: usize = 500;
 
-/// Most processes one workspace may have running at once.
-///
-/// A model that starts a server, forgets, and starts another has a bug, and the
-/// symptom without a limit is a machine slowly filling up with orphaned node
-/// processes.
+/// Most processes one workspace may have running at once, so a model that keeps
+/// starting servers cannot fill the machine.
 pub const MAX_PER_WORKSPACE: usize = 6;
 
 /// A process the model started and left running.
@@ -49,8 +31,7 @@ pub struct RunningProcess {
     pub command: String,
     pub pid: Option<u32>,
     pub started_at: chrono::DateTime<chrono::Utc>,
-    /// The address this process printed on startup, when it printed one. This is
-    /// what the preview panel points at.
+    /// The local address the process printed on startup, if any (the preview target).
     pub url: Option<String>,
     pub running: bool,
     pub exit_code: Option<i32>,
@@ -72,19 +53,9 @@ struct Entry {
     pid: Option<u32>,
     started_at: chrono::DateTime<chrono::Utc>,
     shared: Arc<Mutex<Shared>>,
-    /// Asks the process's own task to kill it.
-    ///
-    /// A channel rather than a shared handle to the `Child`, and that is not a
-    /// style choice. Waiting on a child needs `&mut`, so any design where one
-    /// task waits and another kills has to put the child behind a lock — and the
-    /// waiting task then holds that lock for the entire lifetime of the process,
-    /// which is exactly as long as a `stop` would have to wait for it. That
-    /// deadlocks, and it deadlocks *intermittently*: whether it hangs depends on
-    /// whether stop arrives before the waiter has been scheduled, so it survives
-    /// a unit test and fails against a real dev server.
-    ///
-    /// Here one task owns the child outright and selects between waiting for it
-    /// and being told to stop. Nothing is shared, so nothing can be held.
+    /// Asks the process's own task to kill it. A channel, not a shared `Child`:
+    /// waiting needs `&mut`, so a lock around the child would be held by the
+    /// waiter for the process's whole life and `stop` would deadlock.
     stop: tokio::sync::watch::Sender<bool>,
 }
 
@@ -124,13 +95,8 @@ impl ProcessRegistry {
         Self::default()
     }
 
-    /// Start a command and leave it running.
-    ///
-    /// The caller has already vetted the command; this only spawns it. Both
-    /// output streams are read continuously rather than on demand, because a
-    /// process whose pipe fills up stops making progress, and a dev server that
-    /// mysteriously freezes after a few hundred lines is a worse bug than any it
-    /// would have helped find.
+    /// Start an already-vetted command and leave it running. Both output streams
+    /// are drained continuously, since a process with a full pipe stalls.
     pub async fn start(
         &self,
         workspace_id: &str,
@@ -159,9 +125,7 @@ impl ProcessRegistry {
             .env("NO_COLOR", "1")
             .env("TERM", "dumb")
             .kill_on_drop(true);
-        // `npm run dev` is a shell running a package manager running a bundler,
-        // and stopping it has to mean all three. Killing only the shell is what
-        // leaves a port bound by something the interface can no longer see.
+        // Stopping `npm run dev` must kill the whole tree, not just the shell.
         super::exec::own_group(&mut builder);
 
         let mut child = builder
@@ -184,9 +148,8 @@ impl ProcessRegistry {
         let id = uuid::Uuid::new_v4().to_string();
         let (stop, mut stop_signal) = tokio::sync::watch::channel(false);
 
-        // One task owns the child: it waits for it, and is also the only thing
-        // that kills it. That turns "running" into "exited with 1" without
-        // anybody polling, and leaves no handle for a second task to contend on.
+        // One task owns the child: it waits for it and is the only thing that
+        // kills it, so no lock is needed and exit status updates without polling.
         {
             let shared = shared.clone();
             let command = command.to_string();
@@ -195,9 +158,8 @@ impl ProcessRegistry {
                 let status = tokio::select! {
                     status = child.wait() => status,
                     _ = stop_signal.changed() => {
-                        // The group first, so the bundler and its workers go
-                        // too; then the shell itself, so `wait` returns rather
-                        // than blocking on a child that outlived it.
+                        // The group first (bundler and workers), then the shell
+                        // so `wait` returns.
                         if let Some(pid) = pid {
                             super::exec::kill_group(pid);
                         }
@@ -228,13 +190,7 @@ impl ProcessRegistry {
         Ok(snapshot)
     }
 
-    /// Wait briefly for a just-started process to announce an address.
-    ///
-    /// A dev server takes a second or two to bind a port, and a tool that
-    /// returned before then would always answer "no URL yet" — which is useless
-    /// to the model and leaves the preview panel blank on the one turn the user
-    /// was watching. So the call waits, but only for as long as a server that is
-    /// working would need.
+    /// Wait up to `wait` for a just-started process to print an address (or exit).
     pub async fn settle(&self, id: &str, wait: std::time::Duration) -> Option<RunningProcess> {
         let deadline = std::time::Instant::now() + wait;
 
@@ -284,12 +240,8 @@ impl ProcessRegistry {
         Some(shared.log.iter().skip(skip).cloned().collect())
     }
 
-    /// Stop a process. Returns false when there was nothing to stop.
-    ///
-    /// Returns as soon as the kill is requested rather than waiting for the
-    /// process to die. A dev server takes a moment to shut down, and a request
-    /// that blocked on it would make the stop button feel broken; the list is
-    /// polled anyway, so the row updates on its own a moment later.
+    /// Request a stop; returns false when there was nothing to stop. Does not wait
+    /// for the process to die (the list is polled, so the row updates itself).
     pub fn stop(&self, id: &str) -> bool {
         let entries = self.entries.lock().expect("registry lock");
         let Some(entry) = entries.iter().find(|entry| entry.id == id) else {
@@ -299,19 +251,12 @@ impl ProcessRegistry {
             return false;
         }
 
-        // A send failure means the owning task is already gone, which means the
-        // process has already exited — the same answer as "nothing to stop".
+        // A send failure means the process already exited.
         entry.stop.send(true).is_ok()
     }
 
-    /// Drop a finished process from the list.
-    ///
-    /// Only a finished one. A registry that let a running server be forgotten
-    /// would be a registry that could lose track of a bound port, which is the
-    /// state this whole module exists to make impossible.
-    ///
-    /// Returns false when the id is unknown or still running, so the caller can
-    /// say which rather than reporting a success that did nothing.
+    /// Drop a finished process from the list. A running one is never forgotten
+    /// (its port would be untracked); returns false if unknown or still running.
     pub fn forget(&self, id: &str) -> bool {
         let mut entries = self.entries.lock().expect("registry lock");
         let Some(position) = entries.iter().position(|entry| entry.id == id) else {
@@ -324,10 +269,7 @@ impl ProcessRegistry {
         true
     }
 
-    /// Drop every finished process belonging to one workspace.
-    ///
-    /// Returns how many went, because "clear" that silently clears nothing is
-    /// indistinguishable from a broken button.
+    /// Drop every finished process of one workspace; returns how many went.
     pub fn forget_finished(&self, workspace_id: &str) -> usize {
         let mut entries = self.entries.lock().expect("registry lock");
         let before = entries.len();
@@ -345,11 +287,8 @@ impl ProcessRegistry {
         }
     }
 
-    /// Forget processes that have exited, so the list stays about what is live.
-    ///
-    /// Deliberately not automatic on exit: a build that failed thirty seconds ago
-    /// is exactly what somebody wants to read, so a finished process survives
-    /// until the next time something is started.
+    /// Prune exited processes once the list grows past 32. Not done on exit, so a
+    /// recently failed build stays readable.
     fn reap(&self) {
         let mut entries = self.entries.lock().expect("registry lock");
         if entries.len() < 32 {
@@ -384,11 +323,8 @@ where
     });
 }
 
-/// Pick a local server address out of a line of output.
-///
-/// Only local addresses count. A dev server's banner routinely contains a link
-/// to its own documentation, and pointing the preview panel at vitejs.dev
-/// because it appeared before the localhost line would be a maddening bug.
+/// Pick a local server address out of a line of output. Only local addresses
+/// count: banners often link to the tool's docs.
 pub fn detect_url(line: &str) -> Option<String> {
     let mut best: Option<String> = None;
 
@@ -406,9 +342,7 @@ pub fn detect_url(line: &str) -> Option<String> {
         if !is_local(candidate) {
             continue;
         }
-        // A server that reports both a loopback and a network address usually
-        // prints loopback first, and that is the one guaranteed to be reachable
-        // from this machine.
+        // Keep the first: servers print loopback before the network address.
         if best.is_none() {
             best = Some(candidate.to_string());
         }
@@ -487,7 +421,6 @@ mod tests {
         assert_eq!(registry.list("w1").len(), 1);
         assert!(registry.list("w2").is_empty(), "processes belong to one workspace");
 
-        // The address is read out of the output, not guessed.
         let settled = registry
             .settle(&started.id, std::time::Duration::from_secs(3))
             .await
@@ -506,13 +439,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_process_can_be_stopped_after_it_has_settled() {
-        // The pause is the whole test. An earlier design put the child behind a
-        // lock that the waiting task held for the process's entire lifetime, so
-        // `stop` could only return if it won a race against that task being
-        // scheduled — which it did, in a test with no pause, and never did
-        // against a real dev server. Waiting first makes the deadlock certain
-        // rather than occasional, and the timeout turns it into a failure
-        // instead of a hung test run.
+        // The pause matters: a deadlock between `stop` and the waiting task only
+        // shows once the waiter has been scheduled. The timeout turns a deadlock
+        // into a failure.
         let registry = ProcessRegistry::new();
         let started = registry
             .start("w1", &std::env::temp_dir(), "sleep 60")

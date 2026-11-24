@@ -2,8 +2,8 @@
 //!
 //! Everything that reads or changes a file on this machine goes through a
 //! workspace, so this is the only route module that touches the user's own
-//! folders. It is deliberately small — listing, reading, and putting a change
-//! back — with the actual tool execution living in the chat turn.
+//! folders. It stays small (list, read, put a change back); tool execution lives
+//! in the chat turn.
 
 use std::path::PathBuf;
 
@@ -19,8 +19,7 @@ use serde_json::{json, Value};
 use crate::error::AppResult;
 use crate::state::SharedState;
 
-/// Changes kept in the panel. Enough to cover a long session, few enough that
-/// the response stays small.
+/// Changes kept in the panel: enough for a long session, small enough to keep the response light.
 const CHANGE_HISTORY: usize = 200;
 
 pub async fn list_workspaces(State(state): State<SharedState>) -> AppResult<Json<Value>> {
@@ -38,10 +37,8 @@ pub struct CreateRequest {
     pub root_path: String,
 }
 
-/// Create a workspace over an existing folder.
-///
-/// The folder is checked here rather than at first use, so choosing one that is
-/// not there is a mistake caught while the user is still looking at the form.
+/// Create a workspace over an existing folder. The folder is checked here so a
+/// bad choice is caught while the user is still on the form.
 pub async fn create_workspace(
     State(state): State<SharedState>,
     Json(request): Json<CreateRequest>,
@@ -63,8 +60,7 @@ pub async fn create_workspace(
         .into());
     }
 
-    // Stored canonicalised so that a workspace cannot be pointed at one folder
-    // and resolved against another through a symlink that changes later.
+    // Stored canonicalised so a later symlink change cannot redirect the workspace.
     let root = expanded
         .canonicalize()
         .map_err(|error| KuroError::bad_request(format!("that folder could not be read: {error}")))?;
@@ -73,10 +69,7 @@ pub async fn create_workspace(
         .db
         .create_workspace(request.name.trim(), &root.to_string_lossy())?;
 
-    // The stored default rather than the type's default: a new workspace should
-    // open in whichever mode this person actually works in, and having to change
-    // it on every new folder is the sort of friction that makes a setting feel
-    // like a decoration.
+    // Use the stored default mode so a new workspace opens in the mode this person works in.
     let preferred = kuro_core::settings::default_workspace_mode(&state.db)?;
     let created = if preferred == WorkspaceMode::parse(&created.mode).unwrap_or_default() {
         created
@@ -137,8 +130,7 @@ pub async fn delete_workspace(
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     state.db.delete_workspace(&id)?;
-    // Said plainly because "delete" on something describing a folder is a
-    // reasonable thing to be nervous about.
+    // Stated explicitly, since deleting something that describes a folder is alarming.
     Ok(Json(json!({ "deleted": true, "folderUntouched": true })))
 }
 
@@ -181,10 +173,8 @@ pub struct FileQuery {
     pub path: String,
 }
 
-/// Read one file for the viewer.
-///
-/// Goes through the same containment as the tools, at the read tier, so the
-/// interface cannot reach anything a model could not.
+/// Read one file for the viewer, through the same containment as the tools at
+/// the read tier, so the UI cannot reach anything a model could not.
 pub async fn read_workspace_file(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -204,9 +194,8 @@ pub async fn list_changes(
     load(&state, &id)?;
     let changes = state.db.list_workspace_changes(&id, CHANGE_HISTORY)?;
 
-    // `before`/`after` are whole file contents. Sending every one of them would
-    // make this response many megabytes, so the list carries the shape of each
-    // change and the contents stay server-side until an undo needs them.
+    // `before`/`after` are whole file contents; the list carries each change's
+    // shape and the contents stay server-side until `change_diff` or undo needs them.
     let summarised: Vec<Value> = changes
         .iter()
         .map(|change| {
@@ -228,12 +217,8 @@ pub async fn list_changes(
     Ok(Json(json!({ "changes": summarised })))
 }
 
-/// One change, with the contents on both sides of it.
-///
-/// Separate from the list on purpose: the list is a summary because whole file
-/// contents on every row would be megabytes, and this is the request that says
-/// "that one, in full". Which is also the only shape a diff can take — a line
-/// count tells you a file grew by nine lines and nothing about which nine.
+/// One change, with the contents on both sides. Separate from the list because
+/// whole contents on every row would be megabytes, and a diff needs the full text.
 pub async fn change_diff(
     State(state): State<SharedState>,
     Path((id, change_id)): Path<(String, String)>,
@@ -254,19 +239,15 @@ pub async fn change_diff(
         "createdAt": change.created_at,
         "undone": change.undone,
         "created": change.before.is_none(),
-        // Null rather than empty when the snapshot was skipped for size. The
-        // difference matters: an empty string is a file that was empty, and a
-        // viewer that showed the whole file as added would be lying about it.
+        // Null, not empty, when the snapshot was skipped for size: an empty string is a
+        // file that was empty, and a viewer would otherwise show it all as added.
         "before": change.before,
         "after": change.after,
     })))
 }
 
-/// Put a change back.
-///
-/// Refused when the file has been touched since, which is the property that
-/// makes undo safe to offer: it can only ever remove a change the model made,
-/// never one the user made afterwards.
+/// Put a change back. Refused when the file has changed since, so undo only
+/// ever removes a change the model made, never one the user made afterwards.
 pub async fn undo_change(
     State(state): State<SharedState>,
     Path((id, change_id)): Path<(String, String)>,
@@ -281,11 +262,11 @@ pub async fn undo_change(
         return Err(KuroError::bad_request("that change belongs to another workspace").into());
     }
 
-    // Agent access, because undoing is a write. The path still goes through the
-    // same containment as everything else.
+    // Agent access because undoing is a write; the path still goes through the same containment.
     let workspace = as_workspace(&record, WorkspaceMode::Agent);
     let resolved = workspace.permissions().resolve_path(&change.path, true)?;
-    let current = files::read_file(&resolved).unwrap_or_default();
+    // The snapshot reader, not the model's: a file over the read limit is still undoable.
+    let current = files::read_snapshot(&resolved).unwrap_or_default();
 
     match change.plan_undo(&current) {
         UndoPlan::Restore(before) => {
@@ -312,12 +293,9 @@ pub async fn undo_change(
 /// Lines of a process's output returned at once.
 const LOG_LINES: usize = 400;
 
-/// What is running in this workspace, and what each one is serving.
-///
-/// The preview panel polls this. It is deliberately cheap — the registry is in
-/// memory, and the log is read separately — because a panel that costs a
-/// filesystem walk on every tick is a panel that gets a longer interval and then
-/// feels dead.
+/// What is running in this workspace and what each is serving. The preview
+/// panel polls this, so it is cheap: the registry is in memory and the log is
+/// read separately.
 pub async fn list_processes(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -331,12 +309,9 @@ pub struct StartProcessRequest {
     pub command: String,
 }
 
-/// Start a command from the interface rather than from a model.
-///
-/// Vetted against the workspace's own mode, exactly as a model's call would be.
-/// The user typing the command is not a reason to skip the check: the mode is
-/// what they set, and a button that quietly outranked it would make the mode
-/// meaningless.
+/// Start a command from the interface rather than a model. It is vetted against
+/// the workspace's mode exactly like a model's call; a button that outranked the
+/// mode would make the mode meaningless.
 pub async fn start_process(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -404,12 +379,8 @@ pub async fn stop_process(
     Ok(Json(json!({ "stopped": stopped, "command": found.command })))
 }
 
-/// Take a finished process off the list.
-///
-/// The list used to be append-only for the lifetime of the daemon, so a morning
-/// of builds left twenty dead rows above the one server actually running. A
-/// still-running process is refused rather than dropped: forgetting one would
-/// leave a bound port with nothing tracking it.
+/// Take a finished process off the list. A running process is refused, since
+/// forgetting one would leave a bound port with nothing tracking it.
 pub async fn forget_process(
     State(state): State<SharedState>,
     Path((id, process_id)): Path<(String, String)>,
@@ -449,11 +420,9 @@ fn load(state: &SharedState, id: &str) -> Result<kuro_core::db::WorkspaceRecord,
         .ok_or_else(|| KuroError::not_found(format!("workspace `{id}`")))
 }
 
-/// The enforcement object for a stored workspace, at a chosen mode.
-///
-/// The mode is passed rather than read from the record because the interface's
-/// own reads and undos are not the model's: viewing a file works in any mode,
-/// and undo is a write whatever the workspace is currently set to.
+/// The enforcement object for a stored workspace at a chosen mode. The mode is
+/// passed because the UI's reads and undos are not the model's: viewing works in
+/// any mode and undo is a write whatever the workspace is set to.
 fn as_workspace(record: &kuro_core::db::WorkspaceRecord, mode: WorkspaceMode) -> Workspace {
     Workspace {
         id: record.id.clone(),

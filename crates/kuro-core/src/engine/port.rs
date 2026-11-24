@@ -1,23 +1,17 @@
-//! Internal port allocation for engine processes.
-//!
-//! Every loaded model gets its own engine process on a loopback port that users
-//! never see; they only ever talk to Kuro's own port. Ports are taken from a
-//! private range and probed before use so Kuro does not collide with whatever
-//! else is running on the machine.
+//! Port allocation for engine processes. Each loaded model's engine listens on a
+//! loopback port from a private range, probed before use to avoid collisions.
 
 use std::net::TcpListener;
 
 use crate::{KuroError, Result};
 
-/// Private range for engine processes. Chosen to sit above the common
-/// development ports and below the ephemeral range macOS hands out.
+/// Private range for engine processes, above common dev ports and below the
+/// macOS ephemeral range.
 pub const PORT_RANGE_START: u16 = 39200;
 pub const PORT_RANGE_END: u16 = 39299;
 
-/// Find a free loopback port in Kuro's private range.
-///
-/// `in_use` holds ports Kuro has already handed out but whose process may not
-/// have bound yet, which a bind probe alone would not catch.
+/// Find a free loopback port in the private range. `in_use` lists ports already
+/// handed out whose process may not have bound yet, which a probe would miss.
 pub fn allocate_port(in_use: &[u16]) -> Result<u16> {
     for candidate in PORT_RANGE_START..=PORT_RANGE_END {
         if in_use.contains(&candidate) {
@@ -34,10 +28,8 @@ pub fn allocate_port(in_use: &[u16]) -> Result<u16> {
     )))
 }
 
-/// Whether a port can currently be bound on loopback.
-///
-/// The listener is dropped immediately, so this is advisory: the engine process
-/// binds a moment later. The `in_use` list in [`allocate_port`] covers the gap.
+/// Whether a port can currently be bound on loopback. Advisory only: the probe
+/// is dropped before the engine binds.
 fn is_available(port: u16) -> bool {
     TcpListener::bind(("127.0.0.1", port)).is_ok()
 }

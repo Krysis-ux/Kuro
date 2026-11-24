@@ -15,7 +15,19 @@ public enum MarkdownBlock: Hashable, Sendable {
 /// Splits markdown into blocks using Foundation's parser, so inline styling
 /// (bold, code, links) comes back as attributes on each block's text.
 public enum Markdown {
+    /// Drops `<tool_call>…</tool_call>` a small model wrote as text instead of calling the tool.
+    /// Fenced code is left alone.
+    public static func withoutToolCalls(_ text: String) -> String {
+        guard text.contains("<tool_call>") else { return text }
+        return text.components(separatedBy: "```").enumerated().map { index, part in
+            index % 2 == 1 ? part : part.replacingOccurrences(
+                of: #"<tool_call>[\s\S]*?(</tool_call>|$)"#, with: "", options: .regularExpression
+            )
+        }.joined(separator: "```")
+    }
+
     public static func blocks(_ text: String) -> [MarkdownBlock] {
+        let text = withoutToolCalls(text)
         let options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: false,
             interpretedSyntax: .full,

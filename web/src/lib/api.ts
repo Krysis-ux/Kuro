@@ -215,6 +215,18 @@ export interface EssentialSkill {
   blurb: string
 }
 
+/** A specialist a coding turn can hand work to. Each runs in a fresh context. */
+export interface Subagent {
+  slug: string
+  name: string
+  blurb: string
+  /** When to reach for it, for the help tip. */
+  when: string
+  /** Whether it is given tools that edit files. */
+  writes: boolean
+  skills: string[]
+}
+
 /** Per-surface preferences. Chat and coding are configured separately. */
 export interface SurfaceSettings {
   autoOrchestrate: boolean
@@ -283,6 +295,8 @@ export interface ToolsOverview {
      */
     custom: CustomSkill[]
   }
+  /** Absent from servers older than the Subagents page. */
+  agents?: Subagent[]
   surfaces: { chat: SurfaceSettings; code: SurfaceSettings }
   memory: { preload: boolean; count: number }
   search: {

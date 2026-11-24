@@ -2,42 +2,60 @@ import AppKit
 import SwiftUI
 import KuroKit
 
-/// Settings (⌘,). Chat and Coder are configured separately on purpose: a chat
-/// that ran commands would be alarming, a coding turn that could not is useless.
-struct SettingsView: View {
+/// The page beside the Settings sidebar. Chat and Coding are configured
+/// separately on purpose: a chat that ran commands would be alarming, a coding
+/// turn that could not is useless.
+struct SettingsDetail: View {
     @Environment(AppModel.self) private var app
+    let pane: SettingsPane
 
-    enum Tab: String { case chat, coder, storage, engine, server }
-
-    @State var tab: Tab = .chat
     @State private var settings: [String: JSONValue] = [:]
     @State private var hardware: HardwareInfo?
     @State private var failure: String?
 
     var body: some View {
-        Group {
-            if app.server.phase == .ready {
-                TabView(selection: $tab) {
-                    ChatSettings(settings: settings, save: save)
-                        .tabItem { Label("Chat", systemImage: "bubble.left") }.tag(Tab.chat)
-                    CoderSettings(save: save)
-                        .tabItem { Label("Coder", systemImage: "chevron.left.forwardslash.chevron.right") }.tag(Tab.coder)
-                    StorageSettings(settings: settings, save: save)
-                        .tabItem { Label("Storage", systemImage: "externaldrive") }.tag(Tab.storage)
-                    EngineSettings(settings: settings, hardware: hardware, save: save)
-                        .tabItem { Label("Engine", systemImage: "cpu") }.tag(Tab.engine)
-                    ServerSettings(hardware: hardware)
-                        .tabItem { Label("Server", systemImage: "server.rack") }.tag(Tab.server)
-                }
-                .overlay(alignment: .bottom) {
-                    if let failure { ErrorText(failure).padding(8).background(.bar, in: Capsule()).padding() }
-                }
-            } else {
-                EmptyNote(title: "Kuro is not running", systemImage: "power", message: "Settings are read from Kuro's server.")
+        page
+            .overlay(alignment: .bottom) {
+                if let failure { ErrorText(failure).padding(8).background(.bar, in: Capsule()).padding() }
             }
+            .navigationTitle("Settings")
+            .task(id: app.server.phase) { await load() }
+    }
+
+    @ViewBuilder private var page: some View {
+        switch pane {
+        case .general: SettingsPage(pane) { GeneralSettings() }
+        case .chat: SettingsPage(pane) { ChatSettings(save: save) }
+        case .coding: SettingsPage(pane) { CoderSettings(save: save) }
+        case .archived: SettingsPage(pane) { ArchivedChats() }
+        case .usage: SettingsPage(pane) { UsageSettings() }
+        case .commands: CommandsPage()
+        case .automations: AutomationsPage()
+        case .providers: ProvidersPage()
+        case .personalization: SettingsPage(pane) { PersonalizationSettings(settings: settings, save: save) }
+        case .subagents: SubagentsPage()
+        case .skills, .mcp, .search, .tools: toolsPane
+        case .storage: SettingsPage(pane) { StorageSettings(settings: settings, save: save) }
+        case .engine: SettingsPage(pane) { EngineSettings(settings: settings, hardware: hardware, save: save) }
+        case .server: SettingsPage(pane) { ServerSettings(hardware: hardware) }
         }
-        .frame(width: 640, height: 580)
-        .task(id: app.server.phase) { await load() }
+    }
+
+    @ViewBuilder private var toolsPane: some View {
+        if let overview = app.tools {
+            switch pane {
+            case .skills: SettingsPage(pane) { SkillsPane(overview: overview) }
+            case .mcp: McpPane()
+            case .search: SettingsPage(pane) { SearchPane(overview: overview) }
+            default: SettingsPage(pane) { BuiltinPane(overview: overview) }
+            }
+        } else {
+            VStack(spacing: 10) {
+                ProgressView()
+                Button("Try Again") { app.invalidate(.tools) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     private func load() async {
@@ -56,55 +74,26 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Chat
+// MARK: - General
 
-private struct ChatSettings: View {
+private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
-    let settings: [String: JSONValue]
-    let save: (KuroClient.Body) -> Void
-    @State private var aboutYou = ""
-    @State private var loaded = false
+
+    private let shortcuts: [(String, String)] = [
+        ("New chat", "⌘N"),
+        ("Settings", "⌘,"),
+        ("Code", "⌥⌘1"),
+        ("Projects", "⌥⌘2"),
+        ("Models", "⌥⌘3"),
+        ("Providers", "⌥⌘4"),
+        ("Send", "↩"),
+        ("New line", "⇧↩"),
+        ("Slash commands", "/"),
+    ]
 
     var body: some View {
         @Bindable var prefs = app.prefs
-        let stored = settings["memory.aboutYou"]?.stringValue ?? ""
-
         Form {
-            if let surface = app.tools?.surfaces.chat {
-                SurfaceSection(surface: surface, autoKey: "chat.autoOrchestrate", effortKey: "chat.defaultEffort", coding: false, save: save,
-                               autoHint: "Higher effort also picks the reasoning guidance that suits the question, and gives the model more room to search.")
-            }
-
-            Section {
-                TextEditor(text: $aboutYou)
-                    .frame(minHeight: 100)
-                    .scrollContentBackground(.hidden)
-                HStack {
-                    Text(aboutYou == stored ? "Included at the start of every conversation." : "Not saved yet.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Save") { save(["memory.aboutYou": aboutYou]) }
-                        .disabled(aboutYou == stored)
-                }
-                if let tools = app.tools {
-                    Toggle(isOn: Binding(get: { tools.memory.preload }, set: { on in
-                        Task {
-                            try? await app.client.setMemoryPreload(on)
-                            app.invalidate(.tools)
-                        }
-                    })) {
-                        Text("Put saved memories in front of the model automatically")
-                        Text("Without this, memory only works when the model thinks to look.")
-                    }
-                    LabeledContent("Saved by models", value: "\(tools.memory.count) \(tools.memory.count == 1 ? "memory" : "memories") · review them in Tools")
-                }
-            } header: {
-                Text("What Should Models Know About You?")
-            } footer: {
-                Text("Your work, your stack, how you like answers — anything you would otherwise retype. Memory never leaves this Mac.")
-            }
-
             Section("Appearance") {
                 Picker("Theme", selection: $prefs.theme) {
                     Text("System").tag(Preferences.Theme.system)
@@ -113,8 +102,70 @@ private struct ChatSettings: View {
                 }
                 .pickerStyle(.segmented)
             }
+            Section("Keyboard Shortcuts") {
+                ForEach(shortcuts, id: \.0) { name, keys in
+                    LabeledContent(name) {
+                        Text(keys).font(.callout.monospaced()).foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
-        .formStyle(.grouped)
+        .settingsForm()
+    }
+}
+
+// MARK: - Chat
+
+private struct ChatSettings: View {
+    @Environment(AppModel.self) private var app
+    let save: (KuroClient.Body) -> Void
+
+    var body: some View {
+        Form {
+            if let surface = app.tools?.surfaces.chat {
+                SurfaceSection(surface: surface, autoKey: "chat.autoOrchestrate", effortKey: "chat.defaultEffort", save: save,
+                               autoHint: "Higher effort also picks reasoning guidance that suits the question, and gives the model more room to search.")
+            }
+        }
+        .settingsForm()
+    }
+}
+
+// MARK: - Personalization
+
+private struct PersonalizationSettings: View {
+    @Environment(AppModel.self) private var app
+    let settings: [String: JSONValue]
+    let save: (KuroClient.Body) -> Void
+    @State private var aboutYou = ""
+    @State private var loaded = false
+
+    var body: some View {
+        let stored = settings["memory.aboutYou"]?.stringValue ?? ""
+
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    TextEditor(text: $aboutYou)
+                        .frame(minHeight: 90)
+                        .scrollContentBackground(.hidden)
+                    HStack {
+                        Text(aboutYou == stored ? "Sent with every conversation." : "Not saved yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Save") { save(["memory.aboutYou": aboutYou]) }
+                            .disabled(aboutYou == stored)
+                    }
+                } header: {
+                    TitleWithHelp("About You", help: "Your work, your stack, how you like answers. Anything you would otherwise retype.")
+                }
+            }
+            .settingsForm()
+            .frame(height: 210)
+
+            if let overview = app.tools { MemoryPane(overview: overview) }
+        }
         .onChange(of: stored, initial: true) {
             // Adopt the stored text until the field is edited.
             if !loaded || aboutYou == "" { aboutYou = stored }
@@ -128,22 +179,20 @@ private struct SurfaceSection: View {
     let surface: SurfaceSettings
     let autoKey: String
     let effortKey: String
-    let coding: Bool
     let save: (KuroClient.Body) -> Void
     let autoHint: String
 
     var body: some View {
         Section {
             Toggle(isOn: Binding(get: { surface.autoOrchestrate }, set: { save([autoKey: $0]) })) {
-                Text("Auto-orchestrate")
-                Text(autoHint)
+                TitleWithHelp("Auto-orchestrate", help: autoHint)
             }
-            Picker("Starting effort", selection: Binding(get: { surface.defaultEffort }, set: { save([effortKey: $0.rawValue]) })) {
+            Picker(selection: Binding(get: { surface.defaultEffort }, set: { save([effortKey: $0.rawValue]) })) {
                 ForEach(Effort.options(coding: false), id: \.self) { Text($0.label).tag($0) }
+            } label: {
+                TitleWithHelp("Starting effort", help: "Where the effort control beside the message box starts. It can still be changed per message.")
             }
             .pickerStyle(.segmented)
-        } footer: {
-            Text("Where the effort control beside the message box starts. It can still be changed per message.")
         }
     }
 }
@@ -158,7 +207,7 @@ private struct CoderSettings: View {
         Form {
             if let tools = app.tools {
                 let surface = tools.surfaces.code
-                SurfaceSection(surface: surface, autoKey: "code.autoOrchestrate", effortKey: "code.defaultEffort", coding: true, save: save,
+                SurfaceSection(surface: surface, autoKey: "code.autoOrchestrate", effortKey: "code.defaultEffort", save: save,
                                autoHint: "Higher effort buys more rounds of reading, editing and running, and brings in the skills that match what the project is written in.")
 
                 Section {
@@ -173,9 +222,7 @@ private struct CoderSettings: View {
                     }
                     .pickerStyle(.radioGroup)
                 } header: {
-                    Text("Permission")
-                } footer: {
-                    Text("Agent is the default because every file it changes can be undone from the Changes panel. A command that has already run cannot be — that is what Bypass lifts the limit on, and why it is never the default.")
+                    TitleWithHelp("Permission", help: "Agent is the default because every file it changes can be undone from the Changes panel. A command that has already run cannot be undone, which is why Bypass is never the default.")
                 }
 
                 Section {
@@ -186,13 +233,11 @@ private struct CoderSettings: View {
                         }
                     }
                 } header: {
-                    Text("Always On When Coding")
-                } footer: {
-                    Text("Everything else is a choice, under Tools → Skills.")
+                    TitleWithHelp("Always On When Coding", help: "Everything else is a choice, under Skills.")
                 }
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
     }
 }
 
@@ -225,12 +270,10 @@ private struct StorageSettings: View {
                     }
                 }
             } header: {
-                Text("Where Models Are Kept")
-            } footer: {
-                Text("Model files are the only large thing Kuro stores, so point this at an external drive if your disk is tight. It is read at startup: restart the server from the Server tab after changing it. Existing downloads stay where they are.")
+                TitleWithHelp("Where Models Are Kept", help: "Point this at an external drive if your disk is tight. Restart the server after changing it. Existing downloads stay where they are.")
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .task { status = try? await app.client.status() }
     }
 }
@@ -247,21 +290,19 @@ private struct EngineSettings: View {
             Section {
                 EngineSlider(label: "Context size", key: "engine.contextSize", unit: "tokens", auto: hardware?.recommended.contextSize,
                              range: 512...131_072, step: 512, settings: settings, save: save,
-                             hint: "How much of the conversation the model sees at once. More costs memory.")
+                             hint: "How much the model sees at once. More costs memory.")
                 EngineSlider(label: "GPU layers", key: "engine.gpuLayers", auto: hardware?.recommended.gpuLayers,
-                             range: 0...999, step: 1, zeroLabel: "CPU only", settings: settings, save: save,
-                             hint: "Layers offloaded to the GPU. The maximum offloads all of them, which is almost always right.")
+                             range: 0...999, step: 1, zeroLabel: "CPU only", maxLabel: "All", settings: settings, save: save,
+                             hint: "Layers on the GPU. All is almost always right.")
                 EngineSlider(label: "CPU threads", key: "engine.threads", auto: hardware?.recommended.threads,
                              range: 1...Double(max(hardware?.logicalCores ?? 16, 2)), step: 1, settings: settings, save: save,
-                             hint: "This Mac has \(hardware?.physicalCores ?? 0) physical cores. More than that usually slows things down.")
+                             hint: "This Mac has \(hardware?.physicalCores ?? 0) physical cores.")
                 EngineSlider(label: "Unload after", key: "engine.idleUnloadMinutes", unit: "min", auto: 30,
                              range: 0...240, step: 5, zeroLabel: "never unload", settings: settings, save: save,
-                             hint: "How long an unused model stays in memory before it is given back.")
-            } footer: {
-                Text("Applied the next time a model loads. Drag to adjust, or type an exact value.")
+                             hint: "How long an idle model stays in memory.")
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
     }
 }
 
@@ -274,6 +315,8 @@ private struct EngineSlider: View {
     let range: ClosedRange<Double>
     let step: Double
     var zeroLabel: String?
+    /// Said instead of the top of the range, where that is a sentinel rather than a count.
+    var maxLabel: String?
     let settings: [String: JSONValue]
     let save: (KuroClient.Body) -> Void
     let hint: String
@@ -333,6 +376,7 @@ private struct EngineSlider: View {
     private func format(_ value: Double?) -> String {
         guard let value else { return "—" }
         if value == 0, let zeroLabel { return zeroLabel }
+        if value >= range.upperBound, let maxLabel { return maxLabel }
         let number = Int(value).formatted()
         return unit.map { "\(number) \($0)" } ?? number
     }
@@ -415,7 +459,7 @@ private struct ServerSettings: View {
                 LabeledContent("GPU", value: hardware.map { $0.gpuAvailable ? $0.gpuBackend : "CPU only" } ?? "—")
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .task {
             while !Task.isCancelled {
                 status = try? await app.client.status()
@@ -425,7 +469,7 @@ private struct ServerSettings: View {
         .confirmationDialog("Stop Kuro's server?", isPresented: $confirmStop) {
             Button("Stop Server", role: .destructive) { Task { await app.server.stop() } }
         } message: {
-            Text("Every model is unloaded and the API closes, including for other tools pointed at it. You can start it again from the main window.")
+            Text("Models unload and the API closes for every app using it.")
         }
     }
 }
