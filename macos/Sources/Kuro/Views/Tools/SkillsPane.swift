@@ -32,13 +32,11 @@ struct SkillsPane: View {
                 HStack {
                     Text(enabled.isEmpty ? "None on" : "\(enabled.count) on" + (perTurn.map { " · up to ~\($0) tokens per turn" } ?? ""))
                         .foregroundStyle(.secondary)
-                        .help("Switching a skill on makes it available. Each turn picks the ones your message calls for, up to the budget.")
+                    HelpTip("Type /name in a message to use a skill for that turn. Each turn picks the enabled skills your message calls for, up to the budget.")
                     Spacer()
                     let all = enabled.count < skills.catalogue.count
-                    Button(all ? "Enable All" : "Turn All Off") { setMany(skills.catalogue.map(\.slug), on: all) }
+                    Button(all ? "Turn All On" : "Turn All Off") { setMany(skills.catalogue.map(\.slug), on: all) }
                 }
-            } footer: {
-                Text("Expertise you switch on. Each adds specific instructions to the model's brief — the single biggest help for a small local model. Type `/name` in a message to use one for that turn.")
             }
 
             addSection
@@ -54,9 +52,7 @@ struct SkillsPane: View {
                         }
                     }
                 } header: {
-                    Text("Always On When Coding")
-                } footer: {
-                    Text("These have no switch: reading a file before editing it, and running the tests rather than describing them, are not preferences.")
+                    TitleWithHelp("Always On When Coding", help: "These have no switch: reading a file before editing it, and running the tests rather than describing them, are not preferences.")
                 }
             }
 
@@ -68,14 +64,14 @@ struct SkillsPane: View {
                         Text(Self.categoryLabels[category] ?? category.capitalized)
                         Spacer()
                         let allOn = members.allSatisfy { enabled.contains($0.slug) }
-                        Button(allOn ? "None" : "All") { setMany(members.map(\.slug), on: !allOn) }
+                        Button(allOn ? "Turn All Off" : "Turn All On") { setMany(members.map(\.slug), on: !allOn) }
                             .buttonStyle(.borderless)
                             .font(.caption)
                     }
                 }
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
     }
 
     private var addSection: some View {
@@ -122,9 +118,7 @@ struct SkillsPane: View {
                 }
             }
         } header: {
-            Text("Add Your Own")
-        } footer: {
-            Text("A repository is read, not cloned: Kuro takes the instructions from each SKILL.md. Scripts a skill ships alongside are not imported.")
+            TitleWithHelp("Add Your Own", help: "A repository is read, not cloned: Kuro takes the instructions from each SKILL.md. Scripts are not imported.")
         }
     }
 
@@ -132,9 +126,9 @@ struct SkillsPane: View {
         VStack(alignment: .leading, spacing: 6) {
             Toggle(isOn: Binding(get: { on }, set: { setMany([skill.slug], on: $0) })) {
                 Text(skill.name)
-                Text(skill.blurb)
+                Text(skill.blurb).lineLimit(1).help(skill.blurb)
             }
-            Button(expanded == skill.slug ? "Hide instructions" : "What it tells the model") {
+            Button(expanded == skill.slug ? "Hide" : "Instructions") {
                 withAnimation(.snappy) { expanded = expanded == skill.slug ? nil : skill.slug }
             }
             .buttonStyle(.link)

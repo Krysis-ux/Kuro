@@ -1,26 +1,14 @@
 //! What a model can do besides produce text.
 //!
-//! Two kinds of tool meet here and are deliberately made indistinguishable to
-//! everything downstream:
+//! * **Built-ins**: web search, page fetch, memory, read-only project access.
+//! * **MCP tools**: whatever the user's connected servers expose.
 //!
-//! * **Built-ins** — web search, page fetch, memory. They ship with Kuro, need
-//!   no setup, and are the reason a fresh install can already look things up.
-//! * **MCP tools** — whatever the servers the user connected happen to expose.
+//! Both become a [`ToolSpec`] in the same OpenAI-shaped `tools` array and return
+//! a [`ToolOutcome`]; the chat loop never asks where a tool came from.
 //!
-//! Both become a [`ToolSpec`], both are offered to the model in the same
-//! OpenAI-shaped `tools` array, and both return a [`ToolOutcome`]. The chat loop
-//! never asks where a tool came from.
-//!
-//! ## Nothing here touches the filesystem
-//!
-//! There are deliberately no file tools in this set. Reading and writing files
-//! lives in [`crate::workspace`], behind a coding workspace: a folder the user
-//! picked and a mode saying what may happen inside it. A chat has no folder, so
-//! it has nothing to scope file access to, and a switch that granted it would be
-//! granting the whole machine.
-//!
-//! The path helpers in [`files`] are still used — by the workspace tools, which
-//! is now their only caller.
+//! Chat has no file tools that write. Writing lives in [`crate::workspace`],
+//! scoped to a folder the user picked; chat has no folder to scope it to. The
+//! path helpers in [`files`] are used by the workspace tools.
 
 pub mod fetch;
 pub mod files;
@@ -37,12 +25,9 @@ use crate::db::Db;
 use crate::tools::web_search::{SearchConfig, SearchResult};
 use crate::Result;
 
-/// Tools that ship with Kuro.
-///
-/// Every one is read-only with respect to this machine: they reach the network,
-/// Kuro's own database, or — through [`projects`] — the *contents* of a folder
-/// the user already chose on the Code page. None of them writes a file, and the
-/// three project tools cannot, structurally rather than by convention.
+/// Tools that ship with Kuro. All are read-only with respect to this machine:
+/// they reach the network, Kuro's database, or (via [`projects`]) the contents of
+/// a folder the user chose. The project tools cannot write, structurally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     WebSearch,
@@ -81,11 +66,8 @@ impl Builtin {
         Self::ALL.iter().copied().find(|tool| tool.name() == name)
     }
 
-    /// Which switch in the composer turns this tool on.
-    ///
-    /// Grouping them means a user enables "web" or "memory" rather than four
-    /// individual functions, while the model still sees separate tools because
-    /// that is what it is good at choosing between.
+    /// Which composer switch turns this tool on (the user toggles a group; the
+    /// model still sees separate tools).
     pub fn group(self) -> ToolGroup {
         match self {
             Self::WebSearch | Self::FetchUrl => ToolGroup::Web,
@@ -239,8 +221,7 @@ impl Builtin {
 pub enum ToolGroup {
     Web,
     Memory,
-    /// Reading the user's coding workspaces. Read-only, always — see
-    /// [`projects`] for why that is structural rather than a promise.
+    /// Reading the user's coding workspaces. Always read-only; see [`projects`].
     Projects,
 }
 
@@ -289,8 +270,8 @@ impl ToolGroup {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ToolOrigin {
     Builtin,
-    /// A tool borrowed from a connected MCP server. `remote_name` is the name the
-    /// server itself uses, which is not necessarily what the model is shown.
+    /// A tool from a connected MCP server. `remote_name` is the server's own name
+    /// for it, which may differ from the name shown to the model.
     Mcp {
         server_id: String,
         server_name: String,
@@ -326,12 +307,10 @@ impl ToolSpec {
 /// The result of running one tool.
 #[derive(Debug, Clone, Default)]
 pub struct ToolOutcome {
-    /// What the model is shown. On failure this is the reason, because a model
-    /// that is told why a call failed can often recover by trying differently.
+    /// What the model is shown. On failure this is the reason, so it can recover.
     pub content: String,
     pub is_error: bool,
-    /// Pages this call surfaced, collected so the UI can cite them under the
-    /// reply rather than relying on the model to repeat the URLs.
+    /// Pages this call surfaced, so the UI can cite them under the reply.
     pub sources: Vec<WebSource>,
 }
 
@@ -374,17 +353,12 @@ pub struct BuiltinContext<'a> {
     pub db: &'a Db,
     pub client: &'a reqwest::Client,
     pub search: SearchConfig,
-    /// Recorded on anything the model remembers, so a fact can be traced back to
-    /// the conversation that produced it.
+    /// Recorded on remembered facts to trace them to their conversation.
     pub conversation_id: Option<&'a str>,
 }
 
-/// Run one built-in tool.
-///
-/// Errors are returned as an error-flagged [`ToolOutcome`] rather than as a
-/// `Result`, because a tool failing is a normal part of a turn: the model is told
-/// what went wrong and gets to try something else. Only a programming mistake
-/// would justify ending the generation.
+/// Run one built-in tool. Failures come back as an error-flagged [`ToolOutcome`],
+/// not a `Result`: a failing tool is a normal part of a turn.
 pub async fn run_builtin(tool: Builtin, arguments: &Value, context: &BuiltinContext<'_>) -> ToolOutcome {
     match tool {
         Builtin::WebSearch => run_web_search(arguments, context).await,
@@ -418,12 +392,12 @@ async fn run_web_search(arguments: &Value, context: &BuiltinContext<'_>) -> Tool
     }
 }
 
-async fn run_fetch(arguments: &Value, context: &BuiltinContext<'_>) -> ToolOutcome {
+async fn run_fetch(arguments: &Value, _context: &BuiltinContext<'_>) -> ToolOutcome {
     let Some(url) = string_argument(arguments, "url") else {
         return ToolOutcome::failed("`url` is required and must be a string");
     };
 
-    match fetch::fetch_url(context.client, &url).await {
+    match fetch::fetch_url(&url).await {
         Ok(page) => ToolOutcome {
             content: fetch::format_for_model(&page),
             is_error: false,
@@ -483,11 +457,8 @@ fn string_argument(arguments: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Arguments as the engine sent them.
-///
-/// The OpenAI shape puts arguments in a JSON *string*, and models sometimes send
-/// an object instead, or a string that is not valid JSON at all. All three are
-/// handled here so the tool layer only ever sees an object.
+/// Normalise tool-call arguments to an object. The OpenAI shape is a JSON
+/// *string*; models also send an object or invalid JSON (becomes `{}`).
 pub fn parse_arguments(raw: Option<&Value>) -> Value {
     match raw {
         Some(Value::String(text)) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
@@ -496,11 +467,9 @@ pub fn parse_arguments(raw: Option<&Value>) -> Value {
     }
 }
 
-/// Make a name safe to expose to a model.
-///
-/// Engines validate tool names against `^[a-zA-Z0-9_-]+$`, and MCP servers are
-/// free to use anything. A rejected name would fail the whole request rather than
-/// just that tool, so names are rewritten rather than filtered out.
+/// Make a name safe to expose to a model. Engines validate tool names against
+/// `^[a-zA-Z0-9_-]+$` and reject the whole request on a bad one, so names are
+/// rewritten rather than dropped.
 pub fn sanitize_tool_name(raw: &str) -> String {
     let cleaned: String = raw
         .chars()
@@ -521,10 +490,7 @@ pub fn sanitize_tool_name(raw: &str) -> String {
     }
 }
 
-/// Give a tool a name no other tool is using.
-///
-/// Two MCP servers offering `search` would otherwise collide, and whichever the
-/// engine picked would be arbitrary.
+/// Give a tool a name no other tool is using (two servers may both offer `search`).
 pub fn unique_tool_name(preferred: &str, taken: &[String]) -> String {
     let base = sanitize_tool_name(preferred);
     if !taken.iter().any(|name| name == &base) {
@@ -569,8 +535,8 @@ pub fn describe_builtins() -> Vec<BuiltinDescription> {
         .collect()
 }
 
-/// Sanity check that no two built-ins share a name, which would make dispatch
-/// ambiguous. Called once at startup so a bad edit fails loudly.
+/// Fails if two built-ins share a name (dispatch would be ambiguous). Called at
+/// startup.
 pub fn assert_builtin_names_are_unique() -> Result<()> {
     let mut seen: Vec<&str> = Vec::new();
     for tool in Builtin::ALL {
@@ -631,13 +597,9 @@ mod tests {
 
     #[test]
     fn no_builtin_can_change_a_file() {
-        // The guarantee the chat surface rests on, and it is narrower than it
-        // used to be. A chat can now *read* a folder the user opened on the Code
-        // page, because refusing to answer a question about code the user is
-        // plainly looking at helped nobody. It still cannot write one: there is
-        // no builtin that takes file contents, and the read tools construct
-        // their permissions at Plan tier regardless of the workspace's own mode
-        // — see `tools::projects`.
+        // Chat may read a workspace folder but never write one: no builtin takes
+        // file contents, and the read tools use Plan-tier permissions regardless
+        // of the workspace's mode (see `tools::projects`).
         for tool in Builtin::ALL {
             let name = tool.name();
             assert!(
@@ -653,8 +615,7 @@ mod tests {
             );
         }
 
-        // The workspace's own write tools are not reachable through this enum,
-        // so a chat naming one gets "no such tool" rather than a write.
+        // Workspace write tools are not reachable through this enum.
         assert_eq!(Builtin::parse("write_file"), None);
         assert_eq!(Builtin::parse("edit_file"), None);
         assert_eq!(Builtin::parse("run_command"), None);

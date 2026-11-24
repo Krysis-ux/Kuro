@@ -1,22 +1,15 @@
 //! Remote model providers.
 //!
-//! Kuro runs models locally. This module is the escape hatch for when the machine
-//! cannot: an endpoint you hold the key for, whose models appear in the same
-//! picker as the local ones. OpenRouter, OpenAI, Anthropic, Groq, or the
-//! OpenAI-compatible URL of a GPU box you rented for the afternoon.
+//! The escape hatch for when the machine cannot run a model locally: an endpoint
+//! you hold the key for, whose models appear in the same picker as local ones.
 //!
-//! Three decisions keep this from turning Kuro into a generic API client:
-//!
-//! * **One wire format.** Everything is spoken to as the OpenAI API, which is why
-//!   Anthropic is reached through its compatibility endpoint rather than through a
-//!   second code path. A provider that cannot do that is not supported, which is
-//!   better than half-supporting it.
-//! * **The user's account, always.** There is no Kuro-hosted anything here. The
-//!   key is theirs, the bill is theirs, and the request goes straight to the
-//!   provider.
-//! * **Never the quiet default.** A remote model is always visibly remote, and
-//!   local stays first in the list. The promise on the front page is that nothing
-//!   leaves the machine unless you ask.
+//! * **One wire format.** Everything is spoken to as the OpenAI API, so Anthropic
+//!   is reached through its compatibility endpoint; a provider that cannot do
+//!   that is not supported.
+//! * **The user's account, always.** Nothing is Kuro-hosted: the key and the bill
+//!   are theirs, and requests go straight to the provider.
+//! * **Never the quiet default.** A remote model is always visibly remote and
+//!   local stays first in the list.
 
 pub mod presets;
 
@@ -36,10 +29,9 @@ pub use presets::{Preset, PRESETS};
 
 /// Prefix on a model id that marks it as belonging to a provider.
 ///
-/// `cloud:<connector id>/<model name>`. A prefix rather than a separate field
-/// because it means a provider model can travel anywhere a local model id can —
-/// the composer, a conversation row, the OpenAI-compatible API — without every
-/// one of those needing to learn about providers.
+/// `cloud:<connector id>/<model name>`. A prefix rather than a separate field, so
+/// a provider model travels anywhere a local model id can (composer,
+/// conversation row, OpenAI-compatible API) unchanged.
 pub const MODEL_PREFIX: &str = "cloud:";
 
 /// Credential reference for a provider. Namespaced away from MCP tokens.
@@ -49,23 +41,18 @@ fn key_reference(connector_id: &str) -> String {
 
 /// What marks a model on a provider as costing nothing.
 ///
-/// OpenRouter's convention, and the only one of these that is a convention
-/// rather than a per-model fact somebody has to look up. A provider that does
-/// not use it simply has no pool, which is the right failure: inventing one
-/// would mean guessing which of somebody's models are billed.
+/// OpenRouter's convention, and the only one that is a convention rather than a
+/// per-model fact. A provider that does not use it has no pool, not a guessed one.
 const FREE_SUFFIX: &str = ":free";
 
 /// The reserved model name behind "free models".
 ///
-/// Deliberately without a slash, because [`parse_model_id`] splits on the first
-/// one and every real OpenRouter id has several. Nothing a provider could
-/// legitimately return collides with it.
+/// No slash, because [`parse_model_id`] splits on the first one and every real
+/// OpenRouter id has several, so nothing a provider returns can collide with it.
 pub const FREE_POOL_MODEL: &str = "kuro:free-pool";
 
 /// The free models among a connector's list, in the order they will be tried.
-///
-/// Sorted so the order is the same across restarts — a pool that reshuffled
-/// itself on every boot would make "which model answered" unanswerable.
+/// Sorted so the order is stable across restarts.
 pub fn free_models_of(models: &[String]) -> Vec<String> {
     let mut free: Vec<String> = models
         .iter()
@@ -86,13 +73,8 @@ pub enum ChatTarget {
         connector_id: String,
         label: String,
         base_url: String,
-        /// The complete `Authorization` value, or `None` for an endpoint that
-        /// takes none.
-        ///
-        /// Was `api_key: String`, which obliged every caller to assume a bearer
-        /// token. The shared endpoints break that assumption: sending them
-        /// `Bearer ` reads as a malformed key rather than as an absent one, and
-        /// there is no string that means "no header".
+        /// The complete `Authorization` value, or `None` for an endpoint that takes
+        /// none: sending `Bearer ` reads as a malformed key, not an absent one.
         authorization: Option<String>,
         /// The name the provider knows the model by, without Kuro's prefix.
         model: String,
@@ -101,12 +83,8 @@ pub enum ChatTarget {
         /// Which upstream actually answered, when `connector_id` names a pool
         /// rather than one endpoint.
         ///
-        /// `connector_id` on a free turn is `free:auto` — which is what the
-        /// conversation should remember, because the user chose Kuro Free and
-        /// not a particular provider. But *which allowance the turn spent* is a
-        /// different question, and it used to be unanswerable: the slug was
-        /// dropped on the floor here, so nothing downstream could attribute a
-        /// turn, and the failure path had to re-derive it by guessing.
+        /// A free turn's `connector_id` is `free:auto`, which is what the conversation
+        /// remembers; this says which provider's allowance the turn spent.
         upstream: Option<String>,
     },
 }
@@ -155,8 +133,7 @@ impl ChatTarget {
 
 /// Split `cloud:<id>/<model>` into its parts.
 ///
-/// Returns `None` for a plain local model id, which is how callers tell the two
-/// apart without a separate flag.
+/// `None` means a plain local model id, which is how callers tell them apart.
 pub fn parse_model_id(model_id: &str) -> Option<(String, String)> {
     let rest = model_id.strip_prefix(MODEL_PREFIX)?;
     let (connector_id, model) = rest.split_once('/')?;
@@ -183,18 +160,14 @@ pub struct RemoteModel {
     pub provider: String,
     /// Whether this row is the free pool rather than one named model.
     ///
-    /// The picker uses it to mark the row, and to keep it at the top of its
-    /// provider's group — it is the entry most people want and the one nobody
-    /// would find by scrolling a list of four hundred model ids.
+    /// The picker marks the row and keeps it at the top of its provider's group.
     pub pooled: bool,
     /// How many models the pool covers. Zero for an ordinary row.
     pub pool_size: usize,
     /// Whether this model costs nothing on the key that reaches it.
     ///
-    /// The distinction is per-model rather than per-provider because on a
-    /// gateway it is: an OpenRouter key reaches three hundred models it bills
-    /// for and fourteen it does not, and a picker that does not say which is
-    /// which is a picker somebody spends money in by accident.
+    /// Per model, not per provider: one OpenRouter key reaches many models it bills
+    /// for and a few it does not.
     pub free: bool,
     /// What the model's name says it was trained for, as words the picker can
     /// put on the row. Empty only for a pooled row, which is not one model.
@@ -203,32 +176,23 @@ pub struct RemoteModel {
     pub params_b: Option<f32>,
     /// Why this cannot be picked right now, when it cannot.
     ///
-    /// The row stays in the list and goes grey rather than disappearing. A
-    /// model that vanishes answers "where did the one I used yesterday go" with
-    /// silence, and the answer — out of allowance until tomorrow, or this key
-    /// was not issued for it — is exactly what the user needs in order to act.
+    /// The row stays in the list, greyed, rather than vanishing: the reason (out of
+    /// allowance until tomorrow, key not issued for it) is what the user needs to act.
     pub unavailable: Option<String>,
     /// Where to go to make it work, when there is somewhere to go.
     ///
-    /// NVIDIA is the case that forced this: its models are provisioned per key,
-    /// and the fix is a page on build.nvidia.com for that specific model. A
-    /// reason with no remedy attached is a dead end.
+    /// For example NVIDIA provisions models per key, and the fix is a page on
+    /// build.nvidia.com for that model.
     pub fix_url: Option<String>,
 }
 
 impl RemoteModel {
     /// Describe one named model, reading its name for what it is.
     ///
-    /// The id is passed in rather than built here because the two callers
-    /// address their models differently: a connector's models are `cloud:`
-    /// ids resolved against the registry, and a free provider's are `free:`
-    /// ids resolved against the pool. Everything after the id is the same
-    /// question in both cases, which is what makes one constructor worth
-    /// having.
-    ///
-    /// Non-chat models are the caller's to filter out. This cannot refuse
-    /// them, because refusing would also have to be a `None` the pooled rows
-    /// would trip over.
+    /// The id is passed in because callers address models differently (`cloud:` ids
+    /// via the registry, `free:` ids via the pool); the rest is shared. Non-chat
+    /// models are the caller's to filter out, as refusing here would need a `None`
+    /// the pooled rows would trip over.
     pub fn described(id: String, group: RemoteGroup<'_>, model: &str, free: bool) -> Self {
         let classified = crate::classify::classify(model);
         Self {
@@ -262,12 +226,9 @@ pub struct RemoteGroup<'a> {
 
 /// Which free model a connector is currently using, and which have refused.
 ///
-/// Sticky rather than round-robin. Rotating on every request would spread the
-/// shared daily cap slightly more evenly and would also mean two consecutive
-/// messages in one conversation came from two different models — which reads as
-/// the assistant changing personality mid-thought, for a benefit nobody asked
-/// for. So one model answers until it refuses, and the refusal is what moves the
-/// cursor on.
+/// Sticky rather than round-robin: rotating per request would put consecutive
+/// messages of one conversation on different models. One model answers until it
+/// refuses, and the refusal moves the cursor on.
 #[derive(Default)]
 struct PoolState {
     cursor: usize,
@@ -294,9 +255,8 @@ pub struct ProviderRegistry {
     client: reqwest::Client,
     /// Free-pool state per connector.
     ///
-    /// In memory, like the free tiers' own cooldowns: it describes the next few
-    /// minutes, and one that survived a restart would be describing a rate limit
-    /// that had long since reset.
+    /// In memory: it describes the next few minutes, and a persisted cooldown would
+    /// outlive the rate limit.
     pools: Arc<Mutex<HashMap<String, PoolState>>>,
 }
 
@@ -312,9 +272,7 @@ impl ProviderRegistry {
 
     /// Add a provider: store the key, record the endpoint, then probe it.
     ///
-    /// The probe happens immediately because a key that does not work is worth
-    /// knowing about while the user is still looking at the form, not the first
-    /// time they try to send a message.
+    /// Probed immediately so a bad key shows while the user is still on the form.
     pub async fn add(
         &self,
         provider: &str,
@@ -355,10 +313,9 @@ impl ProviderRegistry {
             .or_else(|| preset.map(|preset| preset.name.to_string()))
             .ok_or_else(|| KuroError::bad_request("the provider needs a name"))?;
 
-        // The row is created first so the credential reference has an id to hang
-        // off, then the key is written. A failure between the two leaves a
-        // provider with no key, which the interface shows as "needs a key" — a
-        // recoverable state, unlike an orphaned secret.
+        // Row first, so the credential reference has an id. A failure between the two
+        // leaves a provider with no key (shown as "needs a key"), which is recoverable,
+        // unlike an orphaned secret.
         let record = self.db.insert_cloud_connector(
             provider,
             &resolved_label,
@@ -408,12 +365,8 @@ impl ProviderRegistry {
 
     /// Every model from every enabled, working provider.
     ///
-    /// A provider that offers free models gets one extra row at the top of its
-    /// own list: the pool, which is every one of them behind a single id. On
-    /// OpenRouter that row is the difference between a usable free tier and a
-    /// four-hundred-entry list nobody reads to the end of — the free models are
-    /// scattered through it alphabetically, and picking one by hand means also
-    /// noticing when it runs out of allowance and picking another.
+    /// A provider with free models also gets a pool row at the top of its list: all
+    /// of them behind one id, so nobody has to hunt for them in a long list.
     pub fn remote_models(&self) -> Result<Vec<RemoteModel>> {
         let mut out = Vec::new();
 
@@ -441,9 +394,8 @@ impl ProviderRegistry {
             }
 
             for model in &connector.models {
-                // A provider's model list is not a list of chat models. Sending
-                // a conversation to an embedding endpoint fails with a 400 that
-                // reads like a broken key, so those rows never reach a picker.
+                // Not every listed model is a chat model; a conversation sent to an embedding
+                // model fails with a 400 that reads like a broken key.
                 if !crate::classify::classify(model).kind.is_chat() {
                     continue;
                 }
@@ -500,9 +452,8 @@ impl ProviderRegistry {
 
     /// Which free model this connector should answer with right now.
     ///
-    /// The one the cursor is on, unless it has recently refused, in which case
-    /// the next one that has not. If every one of them is inside a cooldown the
-    /// cursor's model is used anyway: a stale cooldown is a guess, and a request
+    /// The cursor's model, unless it has recently refused; then the next that has
+    /// not. If every model is cooling down the cursor's is used anyway: a request
     /// that might work beats an error that definitely does not.
     fn choose_free(&self, connector: &CloudConnectorRecord) -> Result<String> {
         let free = free_models_of(&connector.models);
@@ -535,10 +486,9 @@ impl ProviderRegistry {
 
     /// Note that a model refused, so the pool moves on from it.
     ///
-    /// Called on every failing remote response rather than only on pooled ones.
-    /// A model that is not in a pool is recorded and never consulted, which
-    /// costs a map entry and saves threading "was this a pool pick" through the
-    /// whole turn.
+    /// Called on every failing remote response, not just pooled ones: an entry for a
+    /// non-pooled model is never consulted, which beats threading "was this a pool
+    /// pick" through the turn.
     pub fn note_trouble(&self, connector_id: &str, model: &str, status: u16) {
         let Some(trouble) = Trouble::from_status(status) else {
             return;
@@ -547,8 +497,7 @@ impl ProviderRegistry {
         let mut pools = self.pools.lock().expect("provider pool lock");
         let state = pools.entry(connector_id.to_string()).or_default();
         state.troubled.insert(model.to_string(), (trouble, Instant::now()));
-        // Move off it now, so the next request does not have to rediscover the
-        // refusal before failing over.
+        // Move off it now so the next request need not rediscover the refusal.
         state.cursor = state.cursor.saturating_add(1);
 
         tracing::info!(connector_id, model, kind = trouble.as_str(), "free model set aside");

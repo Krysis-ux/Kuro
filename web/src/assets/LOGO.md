@@ -1,21 +1,17 @@
 # The Kuro mark
 
-The eight-petalled flower is an original SVG redraw, adapted from the flower
-icon in [Rainette Music](https://github.com/Krysis-ux/Rainette-music)
-(`web/assets/rainette-icon-256.png`) by the same author.
+A rounded lowercase k whose upper arm is a dot: a 15-unit stem, a 15-unit leg
+from the stem's middle to the bottom right, and a 26-unit disc where the upper
+arm would be. Drawn on a 100-unit grid in pure monochrome so it works on any
+background and stays legible at 16px.
 
-Differences from the source:
-
-- Redrawn as vector paths rather than traced from the bitmap.
-- Recoloured to pure monochrome; the original is sage green and cream.
-- The centre disc is punched out with a mask so the mark works on any
-  background rather than only on a dark rounded square.
-
-It lives in two places, which must be kept in step:
+It lives in four places, which must be kept in step:
 
 | File | Used for |
 | --- | --- |
-| `src/components/Logo.tsx` | Everywhere in the interface. Petals are generated from one path plus rotations. |
-| `public/favicon.svg` | Browser tab. Same geometry written out, with a `prefers-color-scheme` rule since a favicon cannot inherit `currentColor`. |
+| `src/components/Logo.tsx` | Everywhere in the browser interface. |
+| `public/favicon.svg` | Browser tab, with a `prefers-color-scheme` rule since a favicon cannot inherit `currentColor`. |
+| `macos/Sources/Kuro/Views/Theme.swift` (`KuroGlyph`) | Everywhere in the macOS app. |
+| `packaging/macos/icon.svg` | The app icon: the mark in white on a charcoal tile. |
 
-If the petal geometry changes, update both.
+If the geometry changes, update all four.

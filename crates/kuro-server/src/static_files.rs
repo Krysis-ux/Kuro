@@ -1,9 +1,8 @@
-//! Serving the built web interface.
+//! Serves the built web interface from `web/dist`, on the same origin as the API.
 //!
-//! The frontend is a separate Vite build. In development it runs on its own
-//! port and talks to this server over CORS; in normal use the built assets in
-//! `web/dist` are served from the same origin so there is one process and one
-//! URL.
+//! In development the Vite dev server runs on its own port and talks to this
+//! one over CORS. The CLI and the macOS app use the same HTTP API and need
+//! none of these assets.
 
 use std::path::PathBuf;
 
@@ -17,8 +16,7 @@ use crate::state::SharedState;
 pub fn router() -> Router<SharedState> {
     match web_dir() {
         Some(dir) => {
-            // Unknown paths fall back to index.html so client-side routes such
-            // as /models survive a page reload.
+            // Unknown paths fall back to index.html so client-side routes survive a reload.
             let index = ServeFile::new(dir.join("index.html"));
             Router::new().fallback_service(ServeDir::new(dir).fallback(index))
         }
@@ -26,18 +24,14 @@ pub fn router() -> Router<SharedState> {
     }
 }
 
-/// Locate the built frontend.
-///
-/// `KURO_WEB_DIR` wins, so a packaged build can point somewhere else without
-/// recompiling.
+/// Locate the built frontend; `KURO_WEB_DIR` overrides the search.
 fn web_dir() -> Option<PathBuf> {
     if let Some(configured) = std::env::var_os("KURO_WEB_DIR") {
         let path = PathBuf::from(configured);
         return path.join("index.html").exists().then_some(path);
     }
 
-    // Alongside the running binary when packaged, and up from the workspace
-    // target directory when run with `cargo run`.
+    // Next to the binary when packaged; relative to the working directory under `cargo run`.
     let candidates = [
         PathBuf::from("web/dist"),
         PathBuf::from("../web/dist"),
@@ -52,10 +46,7 @@ fn web_dir() -> Option<PathBuf> {
         .find(|path| path.join("index.html").exists())
 }
 
-/// Shown when the API is up but the interface has not been built.
-///
-/// This is a normal state during development, so it explains the fix rather
-/// than looking like a failure.
+/// Shown when the API is up but the interface has not been built (normal in development).
 async fn missing_frontend() -> Response {
     let page = r#"<!doctype html>
 <html lang="en">

@@ -1,10 +1,7 @@
 use thiserror::Error;
 
-/// Every fallible operation in Kuro returns this error.
-///
-/// Variants are grouped by how a caller should react, not by which library
-/// produced them: `NotFound` and `BadRequest` map onto 404/400 at the HTTP
-/// layer, everything else is a 500.
+/// Error type for every fallible operation. `NotFound` and `BadRequest` map to
+/// 404/400 at the HTTP layer; everything else is a 500.
 #[derive(Debug, Error)]
 pub enum KuroError {
     #[error("not found: {0}")]

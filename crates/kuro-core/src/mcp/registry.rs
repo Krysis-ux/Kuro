@@ -1,14 +1,7 @@
-//! The recommended MCP servers.
-//!
-//! Static data, not a fetched catalogue. A local-first app should not have to
-//! call home to show a user what they can install, and a list that ships with the
-//! binary cannot break because someone else's endpoint moved.
-//!
-//! Entries are chosen for being useful without a key where possible, and for
-//! being run by the people who own the thing they connect to. Anything needing a
-//! key says so up front, with a link to where the key comes from — the worst
-//! version of this screen is one that offers a server and then fails silently
-//! because a token was never set.
+//! The recommended MCP servers: static data shipped in the binary (a local-first
+//! app should not call home to show what is installable). Entries are keyless
+//! where possible and run by the owner of what they connect to; any that need a
+//! key say so up front, with a link to get one.
 
 use serde::Serialize;
 
@@ -30,16 +23,16 @@ pub enum Requirement {
 pub struct RegistryEntry {
     pub slug: &'static str,
     pub name: &'static str,
-    /// One line, in the same register as the rest of the interface.
+    /// One line for the card.
     pub blurb: &'static str,
-    /// What the tools actually let a model do, for the expanded view.
+    /// What the tools let a model do, for the expanded view.
     pub detail: &'static str,
     pub transport: &'static str,
     pub url: Option<&'static str>,
     pub command: Option<&'static str>,
     pub args: &'static [&'static str],
     pub requirement: Requirement,
-    /// Where to get the key, when one is needed.
+    /// Where to get the key, if one is needed.
     pub credentials_url: Option<&'static str>,
     pub homepage: &'static str,
     /// Suggested as a default for a new install.

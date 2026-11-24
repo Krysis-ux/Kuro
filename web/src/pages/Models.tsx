@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { HelpTip } from '../components/HelpTip'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { HubAvatar, ModelLogo } from '../components/BrandLogo'
 import {
@@ -179,12 +180,10 @@ export function ModelsPage() {
 
         {source === 'recommended' ? (
           <>
-            <p className="faint panel-note">
-              Grouped by what each one is <em>for</em>, because that is the question somebody
-              actually has. Fit is estimated from this machine's memory and the model's size —
-              a guide, not a benchmark, and it says nothing about whether a model is any good
-              at the thing you want.
-            </p>
+            <span className="faint title-help">
+              Grouped by purpose
+              <HelpTip text="Fit is estimated from this machine's memory and the model's size: a guide, not a benchmark, and silent on whether a model is good at what you want." />
+            </span>
 
             {(recommended.data?.purposes ?? []).map((purpose) => {
               const forThis = (recommended.data?.models ?? []).filter((model) =>

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import KuroKit
@@ -91,24 +92,31 @@ struct Composer: View {
             .padding(.horizontal, 14)
             .padding(.top, 12)
             .padding(.bottom, 10)
-            .glassCard(cornerRadius: 22)
+            .card(cornerRadius: 20)
+            // A zero-height anchor on the top edge, so the menu grows upward and never covers the text.
             .overlay(alignment: .top) {
-                if slashOpen {
-                    SlashMenu(commands: matches, index: min(slashIndex, matches.count - 1), onHover: { slashIndex = $0 }) {
-                        run($0, token: token)
+                Color.clear.frame(height: 0).overlay(alignment: .bottom) {
+                    if slashOpen {
+                        SlashMenu(commands: matches, index: min(slashIndex, matches.count - 1), onHover: { slashIndex = $0 }) {
+                            run($0, token: token)
+                        }
+                        .padding(.bottom, 8)
                     }
-                    .alignmentGuide(.top) { $0[.bottom] + 8 }
-                    .transition(.opacity)
                 }
             }
 
-            Text(disabledReason ?? hint ?? defaultHint)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
+            // Only when there is something to say: the placeholder already says where a message goes.
+            if let note = disabledReason ?? hint {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .onAppear { text = app.prefs.draft(draftKey) }
         .onChange(of: text) { app.prefs.setDraft(draftKey, text) }
+        // A send that fails before it starts hands its text back through the draft.
+        .onChange(of: app.prefs.draft(draftKey)) { _, restored in if text.isEmpty { text = restored } }
         .onChange(of: token?.query) { slashIndex = 0 }
         .task { servers = (try? await app.client.mcpServers(connect: false)) ?? [] }
     }
@@ -170,8 +178,31 @@ struct Composer: View {
             EffortPicker(effort: $effort, coding: coding, note: effortNote, compact: compact)
             Spacer(minLength: 8)
             ModelPicker(selection: $model)
+            micButton
             sendButton
         }
+    }
+
+    /// Voice input through macOS Dictation: no recorder of our own, no new permissions,
+    /// and it uses whatever language and on-device model the user already set up.
+    private var micButton: some View {
+        Button {
+            caretRequest = text.utf16.count
+            // After the focus change above has reached the text view.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
+            }
+        } label: {
+            Image(systemName: "mic")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isRunning)
+        .help("Dictate")
+        .accessibilityLabel("Dictate")
     }
 
     private var addMenu: some View {
@@ -188,11 +219,15 @@ struct Composer: View {
             Section("Tools") {
                 let connected = servers.filter { $0.enabled && $0.status == "connected" }
                 let count = connected.reduce(0) { $0 + ($1.toolCount ?? $1.tools.count) }
-                Button(count > 0 ? "Tools and MCP (\(count))" : "Tools and MCP", systemImage: "wrench.and.screwdriver") {
-                    app.go(.tools, returning: true)
+                Button(count > 0 ? "MCP Servers (\(count))" : "MCP Servers", systemImage: "powerplug") {
+                    app.go(.settings(.mcp))
                 }
                 ForEach(connected.prefix(4)) { server in
-                    Button(server.name, systemImage: "powerplug") { app.go(.tools, returning: true) }
+                    Button(server.name, systemImage: "powerplug") { app.go(.settings(.mcp)) }
+                }
+                Button("Skills", systemImage: "sparkles") { app.go(.settings(.skills)) }
+                if coding {
+                    Button("Subagents", systemImage: "person.2") { app.go(.settings(.subagents)) }
                 }
                 Button("Open a Folder in Code", systemImage: "folder") { app.go(.code, returning: true) }
             }
@@ -231,13 +266,7 @@ struct Composer: View {
     private var isRemote: Bool { activeModel.map(Naming.isRemote) ?? false }
 
     private var defaultPlaceholder: String {
-        isRemote ? "Message — this one goes to your provider…" : "Message Kuro…"
-    }
-
-    private var defaultHint: String {
-        isRemote
-            ? "Return to send, Shift-Return for a new line. This model runs on your provider, not here."
-            : "Return to send, Shift-Return for a new line. Models run entirely on this Mac."
+        isRemote ? "Message — goes to your provider…" : "Message Kuro…"
     }
 
     private var canSend: Bool {
@@ -270,8 +299,17 @@ struct Composer: View {
                 kind: .skill
             )
         }
+        // The user's own come before skills, so a command they named wins over a skill of that name.
+        let custom = app.customCommands.map { command in
+            SlashCommand(
+                name: command.name,
+                hint: command.hint.isEmpty ? String(command.text.prefix(80)) : command.hint,
+                state: "yours",
+                kind: .custom
+            )
+        }
         var seen = Set<String>()
-        return (switches + skills).filter { seen.insert($0.name).inserted }
+        return (switches + custom + skills).filter { seen.insert($0.name).inserted }
     }
 
     private func handle(_ key: ComposerKey, token: CommandToken?, matches: [SlashCommand], open: Bool) -> Bool {
@@ -303,6 +341,14 @@ struct Composer: View {
             // A switch configures the turn; its name would only be noise in the message.
             replace(token, with: "")
             toggles.first { $0.command == command.name }?.isOn.wrappedValue.toggle()
+        case .custom:
+            // The saved text replaces the word, with the caret where `{input}` was.
+            guard let saved = app.customCommands.first(where: { $0.name == command.name }) else { return }
+            let filled = saved.filled()
+            replace(token, with: filled.text)
+            let start = caret - filled.text.utf16.count
+            caret = start + filled.caret
+            caretRequest = caret
         }
         dismissed = nil
     }
@@ -385,6 +431,7 @@ private struct SlashMenu: View {
             .fixedSize(horizontal: false, vertical: true)
             .onChange(of: index) { proxy.scrollTo(index) }
         }
-        .glassCard(cornerRadius: 14)
+        .card(cornerRadius: 14)
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
     }
 }

@@ -1,9 +1,9 @@
 import SwiftUI
 import KuroKit
 
-/// Free models: your own free-tier keys pooled into one model, Kuro Free, which
-/// sends each request to whichever provider still has allowance.
-struct FreeView: View {
+/// Kuro Free: your own free-tier keys pooled into one model, which sends each
+/// request to whichever provider still has allowance. Shown inside Providers.
+struct FreeDetail: View {
     @Environment(AppModel.self) private var app
     @State private var overview: FreeOverview?
     @State private var usage: FreeUsage?
@@ -12,28 +12,29 @@ struct FreeView: View {
     var body: some View {
         Form {
             Section {
-                Text("**Kuro supplies no keys.** Every key here is one you sign up for, on a free tier, in your own name. Once you add one, **Kuro Free** appears in the model picker.")
-                Text("These requests leave this Mac, as a paid provider's would. Free tiers are also the likeliest to train on what they receive, so keep private work on a local model.")
-                    .foregroundStyle(.secondary)
-                if let overview {
-                    LabeledContent("Ready") {
-                        Text(overview.availableCount == 0
-                             ? "No providers yet"
-                             : "\(overview.availableCount) of \(overview.keyCount) added \(overview.keyCount == 1 ? "key" : "keys") working")
-                    }
-                    if overview.keyCount > 0 {
-                        ForEach(overview.flavours) { flavour in
-                            LabeledContent {
-                                Tag(flavour.available ? "ready" : "no provider for this", tone: flavour.available ? .live : .neutral)
-                            } label: {
-                                Text(flavour.id).font(.body.monospaced())
-                                Text(flavour.blurb)
-                            }
+                HStack(spacing: 12) {
+                    Image(systemName: "gift")
+                        .font(.system(size: 16))
+                        .frame(width: 36, height: 36)
+                        .background(Palette.sunken, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text("Kuro Free").font(.system(size: 16, weight: .semibold))
+                            HelpTip("Kuro supplies no keys. Each one is yours, on a free tier, in your own name. Requests leave this Mac, and free tiers are the likeliest to train on them — keep private work local.")
                         }
+                        Text(statusLine).font(.callout).foregroundStyle(.secondary)
                     }
                 }
-            } header: {
-                Text("How This Works")
+                if let overview, overview.keyCount > 0 {
+                    ForEach(overview.flavours) { flavour in
+                        LabeledContent {
+                            Tag(flavour.available ? "ready" : "no provider", tone: flavour.available ? .live : .neutral)
+                        } label: {
+                            Text(flavour.id).font(.body.monospaced())
+                        }
+                        .help(flavour.blurb)
+                    }
+                }
             }
 
             if let failure { Section { ErrorText(failure) } }
@@ -53,15 +54,13 @@ struct FreeView: View {
                 Section {
                     ForEach(without) { FreeProviderRow(provider: $0) }
                 } header: {
-                    Text(withKeys.isEmpty ? "Providers" : "Add More")
-                } footer: {
-                    Text("Each is free to sign up for and needs no card. More keys make the pool sturdier: when one runs out, the next answers.")
+                    TitleWithHelp(withKeys.isEmpty ? "Add a Free Key" : "Add More", help: "Each is free to sign up for and needs no card. More keys make the pool sturdier: when one runs out, the next answers.")
                 }
 
                 // Listed last because they are tried last.
                 if !shared.isEmpty {
                     Section {
-                        Toggle("Use shared endpoints when nothing else can answer", isOn: Binding(
+                        Toggle(isOn: Binding(
                             get: { overview.allowKeyless },
                             set: { on in
                                 perform($failure) {
@@ -69,12 +68,12 @@ struct FreeView: View {
                                     app.invalidate(.free, .models)
                                 }
                             }
-                        ))
+                        )) {
+                            TitleWithHelp("Use shared endpoints as a last resort", help: "These answer with no account, so Kuro Free works before you sign up for anything. They are rate limited, often busy, and several keep or train on what they are sent.")
+                        }
                         ForEach(shared) { FreeProviderRow(provider: $0) }
                     } header: {
                         Text("Shared Endpoints")
-                    } footer: {
-                        Text("These answer with no account and no key, so Kuro Free works before you sign up for anything. Any provider you hold a key for is tried first. They are rate limited by your address, often busy, and several keep or train on what they are sent.")
                     }
                 }
             }
@@ -82,8 +81,7 @@ struct FreeView: View {
             if let usage { UsageSection(usage: usage) }
         }
         .formStyle(.grouped)
-        .navigationTitle("Free Models")
-        .toolbar { BackToolbarItem() }
+        .scrollContentBackground(.hidden)
         .task(id: app.stamp(.free)) {
             do {
                 overview = try await app.client.free()
@@ -93,6 +91,12 @@ struct FreeView: View {
             }
             usage = try? await app.client.freeUsage()
         }
+    }
+
+    private var statusLine: String {
+        guard let overview else { return "Loading…" }
+        if overview.keyCount == 0 { return "Add a free key to turn it on." }
+        return "\(overview.availableCount) of \(overview.keyCount) \(overview.keyCount == 1 ? "key" : "keys") working"
     }
 }
 
@@ -113,28 +117,26 @@ private struct FreeProviderRow: View {
                 ProviderLogo(slug: provider.slug, label: provider.name, size: 24)
                 StatusDot(color: provider.trouble != nil ? .red : provider.hasKey ? .green : .secondary.opacity(0.4))
                 Text(provider.name).fontWeight(.medium)
-                if provider.hasKey { Tag("key stored", systemImage: "key") }
                 switch provider.trouble {
-                case "rate_limited": Tag("out of allowance for now", tone: .warning)
+                case "rate_limited": Tag("used up", tone: .warning).help("Out of allowance for now")
                 case "rejected": Tag("key refused", tone: .warning)
-                case "model_gone": Tag("its models moved — rechecking", tone: .warning)
+                case "model_gone": Tag("rechecking", tone: .warning).help("Its models moved; Kuro is rechecking")
                 default: EmptyView()
                 }
-                if provider.keyless { Tag("no account needed") }
                 if provider.expired { Tag("trial ended", tone: .warning) }
                 if provider.privacy.trains {
-                    Tag("may train on prompts", tone: .warning).help("Prompts sent here may be kept and used to train models")
+                    Tag("may train", tone: .warning).help("Prompts sent here may be kept and used to train models")
                 } else if provider.privacy.logged {
-                    Tag("may be logged")
+                    Tag("logged").help("Prompts sent here may be logged")
                 }
                 Spacer()
                 if provider.hasKey { actions }
             }
 
-            Text(provider.allowance).font(.callout).foregroundStyle(.secondary)
+            Text(provider.allowance).font(.callout).foregroundStyle(.secondary).lineLimit(1).help(provider.allowance)
 
             if provider.baseUrl.contains("ACCOUNT_ID"), provider.hasKey {
-                ErrorText("This provider's address needs your account id, which Kuro cannot fill in yet. Add it as a custom endpoint under Cloud instead.")
+                ErrorText("Needs your account id. Add it as a custom provider instead.")
             }
 
             // A shared endpoint takes no key, and the server refuses one.
@@ -150,7 +152,7 @@ private struct FreeProviderRow: View {
 
             if provider.hasKey {
                 HStack {
-                    Text("Monthly allowance, if you know it").font(.caption).foregroundStyle(.secondary)
+                    Text("Monthly limit").font(.caption).foregroundStyle(.secondary)
                     TextField("Tokens", text: $limit, prompt: Text("e.g. 1000000"))
                         .labelsHidden()
                         .frame(maxWidth: 160)
@@ -168,7 +170,7 @@ private struct FreeProviderRow: View {
             }
             if let failure { ErrorText(failure) }
 
-            if let url = URL(string: provider.credentialsUrl) {
+            if !provider.hasKey, let url = URL(string: provider.credentialsUrl) {
                 Link(provider.keyless ? "How this endpoint works" : "Get a free key", destination: url).font(.caption)
             }
         }
@@ -234,7 +236,7 @@ private struct UsageSection: View {
     var body: some View {
         Section {
             if usage.month.turns == 0 {
-                Text("Nothing yet this month. Once a free provider answers, what it cost appears here.")
+                Text("Nothing used this month.")
                     .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 0) {
@@ -264,10 +266,10 @@ private struct UsageSection: View {
                 }
             }
         } header: {
-            Text("What You Have Used")
-        } footer: {
             if usage.month.unreportedTurns > 0 {
-                Text("\(usage.month.unreportedTurns) \(usage.month.unreportedTurns == 1 ? "turn" : "turns") this month returned no token counts, so the totals are a floor. Several free tiers do not report them.")
+                TitleWithHelp("Usage", help: "\(usage.month.unreportedTurns) \(usage.month.unreportedTurns == 1 ? "turn" : "turns") this month returned no token counts, so the totals are a floor.")
+            } else {
+                Text("Usage")
             }
         }
     }

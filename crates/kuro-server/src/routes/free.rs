@@ -1,8 +1,8 @@
 //! The free-tier pool's API.
 //!
-//! Keys are written and never read back. The overview says which providers have
-//! one stored and whether that one is currently working; the value itself only
-//! ever leaves the credential store on its way into an outbound request.
+//! Keys are write-only: the overview reports whether a provider has one stored
+//! and whether it works, and a key leaves the credential store only on its way
+//! into an outbound request.
 
 use std::collections::HashMap;
 
@@ -42,8 +42,7 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
                 "hasKey": keys.contains_key(provider.slug),
                 "trouble": trouble.map(|kind| kind.as_str()),
                 "tier": provider.tier.as_str(),
-                // A shared endpoint takes no account and no key, which changes
-                // what the row should offer and what it must warn about.
+                // A shared endpoint needs no account or key, which changes what the row offers.
                 "keyless": provider.quirks.auth.keyless(),
                 "privacy": {
                     "logged": provider.privacy.logged,
@@ -67,8 +66,7 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
                 "flavour": flavour.as_str(),
                 "label": flavour.label(),
                 "blurb": flavour.blurb(),
-                // A flavour with nothing behind it is shown as unavailable
-                // rather than hidden, so the screen explains itself.
+                // Shown as unavailable rather than hidden, so the screen explains itself.
                 "available": state.free.choose(*flavour, &keys).is_some(),
             }))
             .collect::<Vec<_>>(),
@@ -83,10 +81,8 @@ pub struct SetKeyRequest {
     pub api_key: String,
 }
 
-/// Store one provider's key.
-///
-/// Storing a key clears whatever trouble that provider was in, because the
-/// commonest reason to be here is that the previous key was wrong.
+/// Store one provider's key, clearing any trouble that provider was in (the
+/// commonest reason to be here is a wrong previous key).
 pub async fn set_key(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -95,9 +91,8 @@ pub async fn set_key(
     let provider = free::find(&slug)
         .ok_or_else(|| KuroError::not_found(format!("free provider `{slug}`")))?;
 
-    // An endpoint that takes no key at all should say so rather than storing a
-    // string it will never send — which would leave a key visibly "saved" and
-    // changing nothing.
+    // A keyless endpoint should say so rather than store a string it will never
+    // send, which would leave a key "saved" and changing nothing.
     if provider.quirks.auth == Auth::None {
         return Err(KuroError::bad_request(format!(
             "{} takes no key — it is a shared endpoint that anyone can reach, \
@@ -125,10 +120,8 @@ pub struct KeylessRequest {
     pub enabled: bool,
 }
 
-/// Allow or forbid the shared, unauthenticated endpoints.
-///
-/// Written to settings *and* mirrored into the pool, because the pool is
-/// consulted on a path that must not read the database.
+/// Allow or forbid the shared, unauthenticated endpoints. Written to settings
+/// and mirrored into the pool, which is read on a path that must not touch the database.
 pub async fn set_keyless(
     State(state): State<SharedState>,
     Json(request): Json<KeylessRequest>,
@@ -149,11 +142,9 @@ pub struct AllowanceRequest {
     pub tokens_per_month: Option<i64>,
 }
 
-/// Record what the user says this provider's allowance is.
-///
-/// Kuro cannot discover this: the providers state it in incompatible units and
-/// none of them expose it over the API. So it is asked for, kept as written,
-/// and used only to draw a bar next to a number Kuro measured itself.
+/// Record what the user says this provider's allowance is. Kuro cannot discover
+/// it (providers state it in incompatible units and do not expose it), so it is
+/// kept as written and used only to draw a bar next to a number Kuro measured.
 pub async fn set_allowance(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -171,15 +162,12 @@ pub async fn set_allowance(
     Ok(Json(json!({ "slug": provider.slug, "limit": allowance })))
 }
 
-/// What each provider's allowance has actually been spent on.
-///
-/// Its own endpoint rather than part of [`overview`], because the overview is
-/// re-read after every key edit and this is the one query whose cost grows with
-/// the size of the message table.
+/// What each provider's allowance has actually been spent on. Separate from
+/// [`overview`], which is re-read after every key edit, because this query's
+/// cost grows with the message table.
 pub async fn usage(State(state): State<SharedState>) -> AppResult<Json<Value>> {
-    // Windows are computed from the *local* clock. A day that rolled over at
-    // UTC midnight is somebody else's day: for anyone west of Greenwich it
-    // would file an evening's work under tomorrow.
+    // Windows use the *local* clock: a UTC-midnight day would file an evening's work
+    // under tomorrow for anyone west of Greenwich.
     let now = chrono::Local::now();
     let day_start = now
         .date_naive()
@@ -191,16 +179,13 @@ pub async fn usage(State(state): State<SharedState>) -> AppResult<Json<Value>> {
         .and_then(|first| first.and_hms_opt(0, 0, 0))
         .expect("the first of the month exists");
 
-    // Both bounds in UTC. `created_at` is written in UTC and the comparison is
-    // a string one, so a bound carrying a local offset compares by its printed
-    // digits rather than by the instant it names — which put an evening's turns
-    // outside "today" for anyone whose offset crosses midnight.
+    // Both bounds in UTC: `created_at` is UTC and compared as a string, so a bound
+    // with a local offset would compare by its printed digits, not the instant it names.
     let to = chrono::Utc::now().to_rfc3339();
     let day = window(&state, &local_rfc3339(day_start), &to)?;
     let month = window(&state, &local_rfc3339(month_start), &to)?;
 
-    // Averaged in Rust rather than in SQL so that no turns is `null` rather
-    // than a division: there is no honest average over no samples.
+    // Averaged here, not in SQL, so no turns gives `null` (no honest average over no samples).
     let reported_turns: i64 = month.1.turns - month.1.unreported;
     let tokens_per_turn = (reported_turns > 0).then(|| month.1.total / reported_turns);
     let days_elapsed = now.date_naive().day() as i64;
@@ -217,6 +202,38 @@ pub async fn usage(State(state): State<SharedState>) -> AppResult<Json<Value>> {
 }
 
 /// One window's per-provider rows, plus the totals across them.
+#[derive(Debug, Deserialize)]
+pub struct ModelUsageQuery {
+    /// How many days back, counting today. Defaults to 30.
+    #[serde(default)]
+    days: Option<u32>,
+}
+
+/// Tokens by model over the last `days` local days, for Settings → Usage. Covers
+/// every model, local and remote, not only the free pool.
+pub async fn usage_by_model(
+    State(state): State<SharedState>,
+    axum::extract::Query(query): axum::extract::Query<ModelUsageQuery>,
+) -> AppResult<Json<Value>> {
+    let days = query.days.unwrap_or(30).clamp(1, 366);
+    let start = chrono::Local::now().date_naive() - chrono::Days::new(u64::from(days - 1));
+    let from = local_rfc3339(start.and_hms_opt(0, 0, 0).expect("midnight exists"));
+    let to = chrono::Utc::now().to_rfc3339();
+
+    let models = state.db.usage_by_model(&from, &to)?;
+    let sum = |pick: fn(&kuro_core::db::ModelUsage) -> i64| models.iter().map(pick).sum::<i64>();
+    Ok(Json(json!({
+        "days": days,
+        "models": models,
+        "total": {
+            "turns": sum(|row| row.turns),
+            "promptTokens": sum(|row| row.prompt_tokens),
+            "completionTokens": sum(|row| row.completion_tokens),
+            "unreportedTurns": sum(|row| row.unreported_turns),
+        },
+    })))
+}
+
 fn window(state: &SharedState, from: &str, to: &str) -> AppResult<(Value, Totals)> {
     let rows = state.db.usage_by_provider(from, to)?;
     let allowances = settings::free_allowances(&state.db).unwrap_or_default();
@@ -233,8 +250,8 @@ fn window(state: &SharedState, from: &str, to: &str) -> AppResult<(Value, Totals
             let name = free::find(&row.provider_slug).map(|held| held.name);
             json!({
                 "providerSlug": row.provider_slug,
-                // A slug with no provider is a key removed since the turn ran.
-                // Showing the slug is better than hiding the tokens it spent.
+                // A slug with no provider is a key removed since the turn ran; show the slug rather
+                // than hide the tokens.
                 "name": name.unwrap_or(row.provider_slug.as_str()),
                 "turns": row.turns,
                 "promptTokens": row.prompt_tokens,
@@ -267,19 +284,16 @@ struct Totals {
     total: i64,
 }
 
-/// A local date-time as the RFC 3339 string `created_at` is compared against.
-///
-/// `created_at` is written in UTC, so a local window has to be converted rather
-/// than formatted — otherwise "since local midnight" would silently mean "since
-/// UTC midnight" and the day would be wrong by the offset.
+/// A local date-time as the UTC RFC 3339 string `created_at` is compared
+/// against. It must be converted, not just formatted, or "since local midnight"
+/// would mean "since UTC midnight".
 fn local_rfc3339(naive: chrono::NaiveDateTime) -> String {
     use chrono::TimeZone;
     chrono::Local
         .from_local_datetime(&naive)
         .single()
-        // A clock that jumped over this instant — the spring daylight-saving
-        // gap — has no such local time. An hour's imprecision once a year beats
-        // failing the screen.
+        // A local time skipped by the spring DST gap has no instant; an hour of
+        // imprecision once a year beats failing the screen.
         .map(|local| local.with_timezone(&chrono::Utc).to_rfc3339())
         .unwrap_or_else(|| chrono::Utc.from_utc_datetime(&naive).to_rfc3339())
 }
@@ -310,11 +324,9 @@ pub async fn delete_key(
     Ok(Json(json!({ "slug": provider.slug, "hasKey": false })))
 }
 
-/// Ask a provider for its model list, to find out whether the key works.
-///
-/// A real request rather than a shape check on the key, because the failure this
-/// catches — a key that was copied from the wrong account, or has expired — looks
-/// exactly like a working key until something asks.
+/// Ask a provider for its model list, to find out whether the key works. A real
+/// request rather than a shape check, since a key from the wrong account or an
+/// expired one looks fine until something asks.
 pub async fn test_key(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -324,8 +336,7 @@ pub async fn test_key(
 
     let stored = state.secrets.get(&free::secret_reference(provider.slug))?;
 
-    // A shared endpoint has nothing to test a key against, so the button
-    // becomes a reachability check — which is the useful question for one.
+    // A shared endpoint has no key to test, so the button becomes a reachability check.
     if stored.is_none() && !provider.quirks.auth.keyless() {
         return Ok(Json(json!({
             "ok": false,
@@ -372,20 +383,12 @@ pub async fn test_key(
 
 /// Every free key Kuro can find, keyed by provider slug.
 ///
-/// A credential store read that fails is treated as "no key", because the
-/// alternative — failing the whole models list because one key could not be
-/// decrypted — takes away the screen where that would be fixed.
+/// A credential store read that fails counts as "no key"; failing the whole
+/// models list would remove the screen where it gets fixed.
 ///
-/// ## Keys added under Providers count too
-///
-/// An OpenRouter key is an OpenRouter key. Somebody who has already added one on
-/// the Providers screen has told Kuro everything it needs to use that provider's
-/// free tier, and asking them to paste the same string into a second screen is
-/// asking them to maintain two copies of one secret — where changing one and not
-/// the other produces a failure with no visible cause.
-///
-/// A key pasted into the free screen still wins, because that is the more
-/// specific statement: it may well be a different, throwaway account.
+/// Keys added under Providers count too (an OpenRouter key is an OpenRouter key),
+/// so the user does not maintain two copies of one secret. A key pasted into the
+/// free screen wins, being the more specific statement (it may be a throwaway account).
 pub fn stored_keys(state: &SharedState) -> HashMap<String, String> {
     let connectors: Vec<(String, String)> = state
         .db
@@ -406,12 +409,9 @@ fn today() -> String {
     chrono::Utc::now().date_naive().to_string()
 }
 
-/// The key-picking half of [`stored_keys`], with the clock and the credential
-/// store passed in.
-///
-/// Separated so the precedence rule is testable without standing up a server or
-/// freezing time. `connectors` is `(provider slug, credential reference)` for
-/// every enabled provider connection.
+/// The key-picking half of [`stored_keys`], with the clock and credential store
+/// passed in so the precedence rule is testable. `connectors` is `(provider
+/// slug, credential reference)` for every enabled provider connection.
 fn gather_keys(
     connectors: &[(String, String)],
     today: &str,
@@ -419,10 +419,8 @@ fn gather_keys(
 ) -> HashMap<String, String> {
     let mut keys: HashMap<String, String> = HashMap::new();
 
-    // A trial that has lapsed is dropped here rather than filtered when
-    // choosing, because "stop using this key" and "this provider is out of
-    // allowance for the next few minutes" are different facts — and doing it
-    // here keeps the pool free of a clock.
+    // A lapsed trial is dropped here, not when choosing: "stop using this key"
+    // differs from "out of allowance for a few minutes", and this keeps the pool free of a clock.
     let usable = |slug: &str| free::find(slug).is_some_and(|held| !held.tier.expired_on(today));
 
     // The connectors first, so a key added on the free screen overwrites them.
@@ -449,38 +447,18 @@ fn gather_keys(
     keys
 }
 
-/// Read the model lists of every provider whose catalogue is missing or stale.
-///
-/// Concurrent and best-effort: a provider that cannot be reached keeps whatever
-/// catalogue it had, and one that has never been read stays unknown — which the
-/// pool treats as "try the curated models", not as "offers nothing".
-///
-/// Called before a free model is resolved. Once each provider's list is cached
-/// this costs nothing for half an hour, and the first message after a restart
-/// pays one round trip per provider rather than picking a model that was retired
-/// three months ago.
 /// Start a catalogue read in the background and return at once.
 ///
-/// This is what a chat turn calls, and the reason it exists is latency that was
-/// being paid in the worst possible place. `refresh_catalogues` reads every
-/// stale provider concurrently, so it takes as long as the *slowest* of them —
-/// up to the fifteen-second timeout — and it was awaited before a free model
-/// was chosen. The cost landed on the first message after every restart and
-/// again every half hour, as dead air before the first token, on the one code
-/// path where the user is watching a cursor blink.
-///
-/// Nothing needs it to be synchronous. A cold catalogue is not a blocker: an
-/// unknown provider is tried with its curated models, and a model that turns
-/// out to have been retired answers 404, which is already handled as `Gone` —
-/// a short cooldown and a failover to the next provider. That is one failed
-/// round trip in the rare case, against fifteen seconds of stall in the common
-/// one.
+/// Chat turns call this instead of awaiting `refresh_catalogues`, which takes as
+/// long as the slowest provider (up to the 15 s timeout) and would put dead air
+/// before the first token. Nothing needs it synchronous: an unknown provider is
+/// tried with its curated models, and a retired model answers 404, which is
+/// handled as `Gone` (a short cooldown and a failover).
 pub fn refresh_catalogues_in_background(state: &SharedState, keys: &HashMap<String, String>) {
     if !state.free.needs_any_catalogue(keys) {
         return;
     }
-    // One read at a time. A burst of messages must not each start their own
-    // sweep of the same twenty endpoints.
+    // One read at a time, so a burst of messages does not each sweep the same endpoints.
     if !state.free.begin_refresh() {
         return;
     }
@@ -493,16 +471,18 @@ pub fn refresh_catalogues_in_background(state: &SharedState, keys: &HashMap<Stri
     });
 }
 
+/// Read the model lists of every provider whose catalogue is missing or stale.
+///
+/// Concurrent and best-effort: an unreachable provider keeps its old catalogue,
+/// and one never read stays unknown, which the pool treats as "try the curated
+/// models" rather than "offers nothing". Cached lists last half an hour.
 pub async fn refresh_catalogues(state: &SharedState, keys: &HashMap<String, String>) {
     let allow_keyless = state.free.allows_keyless();
 
     let stale: Vec<(&'static str, String, Option<String>, Quirks)> = FREE_PROVIDERS
         .iter()
         .filter(|provider| state.free.needs_catalogue(provider.slug))
-        // Gating on reachability is what stops Kuro reading the catalogues of
-        // shared endpoints on behalf of somebody who has switched them off.
-        // Without it, merely opening the free-models screen would send requests
-        // to services the user had declined to use.
+        // Only reachable providers, so a shared endpoint the user switched off is never read.
         .filter(|provider| provider.is_reachable(keys, allow_keyless))
         .map(|provider| {
             (
@@ -551,11 +531,8 @@ pub const KEY_CATALOGUES: &str = "free.catalogues";
 /// Settings key holding which providers and models are currently set aside.
 pub const KEY_TROUBLES: &str = "free.troubles";
 
-/// Write the current refusals to storage.
-///
-/// A cooldown that a restart erases is not a cooldown: a rejected key came back
-/// looking fine, was tried again, failed again, and the picker offered it as
-/// available the whole time.
+/// Write the current refusals to storage, so a restart does not erase a
+/// cooldown and offer a rejected key as available.
 pub fn save_troubles(state: &SharedState) {
     let stored = state.free.troubles();
     if let Err(error) = state.db.set_setting(KEY_TROUBLES, &serde_json::json!(stored)) {
@@ -573,21 +550,15 @@ pub fn stored_troubles(db: &kuro_core::db::Db) -> Vec<(String, String, u64)> {
 }
 
 /// Write the catalogues to storage so the next start already has them.
-///
-/// A cloud connector's model list has always been in the database, which is why
-/// OpenRouter's four hundred models were in the picker the instant it opened. A
-/// free provider's lived only in memory, so after a restart the picker rendered
-/// with none of them and filled in seconds later — and the model list is fetched
-/// once, not polled, so in practice it did not fill in at all. One provider
-/// showed and four did not, which reads as four keys that stopped working.
+/// Otherwise the picker starts without a free provider's models and, since the
+/// list is fetched once rather than polled, stays that way.
 fn save_catalogues(state: &SharedState) {
     let stored = state.free.catalogues();
     if let Err(error) = state
         .db
         .set_setting(KEY_CATALOGUES, &serde_json::json!(stored))
     {
-        // Not worth failing a request over: the catalogues are a cache, and the
-        // cost of losing them is one slow start rather than a wrong answer.
+        // A cache: losing it costs one slow start, not a wrong answer, so don't fail the request.
         tracing::warn!(%error, "could not store free catalogues");
     }
 }
@@ -661,8 +632,7 @@ mod tests {
         assert!(long.ends_with('…'));
     }
 
-    /// A day well inside every provider's tier, so these tests are about key
-    /// precedence and nothing else.
+    /// A day inside every provider's tier, so these tests exercise only key precedence.
     const TODAY: &str = "2026-07-31";
 
     /// A credential store as a list of pairs.
@@ -677,9 +647,7 @@ mod tests {
 
     #[test]
     fn a_key_added_under_providers_is_enough_for_the_free_pool() {
-        // The complaint this fixes: an OpenRouter key already added on the
-        // Providers screen, and Kuro Free behaving as though there were no key
-        // at all until the same string was pasted a second time.
+        // An OpenRouter key added under Providers should be enough, with no second paste.
         let connectors = vec![("openrouter".to_string(), "provider:abc".to_string())];
 
         let keys = gather_keys(&connectors, TODAY, store(&[("provider:abc", "sk-or-from-providers")]));
@@ -689,8 +657,7 @@ mod tests {
 
     #[test]
     fn a_key_pasted_into_the_free_screen_wins_over_the_provider_one() {
-        // The more specific statement: it may well be a second, throwaway
-        // account kept deliberately apart from the paid one.
+        // The more specific statement: it may be a deliberately separate throwaway account.
         let connectors = vec![("openrouter".to_string(), "provider:abc".to_string())];
 
         let keys = gather_keys(
@@ -732,9 +699,8 @@ mod tests {
 
     #[test]
     fn a_key_for_a_provider_kuro_has_dropped_is_ignored() {
-        // GitHub Models, Together and Chutes were removed from the table, but
-        // a key pasted before that is still sitting in the credential store.
-        // It must not resurrect a provider that cannot work.
+        // GitHub Models, Together and Chutes were dropped from the table, but a key
+        // pasted earlier may remain in the store; it must not resurrect them.
         let keys = gather_keys(&[], TODAY, store(&[("free:github", "ghp_stale")]));
 
         assert!(keys.is_empty(), "got {keys:?}");
@@ -742,9 +708,7 @@ mod tests {
 
     #[test]
     fn every_provider_in_the_table_has_a_reachable_looking_endpoint() {
-        // Cheap guard against a typo in a base URL: every one must be HTTPS and
-        // must not already carry the chat path, which `Quirks::chat_url`
-        // appends.
+        // Guards against a base-URL typo: HTTPS, and no chat path (`Quirks::chat_url` appends it).
         for provider in FREE_PROVIDERS {
             assert!(provider.base_url.starts_with("https://"), "{}", provider.slug);
             assert!(
@@ -760,13 +724,11 @@ mod tests {
         }
     }
 
-    /// Ask every provider what it currently offers and report curated ids that
-    /// have gone.
+    /// Asks every provider what it offers and reports curated ids that have gone.
     ///
-    /// Ignored, because it talks to a dozen third parties and would make CI fail
-    /// whenever one of them had a bad afternoon. Run it by hand before a
-    /// release — the table is hand-written and the models in it are exactly the
-    /// kind of thing that rots quietly:
+    /// Ignored because it talks to a dozen third parties and would fail CI whenever
+    /// one has a bad afternoon. Run it by hand before a release; the hand-written
+    /// table rots quietly:
     ///
     /// ```text
     /// cargo test -p kuro-server curated_ids_still_exist -- --ignored --nocapture
@@ -778,8 +740,7 @@ mod tests {
         let mut stale: Vec<String> = Vec::new();
 
         for provider in FREE_PROVIDERS {
-            // Only the endpoints that answer without a key can be checked
-            // without a credential store; the rest need one and are skipped.
+            // Only keyless endpoints can be checked without a credential store.
             if !provider.quirks.auth.keyless() {
                 continue;
             }

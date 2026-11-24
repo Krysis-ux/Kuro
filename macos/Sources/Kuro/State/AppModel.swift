@@ -12,10 +12,8 @@ enum Route: Hashable {
     case models
     /// One Hugging Face repository, `owner/name`.
     case model(String)
-    case free
-    case tools
-    case providers
-    case cloud
+    /// Settings, shown in the main window with its own sidebar.
+    case settings(SettingsPane)
 
     /// The sidebar row that stays highlighted for this route.
     var sidebarRow: Route {
@@ -25,6 +23,11 @@ enum Route: Hashable {
         case .model: .models
         default: self
         }
+    }
+
+    var isSettings: Bool {
+        if case .settings = self { return true }
+        return false
     }
 }
 
@@ -46,11 +49,17 @@ final class AppModel {
     var route: Route = .newChat
     /// Where "Back" returns to, when a screen was opened from the composer.
     var returnRoute: Route?
+    /// The last place outside Settings, where "Back to app" goes.
+    private(set) var appRoute: Route = .newChat
 
     private(set) var models: ModelList = .empty
     private(set) var tools: ToolsOverview?
     private(set) var workspaceModes: [WorkspaceModeInfo] = []
     private(set) var conversations: [Conversation] = []
+    /// For grouping chats by project in the sidebar and the Move to Project menu.
+    private(set) var projects: [Project] = []
+    /// The user's own `/` commands.
+    private(set) var customCommands: [CustomCommand] = []
     var conversationQuery = ""
     /// Messages by conversation.
     private(set) var messages: [String: [Message]] = [:]
@@ -77,7 +86,13 @@ final class AppModel {
 
     func go(_ destination: Route, returning: Bool = false) {
         returnRoute = returning ? route : nil
+        if !destination.isSettings { appRoute = destination }
         route = destination
+    }
+
+    /// Leave Settings for wherever the user was before.
+    func leaveSettings() {
+        go(appRoute)
     }
 
     /// Mark topics stale: shared caches reload here, screens reload on the stamp.
@@ -87,6 +102,7 @@ final class AppModel {
             if topics.contains(.models) { await loadModels() }
             if topics.contains(.tools) { await loadTools() }
             if topics.contains(.conversations) { await loadConversations() }
+            if topics.contains(.projects) || topics.contains(.conversations) { await loadProjects() }
             if topics.contains(.workspaces) { await loadWorkspaceModes() }
         }
     }
@@ -98,7 +114,23 @@ final class AppModel {
         async let tools: Void = loadTools()
         async let conversations: Void = loadConversations()
         async let modes: Void = loadWorkspaceModes()
-        _ = await (models, tools, conversations, modes)
+        async let projects: Void = loadProjects()
+        async let commands: Void = loadCustomCommands()
+        _ = await (models, tools, conversations, modes, projects, commands)
+    }
+
+    func loadCustomCommands() async {
+        if let list = try? await client.customCommands() { customCommands = list }
+    }
+
+    /// Store the whole list; throws so the editor can show why it failed.
+    func saveCustomCommands(_ commands: [CustomCommand]) async throws {
+        try await client.saveCustomCommands(commands)
+        customCommands = commands
+    }
+
+    func loadProjects() async {
+        if let list = try? await client.projects() { projects = list }
     }
 
     func loadModels() async {
@@ -141,6 +173,23 @@ final class AppModel {
         try? await client.deleteConversation(id)
         if route == .chat(id) { route = .newChat }
         invalidate(.conversations)
+    }
+
+    /// Hide a chat from the sidebar without deleting it; Settings → Archived Chats brings it back.
+    func archiveConversation(_ id: String, _ archived: Bool = true) async {
+        try? await client.setConversationFlags(id, archived: archived)
+        if archived, route == .chat(id) { route = .newChat }
+        invalidate(.conversations)
+    }
+
+    func pinConversation(_ id: String, _ pinned: Bool) async {
+        try? await client.setConversationFlags(id, pinned: pinned)
+        invalidate(.conversations)
+    }
+
+    func moveConversation(_ id: String, toProject projectId: String?) async {
+        try? await client.moveConversation(id, toProject: projectId)
+        invalidate(.conversations, .projects)
     }
 
     func renameConversation(_ id: String, to title: String) async {

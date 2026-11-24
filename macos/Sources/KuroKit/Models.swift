@@ -156,6 +156,8 @@ public struct Conversation: Codable, Hashable, Sendable, Identifiable {
     public let archived: Bool
     public let updatedAt: String
     public let forkedFromId: String?
+    /// The project it is filed under. Missing from older servers.
+    public let projectId: String?
 }
 
 public struct WebSource: Codable, Hashable, Sendable {
@@ -394,9 +396,59 @@ public struct ToolsOverview: Codable, Sendable {
 
     public let builtins: [BuiltinTool]
     public let skills: Skills
+    /// Missing from servers older than the Subagents page.
+    public let agents: [SubagentInfo]?
     public let surfaces: Surfaces
     public let memory: Memory
     public let search: Search
+}
+
+/// Tokens spent per model over a window, local and remote.
+public struct UsageReport: Codable, Sendable {
+    public struct Row: Codable, Hashable, Sendable, Identifiable {
+        public let modelId: String
+        public let turns: Int
+        public let promptTokens: Int
+        public let completionTokens: Int
+        public let unreportedTurns: Int
+
+        public var id: String { modelId }
+        public var totalTokens: Int { promptTokens + completionTokens }
+    }
+
+    public struct Total: Codable, Sendable {
+        public let turns: Int
+        public let promptTokens: Int
+        public let completionTokens: Int
+        public let unreportedTurns: Int
+
+        public var totalTokens: Int { promptTokens + completionTokens }
+    }
+
+    public let days: Int
+    public let models: [Row]
+    public let total: Total
+}
+
+/// A specialist a coding turn can hand a task to.
+public struct SubagentInfo: Codable, Hashable, Sendable, Identifiable {
+    public let slug: String
+    public let name: String
+    public let blurb: String
+    public let when: String
+    /// Whether it may change files. Read-only agents are offered no write tools.
+    public let writes: Bool
+    /// Skill names, for display.
+    public let skills: [String]
+    /// What it is told it is. Missing from older servers.
+    public let brief: String?
+    /// One the user wrote, so it can be edited and removed.
+    public let custom: Bool?
+    /// Skill slugs, for the editor.
+    public let skillSlugs: [String]?
+
+    public var id: String { slug }
+    public var isCustom: Bool { custom ?? false }
 }
 
 public struct SkillImportResult: Codable, Sendable {
@@ -654,5 +706,75 @@ public enum Effort: String, Codable, CaseIterable, Sendable {
 
     public static func options(coding: Bool) -> [Effort] {
         coding ? allCases : allCases.filter { $0 != .ultra }
+    }
+}
+
+// MARK: - Automations
+
+/// A saved prompt that runs on a schedule. Each run's reply lands in `conversationId`.
+public struct Automation: Codable, Hashable, Sendable, Identifiable {
+    public let id: String
+    public let name: String
+    public let prompt: String
+    /// `nil` runs on the server's default model.
+    public let model: String?
+    /// As `AutomationSchedule.text` writes it.
+    public let schedule: String
+    public let enabled: Bool
+    public let lastRunAt: String?
+    public let nextRunAt: String?
+    /// Why the last run produced no reply, if it did not.
+    public let lastError: String?
+    public let conversationId: String?
+    /// A run is under way.
+    public let running: Bool
+}
+
+/// When an automation runs, in this Mac's local time. On the wire:
+/// `every:30`, `daily:09:00`, `weekdays:09:00`.
+public enum AutomationSchedule: Hashable, Sendable {
+    case every(minutes: Int)
+    case daily(hour: Int, minute: Int)
+    case weekdays(hour: Int, minute: Int)
+
+    public init?(_ text: String) {
+        guard let colon = text.firstIndex(of: ":") else { return nil }
+        let kind = text[..<colon]
+        let value = text[text.index(after: colon)...]
+        if kind == "every" {
+            guard let minutes = Int(value), minutes > 0 else { return nil }
+            self = .every(minutes: minutes)
+            return
+        }
+        let parts = value.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2, (0..<24).contains(parts[0]), (0..<60).contains(parts[1]) else { return nil }
+        switch kind {
+        case "daily": self = .daily(hour: parts[0], minute: parts[1])
+        case "weekdays": self = .weekdays(hour: parts[0], minute: parts[1])
+        default: return nil
+        }
+    }
+
+    public var text: String {
+        switch self {
+        case .every(let minutes): "every:\(minutes)"
+        case .daily(let hour, let minute): "daily:" + Self.clock(hour, minute)
+        case .weekdays(let hour, let minute): "weekdays:" + Self.clock(hour, minute)
+        }
+    }
+
+    /// `Every 30 min`, `Every 2 hours`, `Daily at 09:00`, `Weekdays at 18:30`.
+    public var label: String {
+        switch self {
+        case .every(let minutes) where minutes % 60 == 0:
+            minutes == 60 ? "Every hour" : "Every \(minutes / 60) hours"
+        case .every(let minutes): "Every \(minutes) min"
+        case .daily(let hour, let minute): "Daily at " + Self.clock(hour, minute)
+        case .weekdays(let hour, let minute): "Weekdays at " + Self.clock(hour, minute)
+        }
+    }
+
+    private static func clock(_ hour: Int, _ minute: Int) -> String {
+        String(format: "%02d:%02d", hour, minute)
     }
 }

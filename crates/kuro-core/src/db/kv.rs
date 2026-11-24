@@ -1,11 +1,6 @@
-//! Raw settings key/value storage.
-//!
-//! Values are JSON so a setting can be a bool, number, string or object without
-//! schema changes. Typed accessors and defaults live in [`crate::settings`].
-//!
-//! Secrets (API keys, cloud credentials) are deliberately *not* stored here —
-//! they go to the macOS Keychain, and only a "configured" flag lands in this
-//! table.
+//! Raw settings key/value storage. Values are JSON, so a setting can be any type
+//! without schema changes; typed accessors and defaults are in [`crate::settings`].
+//! Secrets are not stored here; they go to the credential store (`secrets.rs`).
 
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;

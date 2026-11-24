@@ -1,56 +1,12 @@
 import SwiftUI
 import KuroKit
 
-/// What a model can do besides produce text: Kuro's own tools and skills, and
-/// MCP servers. From the model's side these are the same thing.
-struct ToolsView: View {
-    @Environment(AppModel.self) private var app
-
-    enum Pane: String, CaseIterable {
-        case skills = "Skills"
-        case search = "Web Search"
-        case memory = "Memory"
-        case mcp = "MCP Servers"
-        case builtin = "Built In"
-    }
-
-    @State private var pane: Pane = .skills
-
-    var body: some View {
-        Group {
-            if let overview = app.tools {
-                switch pane {
-                case .skills: SkillsPane(overview: overview)
-                case .search: SearchPane(overview: overview)
-                case .memory: MemoryPane(overview: overview)
-                case .mcp: McpPane()
-                case .builtin: BuiltinPane(overview: overview)
-                }
-            } else {
-                VStack(spacing: 10) {
-                    ProgressView()
-                    Button("Try Again") { app.invalidate(.tools) }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .navigationTitle("Tools")
-        .toolbar {
-            BackToolbarItem()
-            ToolbarItem(placement: .principal) {
-                Picker("Section", selection: $pane) {
-                    ForEach(Pane.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-        }
-    }
-}
+// The panes Settings shows under Agent: web search, memory and the built-in tools.
+// Skills and MCP have their own files.
 
 // MARK: - Web search
 
-private struct SearchPane: View {
+struct SearchPane: View {
     @Environment(AppModel.self) private var app
     let overview: ToolsOverview
 
@@ -73,7 +29,7 @@ private struct SearchPane: View {
                                 Text(provider.name)
                                 if !provider.needsApiKey && !provider.needsBaseUrl { Tag("no key") }
                             }
-                            Text(provider.note).font(.caption).foregroundStyle(.secondary)
+                            Text(provider.note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                         .tag(provider.id)
                     }
@@ -81,9 +37,7 @@ private struct SearchPane: View {
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
             } header: {
-                Text("Search Provider")
-            } footer: {
-                Text("Turn search on per message with the Web switch beside the message box. Kuro searches before the model answers, so it works even on models too small to ask for a tool.")
+                TitleWithHelp("Search Provider", help: "Turn search on per message with the Web switch in the message box. Kuro searches before the model answers, so it works even on small models.")
             }
 
             if search.needsApiKey || search.needsBaseUrl {
@@ -114,7 +68,7 @@ private struct SearchPane: View {
             Section {
                 HStack {
                     Button(testing ? "Searching…" : "Test Search", action: test).disabled(testing)
-                    Text("Runs a real query, so you never have to guess.").foregroundStyle(.secondary)
+                    HelpTip("Runs a real query against the provider.")
                 }
                 if let failure { ErrorText(failure) }
                 if let result {
@@ -132,7 +86,7 @@ private struct SearchPane: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
     }
 
     private func configure(_ patch: KuroClient.Body) {
@@ -154,7 +108,7 @@ private struct SearchPane: View {
 
 // MARK: - Memory
 
-private struct MemoryPane: View {
+struct MemoryPane: View {
     @Environment(AppModel.self) private var app
     let overview: ToolsOverview
 
@@ -170,18 +124,17 @@ private struct MemoryPane: View {
                         app.invalidate(.tools)
                     }
                 })) {
-                    Text("Put memories in front of the model automatically")
-                    Text("Without this, memory only works when the model thinks to look — which small models often do not.")
+                    TitleWithHelp("Preload memories", help: "Puts saved memories in front of the model. Without it, memory only works when the model thinks to look, which small models often do not.")
                 }
                 LabeledContent("Stored", value: "\(overview.memory.count) \(overview.memory.count == 1 ? "memory" : "memories")")
-            } footer: {
-                Text("Durable facts a model was asked to keep. Stored on this Mac, available in every conversation, never sent anywhere. What you want every model to know about you lives in Settings → Chat.")
+            } header: {
+                TitleWithHelp("Memory", help: "Facts a model was asked to keep. Stored on this Mac and available in every conversation.")
             }
 
             Section("Remembered") {
                 if let failure { ErrorText(failure) }
                 if let memories {
-                    if memories.isEmpty { Text("Nothing yet. Ask the model to remember something.").foregroundStyle(.secondary) }
+                    if memories.isEmpty { Text("Nothing saved yet.").foregroundStyle(.secondary) }
                     ForEach(memories) { memory in
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 4) {
@@ -201,7 +154,7 @@ private struct MemoryPane: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .task(id: app.stamp(.tools)) { memories = (try? await app.client.memories()) ?? memories ?? [] }
     }
 
@@ -215,7 +168,7 @@ private struct MemoryPane: View {
 
 // MARK: - Built in
 
-private struct BuiltinPane: View {
+struct BuiltinPane: View {
     let overview: ToolsOverview
 
     var body: some View {
@@ -227,15 +180,13 @@ private struct BuiltinPane: View {
                             Text(tool.name).font(.body.monospaced())
                             Tag(tool.group)
                         }
-                        Text(tool.description).font(.callout).foregroundStyle(.secondary)
+                        Text(tool.description).font(.callout).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
             } header: {
-                Text("What the Model Sees")
-            } footer: {
-                Text("Kuro's own tools, offered when their switch is on for a turn. Coding workspaces add their own file and command tools, depending on the mode.")
+                TitleWithHelp("What the Model Sees", help: "Offered when their switch is on for a turn. Workspaces add file and command tools, depending on the mode.")
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
     }
 }

@@ -4,10 +4,8 @@ use axum::Json;
 use kuro_core::KuroError;
 use serde_json::json;
 
-/// HTTP wrapper around [`KuroError`].
-///
-/// The error body follows OpenAI's shape so that clients pointed at Kuro's
-/// compatible endpoints can parse failures with the code they already have.
+/// HTTP wrapper around [`KuroError`]. The body follows OpenAI's error shape so
+/// clients of the compatible endpoints can parse failures.
 pub struct AppError(pub KuroError);
 
 impl From<KuroError> for AppError {
@@ -38,7 +36,7 @@ impl IntoResponse for AppError {
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
         };
 
-        // Server-side faults are logged in full; the client gets the message.
+        // Internal faults are logged in full; clients get only the message.
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self.0, "request failed");
         }

@@ -1,8 +1,5 @@
-//! Download progress tracking.
-//!
-//! Model weights and engine binaries share this table so that the UI can show
-//! one unified list of in-flight transfers, and so a download interrupted by a
-//! quit can be resumed on the next launch.
+//! Download progress tracking. Model weights and engine binaries share this table
+//! so the UI shows one list and an interrupted download can resume on next launch.
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -177,9 +174,8 @@ impl Db {
         })
     }
 
-    /// The still-running download for a target, if any.
-    ///
-    /// Prevents starting a second transfer for a model the user double-clicked.
+    /// The still-running download for a target, if any (prevents a duplicate
+    /// transfer on double-click).
     pub fn active_download_for_target(&self, target_id: &str) -> Result<Option<DownloadRecord>> {
         self.with(|conn| {
             let found = conn

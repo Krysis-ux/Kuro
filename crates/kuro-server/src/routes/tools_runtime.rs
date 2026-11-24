@@ -1,8 +1,6 @@
-//! Assembling and running the tools available to one turn.
-//!
-//! Kept out of `chat.rs` so that route reads as "stream a reply" rather than as
-//! "stream a reply and also manage a tool registry". Everything here is about
-//! producing a [`ToolSet`] and then dispatching against it.
+//! Assembling and running the tools available to one turn: build a [`ToolSet`],
+//! then dispatch against it. Kept out of `chat.rs` so that route stays about
+//! streaming a reply.
 
 use kuro_core::tools::{
     self, Builtin, BuiltinContext, ToolGroup, ToolOrigin, ToolOutcome, ToolSpec, WebSource,
@@ -18,13 +16,11 @@ pub struct ToolSet {
 }
 
 impl ToolSet {
-    /// Build the set from the groups the user enabled, the workspace this turn
-    /// is running in if there is one, and every connected MCP server.
+    /// Build the set from the enabled groups, the workspace this turn runs in (if
+    /// any) and every connected MCP server.
     ///
-    /// Built-ins are added first so that an MCP server cannot take the name
-    /// `web_search` and quietly replace it. Workspace tools come next, for the
-    /// same reason: a server offering `edit_file` must not be able to become the
-    /// thing the model reaches for when it wants to change the user's code.
+    /// Built-ins and workspace tools come first so an MCP server cannot take a name
+    /// like `web_search` or `edit_file` and replace it.
     pub async fn assemble(
         state: &SharedState,
         groups: &[ToolGroup],
@@ -35,8 +31,7 @@ impl ToolSet {
             .map(Builtin::spec)
             .collect();
 
-        // Only a workspace grants file access, and only up to what its mode
-        // allows. An ordinary chat passes `None` and gets nothing.
+        // Only a workspace grants file access, up to its mode; an ordinary chat passes `None`.
         if let Some(workspace) = workspace {
             specs.extend(
                 workspace::tools::tools_for_mode(workspace.mode)
@@ -44,9 +39,8 @@ impl ToolSet {
                     .map(CodingTool::spec),
             );
 
-            // Delegation needs something to delegate *about*, so it exists only
-            // alongside a workspace — and only in a mode that can read one,
-            // since a specialist with no tools has nothing to report.
+            // Delegation exists only alongside a workspace, and only in a mode that can
+            // read one, since a specialist with no tools has nothing to report.
             if workspace.mode.allows(kuro_core::workspace::ToolRisk::Read) {
                 specs.push(crate::routes::subagent::spec());
             }
@@ -57,8 +51,7 @@ impl ToolSet {
         match state.mcp.tool_specs(&mut taken).await {
             Ok(mcp_specs) => specs.extend(mcp_specs),
             Err(error) => {
-                // A broken MCP configuration must not stop a conversation that
-                // was not relying on it.
+                // A broken MCP configuration must not stop a conversation that does not use it.
                 tracing::warn!(%error, "could not collect MCP tools for this turn");
             }
         }
@@ -74,9 +67,7 @@ impl ToolSet {
         self.specs.len()
     }
 
-    /// The `tools` array for the request body, or `None` when there is nothing to
-    /// offer. An empty array is not the same as an absent field: some engines
-    /// treat `"tools": []` as a reason to refuse the request.
+    /// The `tools` array for the request body, or `None` when empty (some engines refuse `[]`).
     pub fn to_openai(&self) -> Option<Value> {
         if self.specs.is_empty() {
             return None;
@@ -95,11 +86,8 @@ impl ToolSet {
         self.specs.iter().map(|spec| spec.name.as_str()).collect()
     }
 
-    /// Distinct MCP servers behind the tools in this set, in the order first seen.
-    ///
-    /// Free, because the origins are already here. The model's brief names these
-    /// so that "what did I just connect" has an answer that does not require
-    /// guessing which server a tool name belongs to.
+    /// Distinct MCP servers behind the tools in this set, in first-seen order. The
+    /// model's brief names them so it knows which server a tool belongs to.
     pub fn mcp_server_names(&self) -> Vec<String> {
         let mut seen: Vec<String> = Vec::new();
         for spec in &self.specs {
@@ -134,8 +122,7 @@ pub async fn dispatch(
     call: &RequestedCall,
 ) -> ToolOutcome {
     let Some(spec) = set.find(&call.name) else {
-        // The model invented a tool. Telling it so is more useful than failing the
-        // turn, because it usually then picks a real one.
+        // The model invented a tool: tell it rather than fail; it usually then picks a real one.
         return ToolOutcome::failed(format!(
             "there is no tool called `{}`. Available: {}",
             call.name,
@@ -145,8 +132,7 @@ pub async fn dispatch(
 
     match &spec.origin {
         ToolOrigin::Builtin => {
-            // Delegation goes first because it is the one built-in that has to
-            // reach back out to the engine rather than acting on the workspace.
+            // Delegation first: it is the one built-in that must reach back out to the engine.
             if spec.name == "delegate" {
                 let Some(workspace) = workspace else {
                     return ToolOutcome::failed("`delegate` only works inside a coding workspace");
@@ -162,9 +148,8 @@ pub async fn dispatch(
                 .await;
             }
 
-            // A workspace tool and a chat built-in are both `Builtin` origin, so
-            // the coding set is checked first — and only reachable at all when
-            // this turn actually has a workspace.
+            // Workspace tools and chat built-ins both have `Builtin` origin, so check the
+            // coding set first (reachable only when the turn has a workspace).
             if let Some(tool) = CodingTool::parse(&spec.name) {
                 let Some(workspace) = workspace else {
                     return ToolOutcome::failed(format!(
@@ -213,18 +198,15 @@ pub async fn dispatch(
     }
 }
 
-/// Read the tool calls out of a completed assistant message.
-///
-/// Streaming assembles `tool_calls` across deltas, so by the time this is called
-/// the fragments have already been joined; this only validates them.
+/// Read the tool calls out of a completed assistant message. Streaming has
+/// already joined the fragments; this only validates them.
 pub fn read_requested_calls(raw: &[PartialToolCall]) -> Vec<RequestedCall> {
     raw.iter()
         .filter(|call| !call.name.trim().is_empty())
         .enumerate()
         .map(|(index, call)| RequestedCall {
-            // A model occasionally omits the id. Substituting a positional one
-            // keeps the result message pairable, which matters because an
-            // unpaired tool result makes the next request invalid.
+            // Substitute a positional id when the model omits one: an unpaired tool result
+            // invalidates the next request.
             id: if call.id.trim().is_empty() {
                 format!("call_{index}")
             } else {
@@ -246,10 +228,7 @@ pub struct PartialToolCall {
 }
 
 /// Merge one streamed `tool_calls` delta into the calls assembled so far.
-///
-/// The engine sends a tool call in pieces: an index, then the name, then the
-/// argument JSON a few characters at a time. Indexes are not necessarily
-/// contiguous or in order, so the vector is grown to fit rather than pushed to.
+/// Indexes may be non-contiguous or out of order, so the vector is grown to fit.
 pub fn merge_tool_call_delta(calls: &mut Vec<PartialToolCall>, delta: &Value) {
     let Some(entries) = delta.as_array() else { return };
 
@@ -288,8 +267,7 @@ pub fn assistant_tool_message(calls: &[RequestedCall], content: &str) -> Value {
                 "type": "function",
                 "function": {
                     "name": call.name,
-                    // Re-serialised rather than passed through, so a model that
-                    // sent malformed JSON does not send it again on the next round.
+                    // Re-serialised so malformed JSON from the model is not repeated next round.
                     "arguments": call.arguments.to_string(),
                 },
             }))

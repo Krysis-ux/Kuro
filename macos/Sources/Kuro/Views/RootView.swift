@@ -9,10 +9,19 @@ struct RootView: View {
         Group {
             if app.server.phase == .ready {
                 NavigationSplitView {
-                    SidebarView()
-                        .navigationSplitViewColumnWidth(min: 210, ideal: 250, max: 340)
+                    Group {
+                        if case .settings(let pane) = app.route {
+                            SettingsSidebar(selection: pane)
+                        } else {
+                            SidebarView()
+                        }
+                    }
+                    .navigationSplitViewColumnWidth(min: 210, ideal: 244, max: 320)
                 } detail: {
                     detail.id(app.route)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Palette.canvas)
+                        .toolbarBackground(.hidden, for: .windowToolbar)
                 }
             } else {
                 ServerStateView()
@@ -38,10 +47,7 @@ struct RootView: View {
         case .project(let id): ProjectDetailView(projectId: id)
         case .models: ModelsView()
         case .model(let repo): ModelDetailView(repo: repo)
-        case .free: FreeView()
-        case .tools: ToolsView()
-        case .providers: EndpointsView(surface: .provider)
-        case .cloud: EndpointsView(surface: .cloud)
+        case .settings(let pane): SettingsDetail(pane: pane)
         }
     }
 }

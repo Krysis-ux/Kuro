@@ -1,20 +1,13 @@
 //! Running a specialist in its own context.
 //!
-//! The delegating turn calls `delegate`, this runs a whole tool loop somewhere
-//! else, and what comes back is the specialist's final message — a paragraph
-//! rather than the forty thousand tokens of reading that produced it.
+//! The delegating turn calls `delegate`; this runs a whole tool loop elsewhere
+//! and returns only the specialist's final message, not the reading behind it
+//! (see [`kuro_core::agents`]).
 //!
-//! That compression is the point. See [`kuro_core::agents`] for why a fresh
-//! context is worth more here than a cleverer model would be.
-//!
-//! ## What a subagent is allowed
-//!
-//! Exactly what the workspace allows, and never more. It gets the same
-//! [`Workspace`] object the parent turn has, so the mode still decides which
-//! tools exist — a subagent in Plan mode cannot write any more than its parent
-//! can. An agent that is not supposed to write (a reviewer, an explorer) is
-//! additionally offered only the read tools, so "do not edit anything" is a
-//! property of the tool set rather than a request in a prompt.
+//! A subagent gets the parent turn's [`Workspace`], so the mode still decides
+//! which tools exist. An agent that should not write (a reviewer, an explorer)
+//! is also offered only read tools, so "do not edit" is enforced by the tool
+//! set, not by a prompt.
 
 use kuro_core::agents::Agent;
 use kuro_core::cloud::ChatTarget;
@@ -26,12 +19,9 @@ use serde_json::{json, Value};
 use crate::routes::tools_runtime::{self as runtime, PartialToolCall};
 use crate::state::SharedState;
 
-/// Rounds one subagent may spend.
-///
-/// Lower than a top-level turn's budget on purpose. A specialist that has not
-/// answered in this many rounds has been given a task too big to delegate, and
-/// the right correction is for the parent to break it up rather than for this to
-/// keep going.
+/// Rounds one subagent may spend. Lower than a top-level turn's budget on
+/// purpose: a specialist that has not answered by now was given a task too big
+/// to delegate.
 const MAX_ROUNDS: usize = 12;
 
 /// Output kept from the specialist's reply.
@@ -127,8 +117,7 @@ async fn converse(
     ];
 
     for round in 0..=MAX_ROUNDS {
-        // The last round withholds the tools, which forces an answer rather than
-        // another call there is no room to service.
+        // The last round withholds tools to force an answer.
         let offer = (round < MAX_ROUNDS && !offered.is_empty()).then(|| json!(offered));
 
         let (content, calls) = complete(state, target, base_url, &messages, offer).await?;
@@ -155,8 +144,7 @@ async fn converse(
                         };
                         workspace::tools::run(tool, &call.arguments, &context).await
                     }
-                    // Nothing else is offered, so this is unreachable unless the
-                    // offered set and this dispatch disagree.
+                    // Unreachable unless the offered set and this dispatch disagree.
                     None => ToolOutcome::failed(format!("`{}` is not available here", call.name)),
                 },
                 None => ToolOutcome::failed(format!(
@@ -180,11 +168,8 @@ async fn converse(
     )))
 }
 
-/// The tools a specialist is offered.
-///
-/// The workspace mode is the ceiling and the agent's own `writes` flag lowers it
-/// further. A reviewer with `edit_file` in its list will eventually use it, and
-/// then the review is a diff nobody asked for.
+/// The tools a specialist is offered: the workspace mode is the ceiling and the
+/// agent's `writes` flag lowers it further.
 fn tools_for(agent: &Agent, workspace: &Workspace) -> Vec<ToolSpec> {
     workspace::tools::tools_for_mode(workspace.mode)
         .into_iter()
@@ -220,11 +205,7 @@ fn brief(agent: &Agent, workspace: &Workspace) -> String {
     out
 }
 
-/// One non-streaming completion.
-///
-/// A subagent's output is not shown as it arrives — only its final report is —
-/// so there is nothing to stream to and a plain request is simpler than
-/// reassembling one.
+/// One non-streaming completion. Only the final report is shown, so there is nothing to stream to.
 async fn complete(
     state: &SharedState,
     target: &ChatTarget,
@@ -239,10 +220,8 @@ async fn complete(
         "temperature": 0.6,
         "max_tokens": 4096,
     });
-    // The same treatment as `chat.rs::stream_once`. These are the only two
-    // places that build a remote request, and they must not drift: a provider
-    // quirk honoured in one and not the other means subagents fail on exactly
-    // the providers the main loop was taught to handle.
+    // Same treatment as `chat.rs::stream_once`. These are the only two places that
+    // build a remote request and must not drift, or provider quirks work in one and not the other.
     let quirks = target.quirks();
 
     if let Some(mut tools) = tools {
@@ -302,8 +281,7 @@ async fn complete(
         .unwrap_or_default()
         .to_string();
 
-    // The non-streaming shape gives whole tool calls rather than deltas, so they
-    // are converted into the same struct the streaming path assembles.
+    // The non-streaming shape gives whole tool calls; convert them to the streaming path's struct.
     let calls: Vec<PartialToolCall> = message
         .get("tool_calls")
         .and_then(Value::as_array)
@@ -376,8 +354,7 @@ mod tests {
         assert!(names.contains(&"edit_file"));
         assert!(names.contains(&"run_command"));
 
-        // The workspace mode is still the ceiling. A subagent cannot be a way
-        // around the permission the user chose.
+        // The workspace mode is still the ceiling: a subagent cannot bypass the user's permission.
         let in_plan = tools_for(backend, &workspace(workspace::WorkspaceMode::Plan));
         let planned: Vec<&str> = in_plan.iter().map(|spec| spec.name.as_str()).collect();
         assert!(!planned.contains(&"edit_file"), "got {planned:?}");

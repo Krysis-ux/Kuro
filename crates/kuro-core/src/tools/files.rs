@@ -1,37 +1,19 @@
-//! Reading and writing files on this machine.
+//! Reading and writing files: the containment layer under [`crate::workspace`],
+//! its only caller. Chat has no file tools; everything that touches disk goes
+//! through a workspace (a folder plus a mode).
 //!
-//! The containment layer under [`crate::workspace`], and its only caller. Kuro's
-//! chat surface has no file tools at all; everything that touches disk goes
-//! through a coding workspace, and a workspace is a folder plus a mode.
-//!
-//! ## The model
-//!
-//! Three tiers, in [`FileAccess`], which the workspace mode maps onto: Ask is
-//! Off, Plan is Read, Agent is Write. Off means the tools are not offered at all
-//! — a model cannot ask for what it has not been shown.
-//!
-//! On top of the tier, a list of **roots**. For a workspace that is exactly one
-//! folder: its own. Everything outside it is refused, and there is no default,
-//! so a permission object built from nothing grants nothing.
-//!
-//! ## Why paths are resolved rather than compared
-//!
-//! `~/Projects/../.ssh/id_rsa` is inside `~/Projects` by string comparison and is
-//! obviously not inside it in any sense that matters. So is a symlink in a granted
-//! folder pointing at the keychain. Every path is therefore canonicalised — `..`
-//! collapsed, symlinks followed — *before* it is compared against a root, and the
-//! roots are canonicalised too. For a file being created, the deepest existing
-//! ancestor is canonicalised instead, because a path that does not exist yet
-//! cannot be resolved.
-//!
-//! ## Why there is a deny list inside the roots
-//!
-//! Granting `~` is the obvious thing for somebody to do, and it would otherwise
-//! hand over SSH keys, cloud credentials, browser cookies and Kuro's own
-//! credential file. Those are refused wherever they appear, so a broad grant is
-//! merely broad rather than catastrophic. This is a safety net for a careless
-//! choice of folder, not a security boundary: anyone who can pick a workspace
-//! root can already read their own files.
+//! * **Tiers** ([`FileAccess`]): Ask is Off, Plan is Read, Agent is Write. Off
+//!   means no tools are offered.
+//! * **Roots**: for a workspace, exactly its own folder. Everything outside is
+//!   refused, and a default `FilePermissions` grants nothing.
+//! * **Paths are resolved, not compared.** `~/Projects/../.ssh/id_rsa` and a
+//!   symlink to the keychain are "inside" `~/Projects` as strings. Every path is
+//!   canonicalised (`..` collapsed, symlinks followed) before the root check, and
+//!   roots are canonicalised too. For a file being created, the deepest existing
+//!   ancestor is canonicalised instead.
+//! * **Deny list inside the roots.** Granting `~` must not hand over SSH keys,
+//!   cloud credentials, cookies or Kuro's own database. A safety net for a
+//!   careless folder choice, not a security boundary.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -39,11 +21,9 @@ use serde::Serialize;
 
 use crate::{KuroError, Result};
 
-/// Largest file that will be read into a reply. Bigger than most source files,
-/// small enough that one read cannot fill a context window on its own.
+/// Largest file (bytes) that will be read into a reply.
 pub const MAX_READ_BYTES: u64 = 256 * 1024;
-/// Largest file the model may write. A model producing a megabyte of text in one
-/// call is malfunctioning, and truncating silently would be worse than refusing.
+/// Largest write (bytes). Over this is refused rather than silently truncated.
 pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
 /// Entries listed for one directory before the rest are summarised.
 const MAX_ENTRIES: usize = 200;
@@ -52,7 +32,7 @@ const MAX_ENTRIES: usize = 200;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FileAccess {
-    /// No file tools are offered. The default, and the only safe default.
+    /// No file tools are offered. The default.
     #[default]
     Off,
     /// List and read within the granted folders.
@@ -100,11 +80,9 @@ impl FileAccess {
     }
 }
 
-/// The tier plus the folders it applies to.
-///
-/// Built by [`crate::workspace::Workspace::permissions`] from a root and a mode.
-/// There is deliberately no way to load one from settings: a stored grant that
-/// outlived whatever asked for it is exactly the thing this design removes.
+/// The tier plus the folders it applies to. Built by
+/// [`crate::workspace::Workspace::permissions`]; deliberately never loaded from
+/// settings, so no stored grant can outlive what asked for it.
 #[derive(Debug, Clone, Default)]
 pub struct FilePermissions {
     pub access: FileAccess,
@@ -113,18 +91,13 @@ pub struct FilePermissions {
 }
 
 impl FilePermissions {
-    /// Whether the file tools should be offered at all this turn.
-    ///
-    /// A tier with no folders grants nothing, so offering the tools would only
-    /// produce calls that all fail.
+    /// Whether the file tools should be offered at all (a tier with no folders
+    /// grants nothing).
     pub fn is_usable(&self) -> bool {
         self.access.allows_read() && !self.roots.is_empty()
     }
 
-    /// The roots, canonicalised, skipping any that no longer exist.
-    ///
-    /// A folder that was granted and then deleted or renamed is dropped rather
-    /// than being an error: the grant is stale, not the request.
+    /// The roots, canonicalised; roots that no longer exist are dropped.
     fn resolved_roots(&self) -> Vec<PathBuf> {
         self.roots
             .iter()
@@ -132,7 +105,7 @@ impl FilePermissions {
             .collect()
     }
 
-    /// The granted folders as text, for the model's brief.
+    /// The granted folders as text.
     pub fn root_descriptions(&self) -> Vec<String> {
         self.roots
             .iter()
@@ -167,8 +140,7 @@ impl FilePermissions {
         }
 
         let requested = expand_home(raw.trim());
-        // A relative path is resolved against the first granted folder, which is
-        // what somebody means by "read src/main.rs" when they granted one project.
+        // Relative paths resolve against the first root.
         let absolute = if requested.is_absolute() {
             requested
         } else {
@@ -217,12 +189,10 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Canonicalise a path, collapsing `..` and following symlinks.
-///
-/// For a write the file may not exist, so the deepest existing ancestor is
-/// canonicalised and the remaining components appended. Those components are
-/// checked to be plain names first — otherwise `newdir/../../..` would rebuild
-/// the escape that canonicalising exists to prevent.
+/// Canonicalise a path, collapsing `..` and following symlinks. For a write the
+/// file may not exist, so the deepest existing ancestor is canonicalised and the
+/// rest appended, after rejecting `..` in it (`newdir/../../..` would rebuild the
+/// escape).
 fn canonicalise_for_access(path: &Path, for_write: bool) -> Result<PathBuf> {
     if let Ok(resolved) = path.canonicalize() {
         return Ok(resolved);
@@ -230,6 +200,14 @@ fn canonicalise_for_access(path: &Path, for_write: bool) -> Result<PathBuf> {
 
     if !for_write {
         return Err(KuroError::not_found(format!("`{}`", path.display())));
+    }
+    // It exists yet does not canonicalise: a symlink to nowhere. A write would follow
+    // it and create the target, wherever that is, so it is refused.
+    if std::fs::symlink_metadata(path).is_ok() {
+        return Err(KuroError::bad_request(format!(
+            "`{}` is a link to something that does not exist; it is not written through",
+            path.display()
+        )));
     }
 
     let mut trailing: Vec<&std::ffi::OsStr> = Vec::new();
@@ -255,8 +233,7 @@ fn canonicalise_for_access(path: &Path, for_write: bool) -> Result<PathBuf> {
             for component in trailing.iter().rev() {
                 out.push(component);
             }
-            // Nothing appended may traverse; `..` in the tail would undo the work
-            // canonicalising the ancestor just did.
+            // `..` in the tail would undo the ancestor's canonicalisation.
             if out
                 .components()
                 .any(|component| matches!(component, Component::ParentDir))
@@ -309,12 +286,8 @@ const DENIED_NAMES: &[&str] = &[
 /// Extensions that hold keys rather than content.
 const DENIED_EXTENSIONS: &[&str] = &["pem", "key", "p12", "pfx", "keychain", "jks", "kdbx"];
 
-/// Whether a path is on the deny list, whatever folder it sits in.
-///
-/// Exposed so that surfaces which are not the file tools — the folder picker,
-/// for one — can apply the same list. A picker that happily lists somebody's
-/// `.ssh` folder is not a leak on its own, but it makes the deny list look like
-/// a per-tool detail rather than a property of the application.
+/// Whether a path is on the deny list, whatever folder it sits in. Public so
+/// other surfaces (the folder picker) apply the same list.
 pub fn is_denied(path: &Path) -> bool {
     denied_reason(path).is_some()
 }
@@ -326,8 +299,7 @@ fn denied_reason(path: &Path) -> Option<&'static str> {
     let lowered = lowered.replace('\\', "/");
 
     for denied in DENIED_COMPONENTS {
-        // Bounded by separators so `.ssh` does not match a folder called
-        // `my.ssh.notes`.
+        // Bounded by separators: `.ssh` must not match `my.ssh.notes`.
         if lowered.contains(&format!("/{denied}/")) || lowered.ends_with(&format!("/{denied}")) {
             return Some("it holds credentials or keys");
         }
@@ -390,8 +362,7 @@ pub fn list_directory(path: &Path) -> Result<Vec<Entry>> {
         })
         .collect();
 
-    // Folders first, then alphabetical: the order somebody reading a listing
-    // expects, and stable across calls so a model does not see it change.
+    // Folders first, then alphabetical; stable across calls.
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
     Ok(entries)
 }
@@ -418,6 +389,16 @@ pub fn format_listing(path: &Path, entries: &[Entry]) -> String {
     out
 }
 
+/// The whole file as text, for an undo snapshot: up to [`MAX_WRITE_BYTES`], beyond
+/// what a model may read. `None` when it is larger, not text, or unreadable.
+pub fn read_snapshot(path: &Path) -> Option<String> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_WRITE_BYTES as u64 {
+        return None;
+    }
+    String::from_utf8(std::fs::read(path).ok()?).ok()
+}
+
 /// Read a file as text.
 pub fn read_file(path: &Path) -> Result<String> {
     let metadata = std::fs::metadata(path)
@@ -442,8 +423,7 @@ pub fn read_file(path: &Path) -> Result<String> {
     let bytes = std::fs::read(path)
         .map_err(|error| KuroError::other(format!("could not read `{}`: {error}", path.display())))?;
 
-    // A binary file read as lossy UTF-8 becomes thousands of replacement
-    // characters, which is worse than a clear refusal.
+    // Lossy UTF-8 of a binary file would be noise; refuse instead.
     String::from_utf8(bytes).map_err(|_| {
         KuroError::bad_request(format!(
             "`{}` is not text, so there is nothing to read.",
@@ -489,7 +469,7 @@ pub fn write_file(path: &Path, content: &str) -> Result<WriteReport> {
     })
 }
 
-/// What a write did, so the model reports it accurately rather than guessing.
+/// What a write did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteReport {
     pub created: bool,
@@ -538,8 +518,7 @@ mod tests {
     fn granted(access: FileAccess) -> (FilePermissions, PathBuf) {
         let root = std::env::temp_dir().join(format!("kuro-files-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("create root");
-        // The temporary directory is itself a symlink on macOS, so the root has
-        // to be canonicalised for the tests to compare like with like.
+        // The temp dir is a symlink on macOS; canonicalise to compare like with like.
         let root = root.canonicalize().expect("canonicalise");
         (
             FilePermissions {
@@ -552,7 +531,6 @@ mod tests {
 
     #[test]
     fn a_default_permission_object_grants_nothing() {
-        // What anything that fails to build one properly ends up holding.
         let permissions = FilePermissions::default();
 
         assert_eq!(permissions.access, FileAccess::Off);
@@ -617,8 +595,7 @@ mod tests {
 
     #[test]
     fn traversal_out_of_a_root_is_refused() {
-        // The whole reason paths are canonicalised: this is inside the root by
-        // string comparison and outside it in every sense that matters.
+        // Inside the root by string comparison, outside it in reality.
         let (permissions, root) = granted(FileAccess::Read);
         let escape = root.join("../../../etc/hosts");
 
@@ -637,7 +614,7 @@ mod tests {
     fn a_symlink_pointing_out_of_a_root_is_refused() {
         let (permissions, root) = granted(FileAccess::Read);
         let link = root.join("escape");
-        // Linking to a directory that certainly exists and is not under the root.
+        // `/etc` exists and is not under the root.
         if std::os::unix::fs::symlink("/etc", &link).is_err() {
             return; // Symlinks unavailable; nothing to assert.
         }
@@ -688,8 +665,7 @@ mod tests {
 
     #[test]
     fn credentials_are_refused_even_inside_a_granted_folder() {
-        // Granting the home directory is the obvious thing to do, and must not
-        // hand over SSH keys with it.
+        // Granting a broad folder must not hand over keys.
         let (permissions, root) = granted(FileAccess::Write);
         std::fs::create_dir_all(root.join(".ssh")).expect("mkdir");
         std::fs::write(root.join(".ssh/id_rsa"), "PRIVATE KEY").expect("write");

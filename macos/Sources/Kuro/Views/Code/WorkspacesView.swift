@@ -38,7 +38,10 @@ struct WorkspacesView: View {
             } header: {
                 Text("New Workspace")
             } footer: {
-                Text("A model can read this folder, change it, and run its build and tests, depending on the mode you pick. Everything outside it is refused, and so are credentials inside it. Chat can read workspaces but never change them.")
+                Group {
+                    Text("A model can read this folder, change it, and run its build and tests, depending on the mode you pick. Everything outside it is refused, and so are credentials inside it. Chat can read workspaces but never change them.")
+                }
+                .formNote()
             }
 
             if !workspaces.isEmpty {
@@ -53,7 +56,7 @@ struct WorkspacesView: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .navigationTitle("Code")
         .toolbar { BackToolbarItem() }
         .task(id: app.stamp(.workspaces)) {
@@ -136,15 +139,6 @@ extension WorkspaceMode {
         }
     }
 
-    var emptyLine: String {
-        switch self {
-        case .ask: "Ask mode. The model cannot see this project — paste in what you want to discuss."
-        case .plan: "Plan mode. Ask about this project and the model will read it before answering."
-        case .agent: "Agent mode. Describe a change and the model will make it, then build it and run the tests. Every edit can be undone."
-        case .bypass: "Bypass mode. Same as Agent, with no limit on which commands it may run."
-        }
-    }
-
     var placeholder: String {
         switch self {
         case .ask: "Ask about code…"
@@ -155,10 +149,10 @@ extension WorkspaceMode {
 
     var note: String {
         switch self {
-        case .ask: "Ask mode: no access to this folder."
-        case .plan: "Plan mode: can read this folder, and cannot change it or run anything."
-        case .agent: "Agent mode: can change files here and run build and test commands. Every edit can be undone."
-        case .bypass: "Bypass mode: can change files here and run any command, with no allowlist."
+        case .ask: "No access to this folder."
+        case .plan: "Reads this folder. Changes nothing."
+        case .agent: "Edits files and runs build and test commands. Every edit can be undone."
+        case .bypass: "Edits files and runs any command."
         }
     }
 }

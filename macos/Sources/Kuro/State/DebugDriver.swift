@@ -31,42 +31,53 @@ enum DebugDriver {
             case "project": if target.count > 1 { app.go(.project(target[1])) }
             case "models": app.go(.models)
             case "model": if target.count > 1 { app.go(.model(target[1]), returning: true) }
-            case "free": app.go(.free)
-            case "tools": app.go(.tools)
-            case "providers": app.go(.providers)
-            case "cloud": app.go(.cloud)
+            case "settings": app.go(.settings(SettingsPane(rawValue: target.count > 1 ? target[1] : "") ?? .general))
             default: break
             }
+        case "providers":
+            // `providers add`, `providers free` or `providers <preset slug>`: what the Providers page shows.
+            NotificationCenter.default.post(name: .init("kuro.debug.providers"), object: argument)
+        case "subagent":
+            // `subagent new` or `subagent <slug>`: open the subagent editor.
+            NotificationCenter.default.post(name: .init("kuro.debug.subagents"), object: argument)
         case "draft":
             app.prefs.setDraft("chat:new", argument)
         case "snap":
-            // Render the window (or Settings, with `snap settings <path>`) to a PNG, even off screen.
-            let words = argument.split(separator: " ", maxSplits: 1).map(String.init)
-            let settings = words.first == "settings"
-            let path = settings ? (words.count > 1 ? words[1] : "") : argument
-            let window = NSApp.windows.first { candidate in
-                let id = candidate.identifier?.rawValue ?? ""
-                return settings ? candidate.isVisible && !id.contains("main") && candidate.frame.width > 400 : id.contains("main")
+            // Render the main window to a PNG, even off screen, and any open sheet beside it
+            // as `<path>.sheet.png`. Settings are a route now: `route settings providers`.
+            let window = NSApp.windows.first { $0.identifier?.rawValue.contains("main") == true }
+            let render = { (target: NSWindow?, path: String) in
+                guard let view = target?.contentView?.superview ?? target?.contentView,
+                      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             }
-            guard let view = window?.contentView?.superview ?? window?.contentView,
-                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-        case "settings":
-            // `settings <tab> <path>`: host one Settings tab in a scratch window and render it.
-            let words = argument.split(separator: " ", maxSplits: 1).map(String.init)
-            guard words.count == 2, let tab = SettingsView.Tab(rawValue: words[0]) else { return }
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(tab: tab).environment(app)))
-            window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
-            window.orderBack(nil)
-            Task {
-                try? await Task.sleep(for: .seconds(2))
-                if let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-                    view.cacheDisplay(in: view.bounds, to: rep)
-                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: words[1]))
+            render(window, argument)
+            if let sheet = window?.attachedSheet { render(sheet, argument + ".sheet.png") }
+        case "click":
+            // `click 120 300`: a left click at a point measured from the window's top left,
+            // the same frame `snap` draws, so a hit-testing offset shows up as the wrong target.
+            let numbers = argument.split(separator: " ").compactMap { Double($0) }
+            guard numbers.count == 2,
+                  let window = NSApp.windows.first(where: { $0.identifier?.rawValue.contains("main") == true }) else { return }
+            let point = NSPoint(x: numbers[0], y: window.frame.height - numbers[1])
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                if let event = NSEvent.mouseEvent(
+                    with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+                ) {
+                    window.sendEvent(event)
                 }
-                window.close()
             }
+        case "where":
+            // `where <path>`: write the current route to a file, to read back after a `click`.
+            try? "\(app.route)".write(toFile: argument, atomically: true, encoding: .utf8)
+        case "size":
+            // `size 820 560`: resize the main window's content, to check layouts at the minimum.
+            let numbers = argument.split(separator: " ").compactMap { Double($0) }
+            guard numbers.count == 2 else { return }
+            NSApp.windows.first { $0.identifier?.rawValue.contains("main") == true }?
+                .setContentSize(NSSize(width: numbers[0], height: numbers[1]))
         case "files":
             app.prefs.filesOpen = argument == "on"
         case "running":

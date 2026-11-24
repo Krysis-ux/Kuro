@@ -27,6 +27,18 @@ do {
     check(LineDiff.rows(before: "x", after: "x").allSatisfy { $0.kind == .same }, "identical text has no changes")
 }
 
+// Custom commands
+do {
+    check(CustomCommand.normalise("  Write Tests! ") == "write-tests", "normalise: \(CustomCommand.normalise("  Write Tests! "))")
+    check(CustomCommand.normalise("---") == "", "nothing typeable normalises to empty")
+    let marked = CustomCommand(name: "explain", text: "Explain {input} simply.").filled()
+    check(marked.text == "Explain  simply." && marked.caret == 8, "caret at the marker: \(marked)")
+    let plain = CustomCommand(name: "tldr", text: "Summarise in three bullets.").filled()
+    check(plain.caret == plain.text.utf16.count, "no marker: caret at the end")
+    let twice = CustomCommand(name: "x", text: "{input} and {input}").filled()
+    check(twice.text == " and " && twice.caret == 0, "only the first marker places the caret: \(twice)")
+}
+
 // Slash commands
 do {
     let text = "please use /ru here"
@@ -165,6 +177,29 @@ do {
     check(text.contains("`<tool_call>`") && text.contains("<tool_call>{\"name\""), "code left as written")
     check(!text.contains("<div") && !text.contains("<p>") && !text.contains("[]("), "tags and empty links removed: \(text)")
     check(ModelCardText.resolve("javascript:alert(1)", repo: "a/b", link: true) == nil, "script URLs refused")
+}
+
+// Automation schedules
+do {
+    for text in ["every:30", "daily:09:00", "weekdays:18:45"] {
+        check(AutomationSchedule(text)?.text == text, "schedule round trip: \(text)")
+    }
+    check(AutomationSchedule("daily:9:05")?.text == "daily:09:05", "hours are padded")
+    check(AutomationSchedule("every:30")?.label == "Every 30 min", "minutes label")
+    check(AutomationSchedule("every:60")?.label == "Every hour", "hour label")
+    check(AutomationSchedule("every:120")?.label == "Every 2 hours", "hours label")
+    check(AutomationSchedule("weekdays:07:30")?.label == "Weekdays at 07:30", "weekdays label")
+    for bad in ["", "hourly", "every:x", "every:0", "daily:24:00", "daily:9", "monthly:09:00"] {
+        check(AutomationSchedule(bad) == nil, "refused: \(bad)")
+    }
+}
+
+// Tool calls written as text
+do {
+    check(Markdown.withoutToolCalls("Hi <tool_call>{\"name\": \"x\"}</tool_call> there") == "Hi  there", "text tool call hidden")
+    check(Markdown.withoutToolCalls("Hi <tool_call>{\"na") == "Hi ", "half-streamed tool call hidden")
+    let fenced = "```\n<tool_call>{}</tool_call>\n```"
+    check(Markdown.withoutToolCalls(fenced) == fenced, "fenced code kept")
 }
 
 print(failures == 0 ? "All checks passed." : "\(failures) check(s) failed.")

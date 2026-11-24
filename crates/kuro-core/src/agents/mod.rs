@@ -1,38 +1,26 @@
 //! Specialists a coding turn can hand work to.
 //!
-//! A subagent is not a second model. It is the same model, given a different
-//! brief, a different set of skills, and a fresh context containing only the task
-//! it was handed — and that last part is the whole point.
+//! A subagent is the same model with a different brief, different skills and a
+//! fresh context holding only the task it was handed.
 //!
-//! ## Why a fresh context is the feature
+//! The fresh context is the point. By the twentieth tool call a long turn's
+//! context is full of stale files and build logs, and answers degrade because of
+//! what is in the window. Delegating "work out why the login test fails" hands
+//! that to a clean context and brings back a paragraph instead of forty thousand
+//! tokens of investigation.
 //!
-//! The expensive failure in a long coding turn is not that the model is
-//! insufficiently clever. It is that by the twentieth tool call its context holds
-//! three files it no longer needs, a build log from a problem already fixed, and
-//! a plan it has half-abandoned — and the answer degrades because of what is in
-//! the window rather than what is missing from it.
-//!
-//! Delegating "work out why the login test fails" hands that question to a clean
-//! context with the debugging and testing guidance loaded, and brings back a
-//! paragraph instead of forty thousand tokens of investigation. The main turn
-//! keeps its plan; the search happens somewhere else.
-//!
-//! ## Why the list is short
-//!
-//! There is one agent per *kind of work*, not one per language. A Rust agent, a
-//! Kotlin agent and a Go agent would differ only in which language skill they
-//! load — and that is already decided by what is in the project folder, from
-//! [`crate::orchestrate::detect_languages`]. Adding twenty near-identical entries
-//! would give a small model twenty things to choose between where the right
-//! choice is almost always determined by the task rather than by the stack.
-//!
-//! So the split is by what the agent is *for*: finding things out, designing an
-//! interface, building a backend, testing, reviewing, debugging. The language
-//! comes from the project either way.
+//! The list is short: one agent per *kind of work*, not per language. The
+//! language skill is already chosen from the project folder
+//! ([`crate::orchestrate::detect_languages`]), and twenty near-identical agents
+//! would only give a small model more to choose between.
+
+use std::sync::RwLock;
 
 use serde::Serialize;
 
+use crate::db::{Db, UserAgentRecord};
 use crate::skills::{self, Skill};
+use crate::{KuroError, Result};
 
 /// One specialist.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -41,8 +29,8 @@ pub struct Agent {
     pub name: &'static str,
     /// One line, for the picker and for the tool description.
     pub blurb: &'static str,
-    /// When to reach for this one rather than another, written for the model
-    /// making that choice.
+    /// When to reach for this one rather than another, written for the delegating
+    /// model.
     pub when: &'static str,
     /// What the agent is told it is. Prepended to the ordinary workspace brief.
     pub brief: &'static str,
@@ -153,10 +141,97 @@ pub const AGENTS: &[Agent] = &[
     },
 ];
 
-pub fn find(slug: &str) -> Option<&'static Agent> {
+/// Subagents the user wrote, leaked into `'static` when loaded so they share
+/// `Agent` with the built-ins. The same trade as `skills::custom`: a few hundred
+/// bytes per agent, leaked only when the user saves or removes one.
+static CUSTOM: RwLock<Vec<&'static Agent>> = RwLock::new(Vec::new());
+
+/// Skills one user agent may load. More would crowd its brief.
+pub const MAX_CUSTOM_SKILLS: usize = 8;
+const MAX_NAME_CHARS: usize = 40;
+const MAX_BLURB_CHARS: usize = 160;
+const MAX_WHEN_CHARS: usize = 400;
+const MAX_BRIEF_CHARS: usize = 6_000;
+
+/// Every agent a turn can delegate to: the built-ins, then the user's.
+pub fn all() -> Vec<&'static Agent> {
+    let custom = CUSTOM.read().expect("custom agents lock");
+    AGENTS.iter().chain(custom.iter().copied()).collect()
+}
+
+/// Whether a slug belongs to Kuro rather than to the user (built-ins cannot be
+/// edited or removed).
+pub fn is_builtin(slug: &str) -> bool {
     AGENTS
         .iter()
+        .any(|agent| agent.slug.eq_ignore_ascii_case(slug))
+}
+
+pub fn find(slug: &str) -> Option<&'static Agent> {
+    all()
+        .into_iter()
         .find(|agent| agent.slug.eq_ignore_ascii_case(slug))
+}
+
+/// Load the user's agents from storage, replacing the whole list. Called at
+/// startup and after anything that changes the table.
+pub fn reload(db: &Db) -> Result<usize> {
+    let loaded: Vec<&'static Agent> = db.list_user_agents()?.iter().map(leak).collect();
+    let count = loaded.len();
+    *CUSTOM.write().expect("custom agents lock") = loaded;
+    Ok(count)
+}
+
+fn leak(record: &UserAgentRecord) -> &'static Agent {
+    let text = |value: &str| -> &'static str { Box::leak(value.to_owned().into_boxed_str()) };
+    let skills: Vec<&'static str> = record.skills.iter().map(|slug| text(slug)).collect();
+    Box::leak(Box::new(Agent {
+        slug: text(&record.slug),
+        name: text(&record.name),
+        blurb: text(&record.blurb),
+        when: text(&record.when),
+        brief: text(&record.brief),
+        skills: Box::leak(skills.into_boxed_slice()),
+        writes: record.writes,
+    }))
+}
+
+/// Refuse a user agent that would not work, or would crowd the list the
+/// delegating model chooses from.
+pub fn check(record: &UserAgentRecord) -> Result<()> {
+    let field = |label: &str, value: &str, max: usize, required: bool| -> Result<()> {
+        if required && value.trim().is_empty() {
+            return Err(KuroError::bad_request(format!("{label} is required.")));
+        }
+        if value.chars().count() > max {
+            return Err(KuroError::bad_request(format!(
+                "{label} is too long. Keep it under {max} characters."
+            )));
+        }
+        Ok(())
+    };
+
+    field("A name", &record.name, MAX_NAME_CHARS, true)?;
+    if record.slug.is_empty() {
+        return Err(KuroError::bad_request(
+            "The name needs at least one letter or digit.",
+        ));
+    }
+    field("The description", &record.blurb, MAX_BLURB_CHARS, false)?;
+    field("When to use it", &record.when, MAX_WHEN_CHARS, false)?;
+    field("Instructions", &record.brief, MAX_BRIEF_CHARS, true)?;
+
+    if record.skills.len() > MAX_CUSTOM_SKILLS {
+        return Err(KuroError::bad_request(format!(
+            "Pick at most {MAX_CUSTOM_SKILLS} skills."
+        )));
+    }
+    if let Some(missing) = record.skills.iter().find(|slug| skills::find(slug).is_none()) {
+        return Err(KuroError::bad_request(format!(
+            "There is no skill called `{missing}`."
+        )));
+    }
+    Ok(())
 }
 
 impl Agent {
@@ -171,13 +246,13 @@ impl Agent {
 
 /// The names, for the tool schema's enum.
 pub fn slugs() -> Vec<&'static str> {
-    AGENTS.iter().map(|agent| agent.slug).collect()
+    all().iter().map(|agent| agent.slug).collect()
 }
 
 /// The catalogue as one block of text, for the delegating model to choose from.
 pub fn describe_for_model() -> String {
     let mut out = String::from("The specialists you can hand work to:\n");
-    for agent in AGENTS {
+    for agent in all() {
         out.push_str(&format!(
             "- `{}` — {} {}\n",
             agent.slug, agent.blurb, agent.when
@@ -213,7 +288,7 @@ mod tests {
 
     #[test]
     fn every_agents_skills_exist() {
-        // A slug that was renamed would silently give an agent no expertise.
+        // A renamed slug would silently give an agent no expertise.
         for agent in AGENTS {
             assert_eq!(
                 agent.resolved_skills().len(),
@@ -227,8 +302,8 @@ mod tests {
 
     #[test]
     fn the_agents_that_only_report_are_told_not_to_edit() {
-        // A reviewer that fixes what it finds has destroyed the review, and a
-        // model given write tools will use them unless told otherwise.
+        // A reviewer that fixes what it finds destroys the review, and a model given
+        // write tools will use them.
         for agent in AGENTS.iter().filter(|agent| !agent.writes) {
             assert!(
                 agent.brief.contains("not to change")
@@ -242,8 +317,8 @@ mod tests {
 
     #[test]
     fn there_is_an_agent_for_each_kind_of_work_rather_than_each_language() {
-        // Twenty near-identical language agents would give a small model twenty
-        // things to choose between where the project folder already decides.
+        // Near-identical language agents would only add choices; the project folder
+        // already decides the language.
         for expected in ["explore", "frontend", "backend", "debug", "test", "review"] {
             assert!(find(expected).is_some(), "missing `{expected}`");
         }
@@ -264,9 +339,62 @@ mod tests {
     #[test]
     fn the_catalogue_reads_as_a_choice_the_model_can_make() {
         let described = describe_for_model();
+        let listed = slugs();
         for agent in AGENTS {
             assert!(described.contains(agent.slug));
+            assert!(listed.contains(&agent.slug));
         }
-        assert_eq!(slugs().len(), AGENTS.len());
+    }
+
+    fn user_agent(name: &str) -> UserAgentRecord {
+        UserAgentRecord {
+            slug: skills::custom::slugify(name),
+            name: name.to_string(),
+            blurb: "Writes the docs.".to_string(),
+            when: "Use for READMEs and guides.".to_string(),
+            brief: "You write documentation.".to_string(),
+            skills: vec!["testing".to_string()],
+            writes: false,
+        }
+    }
+
+    #[test]
+    fn a_user_agent_can_be_delegated_to_once_loaded() {
+        let db = Db::open_in_memory().unwrap();
+        let record = user_agent("Docs Writer Zeta");
+        check(&record).unwrap();
+        db.put_user_agent(&record).unwrap();
+
+        assert_eq!(reload(&db).unwrap(), 1);
+        let found = find("docs-writer-zeta").expect("loaded agent is findable");
+        assert_eq!(found.name, "Docs Writer Zeta");
+        assert!(!found.writes);
+        assert_eq!(found.resolved_skills().len(), 1);
+        assert!(!is_builtin("docs-writer-zeta"));
+        assert!(describe_for_model().contains("docs-writer-zeta"));
+
+        // Removing it from storage and reloading takes it away again.
+        db.delete_user_agent("docs-writer-zeta").unwrap();
+        reload(&db).unwrap();
+        assert!(find("docs-writer-zeta").is_none());
+    }
+
+    #[test]
+    fn a_user_agent_that_would_not_work_is_refused() {
+        assert!(check(&UserAgentRecord { name: "   ".to_string(), ..user_agent("x") }).is_err());
+        assert!(check(&UserAgentRecord { slug: String::new(), ..user_agent("!!!") }).is_err());
+        assert!(check(&UserAgentRecord { brief: String::new(), ..user_agent("Docs") }).is_err());
+        assert!(check(&UserAgentRecord { brief: "x".repeat(6_001), ..user_agent("Docs") }).is_err());
+        assert!(check(&UserAgentRecord {
+            skills: vec!["no-such-skill".to_string()],
+            ..user_agent("Docs")
+        })
+        .is_err());
+        assert!(check(&UserAgentRecord {
+            skills: vec!["testing".to_string(); MAX_CUSTOM_SKILLS + 1],
+            ..user_agent("Docs")
+        })
+        .is_err());
+        assert!(check(&user_agent("Docs")).is_ok());
     }
 }

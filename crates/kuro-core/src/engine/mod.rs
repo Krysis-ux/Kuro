@@ -1,7 +1,5 @@
-//! Inference engine supervision.
-//!
-//! Kuro runs models through `kuro-engine`, one process per loaded model,
-//! managed entirely by [`manager::EngineManager`].
+//! Inference engine supervision: one `kuro-engine` process per loaded model,
+//! managed by [`manager::EngineManager`].
 
 pub mod bootstrap;
 pub mod manager;

@@ -1,13 +1,8 @@
 //! Storage for coding workspaces and the changes made inside them.
 //!
-//! A workspace is a folder plus a mode. It is deliberately a different thing
-//! from a project: a project groups conversations under standing instructions
-//! and touches nothing on disk, while a workspace is the only place in Kuro
-//! where a model can read or change a file.
-//!
-//! Every change is recorded with the file's previous contents. That is what
-//! makes agent mode reasonable to offer at all — a change that can be put back
-//! is a change the user can afford to let happen without being asked first.
+//! A workspace is a folder plus a mode, and the only place a model can read or
+//! change a file (unlike a project, which touches nothing on disk). Every change
+//! is recorded with the file's previous contents so it can be undone.
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::Serialize;
@@ -16,12 +11,9 @@ use super::{now, Db};
 use crate::workspace::WorkspaceMode;
 use crate::{KuroError, Result};
 
-/// Snapshots larger than this are recorded without their contents.
-///
-/// The log exists to undo edits to source files. A multi-megabyte file being
-/// rewritten is not that, and keeping both sides of it would put the database
-/// on a path to being larger than the project it describes. Such a change is
-/// still listed; it just cannot be undone from here.
+/// Snapshots larger than this are recorded without contents. The log exists to
+/// undo source edits; keeping both sides of huge rewrites would bloat the
+/// database. Such a change is still listed but cannot be undone here.
 const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,8 +28,8 @@ pub struct WorkspaceRecord {
     pub mode: String,
     pub created_at: String,
     pub updated_at: String,
-    /// Whether the folder is still there. Computed on read rather than stored,
-    /// because it can change without Kuro being involved.
+    /// Whether the folder still exists; computed on read since it can change
+    /// outside Kuro.
     pub root_exists: bool,
     pub conversation_count: i64,
 }
@@ -66,15 +58,8 @@ impl WorkspaceChange {
         !self.undone && self.after.is_some()
     }
 
-    /// What undoing this change would do, given what is on disk right now.
-    ///
-    /// Separated from the route because it is the branch that decides whether
-    /// to overwrite one of the user's files, and that decision should be
-    /// readable and tested rather than buried in a handler.
-    ///
-    /// The comparison against `current` is the property that makes undo safe to
-    /// offer at all: it can only ever remove a change the model made, never one
-    /// the user made afterwards.
+    /// What undoing this change would do, given what is on disk now. Undo can only
+    /// remove a change the model made, never one the user made afterwards.
     pub fn plan_undo(&self, current: &str) -> UndoPlan {
         if self.undone {
             return UndoPlan::Refused("that change has already been undone".to_string());
@@ -94,9 +79,8 @@ impl WorkspaceChange {
 
         match self.before.as_deref() {
             Some(before) => UndoPlan::Restore(before.to_string()),
-            // The model created it, so undoing means removing it — safe,
-            // because the contents were just confirmed to be exactly what the
-            // model wrote and nothing else.
+            // The model created it; the contents were just confirmed to be exactly what
+            // it wrote, so removing is safe.
             None => UndoPlan::Remove,
         }
     }
@@ -202,11 +186,9 @@ impl Db {
         })
     }
 
-    /// Update the parts of a workspace the interface can change.
-    ///
-    /// The root is not among them. A workspace that could be repointed would
-    /// leave its recorded changes describing paths in a folder they were never
-    /// made in, and the undo button would then write them somewhere new.
+    /// Update the parts of a workspace the interface can change. The root is not
+    /// among them: repointing it would make recorded changes describe paths in a
+    /// folder they were never made in.
     pub fn update_workspace(
         &self,
         id: &str,
@@ -244,9 +226,8 @@ impl Db {
             .ok_or_else(|| KuroError::not_found(format!("workspace `{id}`")))
     }
 
-    /// Delete a workspace. Its conversations are released, not deleted, and
-    /// nothing on disk is touched — the folder is the user's work, and a record
-    /// about it should never be able to destroy it.
+    /// Delete a workspace. Its conversations are released and nothing on disk is
+    /// touched.
     pub fn delete_workspace(&self, id: &str) -> Result<()> {
         self.with(|conn| {
             conn.execute("DELETE FROM workspaces WHERE id = ?1", params![id])?;
@@ -292,9 +273,8 @@ impl Db {
         before: Option<&str>,
         after: &str,
     ) -> Result<()> {
-        // A snapshot that is too big to keep is stored as absent rather than
-        // truncated. Half a file is worse than none: restoring it would delete
-        // the rest while looking like it worked.
+        // A snapshot too big to keep is stored as absent, not truncated: restoring
+        // half a file would delete the rest.
         let before = before.filter(|text| text.len() <= MAX_SNAPSHOT_BYTES);
         let after = (after.len() <= MAX_SNAPSHOT_BYTES).then_some(after);
 
@@ -446,8 +426,8 @@ mod tests {
 
     #[test]
     fn an_oversized_snapshot_is_dropped_rather_than_truncated() {
-        // Restoring half a file would delete the rest while looking like it
-        // worked, so a change too big to snapshot is recorded as not undoable.
+        // Restoring half a file would delete the rest, so an oversized change is
+        // recorded as not undoable.
         let db = Db::open_in_memory().expect("open");
         let workspace = db.create_workspace("Kuro", "/tmp").expect("create");
         let huge = "x".repeat(MAX_SNAPSHOT_BYTES + 1);
@@ -492,10 +472,8 @@ mod tests {
 
     #[test]
     fn undo_refuses_when_the_user_has_edited_the_file_since() {
-        // The property the whole feature rests on. Undo may only ever remove a
-        // change the model made; the moment the file differs from what the
-        // model left, putting the old contents back would delete the user's own
-        // work, which is far worse than refusing.
+        // The property the whole feature rests on: once the file differs from what
+        // the model left, restoring would delete the user's own work.
         let edit = change(Some("old"), Some("new"), false);
 
         let plan = edit.plan_undo("new, and then the user typed this");
@@ -504,7 +482,7 @@ mod tests {
             UndoPlan::Refused(reason) => assert!(reason.contains("has changed since")),
             other => panic!("must refuse, got {other:?}"),
         }
-        // And the same guard applies to removing a file the model created.
+        // The same guard applies to removing a file the model created.
         assert!(matches!(
             change(None, Some("fresh"), false).plan_undo("fresh + the user's line"),
             UndoPlan::Refused(_)

@@ -1,19 +1,10 @@
-//! Letting a chat read the code, without letting it touch the code.
+//! Letting a chat read the code without touching it: list the user's
+//! workspaces, read a file from one, search one.
 //!
-//! Chat and the Code page were kept completely apart, and the separation cost
-//! something real: asked "what does the auth module in my app do", a chat had to
-//! say it could not see any files, while a workspace three clicks away could
-//! read the whole thing. The user then pastes the file in by hand, which is the
-//! same information reaching the same model by a worse route.
-//!
-//! So this is the narrow bridge. A chat can list the workspaces the user made,
-//! read a file out of one, and search across one. That is all it can do, and the
-//! ceiling is structural rather than a promise: these tools construct their
-//! [`Workspace`] at [`WorkspaceMode::Plan`] regardless of what the workspace is
-//! actually set to, so the permission object they hand to the containment layer
-//! has no write tier to grant. A chat cannot reach `edit_file` because a chat is
-//! never offered it, and cannot reach a write through these because there is no
-//! code path from here to one.
+//! The read-only ceiling is structural: these tools build their [`Workspace`] at
+//! [`WorkspaceMode::Plan`] whatever the workspace's stored mode is, so the
+//! permission object has no write tier, and there is no code path from here to a
+//! write.
 //!
 //! [`Workspace`]: crate::workspace::Workspace
 //! [`WorkspaceMode::Plan`]: crate::workspace::WorkspaceMode::Plan
@@ -26,8 +17,7 @@ use crate::db::{Db, WorkspaceRecord};
 use crate::tools::{files, ToolOutcome};
 use crate::workspace::{search, Workspace, WorkspaceMode};
 
-/// Workspaces listed at once. More than this and the answer is a directory
-/// listing rather than an orientation.
+/// Workspaces listed at once.
 const MAX_LISTED: usize = 40;
 
 /// Every workspace the user has made, so a chat can say what exists.
@@ -108,8 +98,7 @@ pub fn search_project(db: &Db, arguments: &Value) -> ToolOutcome {
     };
     let root = PathBuf::from(&record.root_path);
 
-    // No query means "show me the shape of this", which is the first thing
-    // anybody wants and would otherwise need a second tool.
+    // No query: show the file layout.
     let Some(query) = string_argument(arguments, "query") else {
         return match search::tree(&root) {
             Ok(entries) => ToolOutcome::ok(format!(
@@ -136,11 +125,7 @@ pub fn search_project(db: &Db, arguments: &Value) -> ToolOutcome {
     }
 }
 
-/// Find a workspace by name or id.
-///
-/// By name first, because that is what the model was shown and what the user
-/// says out loud. An id still works, for a model that kept one from an earlier
-/// turn.
+/// Find a workspace by name (case-insensitive), then id, then partial name.
 fn resolve(db: &Db, needle: &str) -> Result<WorkspaceRecord, ToolOutcome> {
     let held = db.list_workspaces().map_err(ToolOutcome::failed)?;
 
@@ -148,8 +133,7 @@ fn resolve(db: &Db, needle: &str) -> Result<WorkspaceRecord, ToolOutcome> {
         .iter()
         .find(|workspace| workspace.name.eq_ignore_ascii_case(needle))
         .or_else(|| held.iter().find(|workspace| workspace.id == needle))
-        // A partial name is what a model produces when it paraphrases, and
-        // refusing that costs a round trip to learn nothing.
+        // Models paraphrase names; accept a partial match.
         .or_else(|| {
             held.iter().find(|workspace| {
                 workspace
@@ -181,11 +165,8 @@ fn resolve(db: &Db, needle: &str) -> Result<WorkspaceRecord, ToolOutcome> {
     Ok(found.clone())
 }
 
-/// The enforcement object for a workspace, always read-only.
-///
-/// The stored mode is deliberately ignored. A workspace set to Agent is set that
-/// way for the Code page; it is not consent for a chat to start writing, and
-/// reading the stored value here would make it exactly that.
+/// The enforcement object for a workspace, always read-only. The stored mode is
+/// ignored on purpose: Agent on the Code page is not consent for chat to write.
 fn readable(record: &WorkspaceRecord) -> Workspace {
     Workspace {
         id: record.id.clone(),

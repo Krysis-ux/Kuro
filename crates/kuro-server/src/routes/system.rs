@@ -32,14 +32,10 @@ pub async fn status(State(state): State<SharedState>) -> AppResult<Json<Value>> 
 
 /// Stop the daemon.
 ///
-/// The response is sent before the shutdown begins, because a request that dies
-/// with the server it is killing looks like a crash to the browser. The delay is
-/// long enough for the response to be flushed and short enough not to feel like a
-/// hang.
-///
-/// Engines are stopped first. They are separate processes holding gigabytes, and
-/// letting them outlive the daemon that supervises them would leave a machine with
-/// no way to reclaim that memory short of finding the pids by hand.
+/// Replies first and shuts down after a short delay, because a request that
+/// dies with the server it is killing looks like a crash to the browser.
+/// Engines are stopped first so their processes (gigabytes of memory) do not
+/// outlive the daemon.
 pub async fn shutdown(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     let loaded = state.engines.loaded().await.len();
     tracing::info!(engines = loaded, "shutdown requested from the interface");
@@ -48,9 +44,7 @@ pub async fn shutdown(State(state): State<SharedState>) -> AppResult<Json<Value>
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         state.engines.unload_all().await;
         tracing::info!("stopping");
-        // The graceful-shutdown future in `main` is watching for a signal, so
-        // raising one here takes the same path as Ctrl-C rather than a second,
-        // separately-maintained exit route.
+        // `main`'s graceful-shutdown future listens for SIGTERM: same path as Ctrl-C.
         #[cfg(unix)]
         // SAFETY: raising SIGTERM in our own process, which `main` handles.
         unsafe {
@@ -66,31 +60,24 @@ pub async fn shutdown(State(state): State<SharedState>) -> AppResult<Json<Value>
     })))
 }
 
-/// Relaunch the daemon.
+/// Relaunch the daemon, for when a restart is the fix: an engine setting that
+/// applies on load, a wedged child process, a new build on disk.
 ///
-/// Useful for the cases where restarting is genuinely the fix: an engine setting
-/// that only takes effect on load, a wedged child process, a new build on disk.
-/// Without this the only route was a terminal, which is a poor answer in an
-/// application whose whole point is not needing one.
-///
-/// The successor is started *before* this process exits, carrying a marker that
-/// tells it to wait for the port rather than fail on it. Doing it the other way
-/// round — exit, then hope something starts us again — is how a restart button
-/// becomes a shutdown button.
+/// The successor starts before this process exits, with a marker telling it to
+/// wait for the port instead of failing. Exiting first would turn a restart
+/// into a shutdown.
 pub async fn restart(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     let executable = std::env::current_exe()
         .map_err(|error| KuroError::other(format!("cannot find Kuro's own binary: {error}")))?;
 
-    // Arguments are carried over so a daemon started with flags restarts with the
-    // same ones.
+    // Carry over the arguments so the successor gets the same flags.
     let arguments: Vec<String> = std::env::args().skip(1).collect();
 
     let mut command = std::process::Command::new(&executable);
     command
         .args(&arguments)
         .env(crate::RESTART_MARKER, "1")
-        // Detached from this process's group, so the signal that stops us does not
-        // also stop the successor.
+        // Own process group (below), so the signal that stops us does not stop the successor.
         .stdin(std::process::Stdio::null());
 
     #[cfg(unix)]
@@ -107,8 +94,7 @@ pub async fn restart(State(state): State<SharedState>) -> AppResult<Json<Value>>
 
     let port = state.port;
     tokio::spawn(async move {
-        // Long enough for this response to reach the browser, which is what lets
-        // the page start polling for the successor instead of showing an error.
+        // Give this response time to reach the browser so the page can poll for the successor.
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         state.engines.unload_all().await;
         tracing::info!("handing over");

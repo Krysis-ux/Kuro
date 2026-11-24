@@ -30,7 +30,10 @@ struct ModelsView: View {
             } header: {
                 Text("Add by Name")
             } footer: {
-                Text("Add `:Q5_K_M` to choose a quantization. Only GGUF weights can run here. Weights are stored on this Mac and never leave it.")
+                Group {
+                    Text("Add `:Q5_K_M` to choose a quantization. Only GGUF weights can run here. Weights are stored on this Mac and never leave it.")
+                }
+                .formNote()
             }
 
             let active = downloads.filter(\.isActive)
@@ -58,9 +61,12 @@ struct ModelsView: View {
             } header: {
                 Text("Discover")
             } footer: {
-                Text(source == .recommended
-                     ? "Grouped by what each is for. Fit is estimated from this Mac's memory and the model's size — a guide, not a benchmark."
-                     : "Only repositories publishing GGUF weights, most downloaded first.")
+                Group {
+                    Text(source == .recommended
+                         ? "Grouped by what each is for. Fit is estimated from this Mac's memory and the model's size — a guide, not a benchmark."
+                         : "Only repositories publishing GGUF weights, most downloaded first.")
+                }
+                .formNote()
             }
 
             switch source {
@@ -68,7 +74,7 @@ struct ModelsView: View {
             case .hub: HubSearch(onPull: pull)
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .navigationTitle("Models")
         .toolbar { BackToolbarItem() }
         .task(id: app.stamp(.models)) {
@@ -166,7 +172,10 @@ struct ModelsView: View {
                     } header: {
                         Text(purpose.label)
                     } footer: {
-                        Text(purpose.blurb)
+                        Group {
+                            Text(purpose.blurb)
+                        }
+                        .formNote()
                     }
                 }
             }

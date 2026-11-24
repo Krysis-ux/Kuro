@@ -1,7 +1,7 @@
 //! `kuro` — the Kuro LLM command line.
 //!
 //! Every command except `serve` is a client of the local daemon's HTTP API, the
-//! same one the web interface uses.
+//! same one the web UI and the macOS app use.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -16,9 +16,7 @@ use client::KuroClient;
     name = "kuro",
     version,
     about = "Kuro LLM — run language models on your own machine",
-    // `kuro help` used to be turned off, so the most obvious thing anyone types
-    // first answered with an error telling them the subcommand did not exist.
-    // `--help` worked, which is not what a person reaches for.
+    // `kuro help` must work alongside `--help`.
     disable_help_subcommand = false
 )]
 struct Cli {
@@ -136,14 +134,12 @@ async fn main() {
 async fn dispatch() -> Result<()> {
     let cli = Cli::parse();
 
-    // `serve` replaces this process with the daemon and never returns, so it
-    // must not construct a client first.
+    // `serve` replaces this process with the daemon, so it must not build a client first.
     if let Command::Serve { port } = cli.command {
         return commands::serve::serve(port);
     }
 
-    // Neither does `version` need a daemon. Asking what Kuro is should not
-    // require Kuro to be running.
+    // `version` needs no daemon: asking what Kuro is should not require it to be running.
     if matches!(cli.command, Command::Version) {
         println!("kuro {}", env!("CARGO_PKG_VERSION"));
         return Ok(());

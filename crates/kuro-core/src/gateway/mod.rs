@@ -1,28 +1,16 @@
-//! Speaking Anthropic's Messages API on the way in, OpenAI's on the way out.
+//! Anthropic Messages API in, OpenAI chat API out.
 //!
-//! The point of this module is one sentence: it lets Claude Code talk to
-//! whatever Kuro is pointed at. Claude Code sends `POST /v1/messages` in
-//! Anthropic's shape and expects Anthropic's streaming events back; every
-//! endpoint Kuro can reach — a local llama.cpp, an OpenRouter key, a free
-//! provider — speaks the OpenAI shape. So the translation lives here, and the
-//! coding tool needs no idea that anything changed.
+//! Lets Claude Code talk to whatever Kuro is pointed at. It sends
+//! `POST /v1/messages` and expects Anthropic's streaming events, while every
+//! endpoint Kuro can reach (local llama.cpp, OpenRouter, free providers) speaks
+//! the OpenAI shape.
 //!
-//! ## Why translate rather than proxy
+//! This is a translator, not a proxy: `/v1/chat/completions` passes straight
+//! through to the local engine and cannot reach a provider, and both halves of
+//! the format need rewriting.
 //!
-//! Kuro already has an OpenAI-compatible `/v1/chat/completions`, and it is a
-//! thin pass-through to the local engine. That is the right design for what it
-//! is and the wrong one for this: a pass-through cannot reach a provider, and
-//! the format Claude Code speaks is not the format anything downstream speaks.
-//! Both halves have to be rewritten, so this is a translator with its own
-//! tests rather than a proxy with a header rewrite.
-//!
-//! ## What is deliberately not here
-//!
-//! No tool *execution*. Claude Code runs its own tools — it edits files, runs
-//! commands, and asks for permission in its own interface. Kuro's job on this
-//! path is the model and nothing else, so a `tool_use` block is translated,
-//! passed on, and its result translated back. Kuro's own coding tools stay on
-//! Kuro's own surfaces, where the workspace mode governs them.
+//! No tool *execution* here. Claude Code runs its own tools, so a `tool_use`
+//! block is translated and passed on, and its result translated back.
 
 use serde_json::{json, Map, Value};
 
@@ -32,15 +20,13 @@ pub use stream::{AnthropicEvent, StreamTranslator};
 
 /// Turn an Anthropic Messages request into an OpenAI chat request.
 ///
-/// `model` is passed separately because the caller has already resolved it —
-/// what arrives in the body is whatever Claude Code was configured with, and
-/// what goes out is the id the chosen endpoint actually knows.
+/// `model` is the id the chosen endpoint knows; the one in the body is whatever
+/// Claude Code was configured with.
 pub fn to_openai_request(anthropic: &Value, model: &str) -> Value {
     let mut messages: Vec<Value> = Vec::new();
 
-    // Anthropic carries the system prompt beside the messages; OpenAI carries
-    // it as the first message. It also allows an array of text blocks there,
-    // which is how Claude Code sends a cached multi-part prompt.
+    // The system prompt becomes the first message. Anthropic also allows an array
+    // of text blocks here (a cached multi-part prompt).
     if let Some(system) = anthropic.get("system") {
         let text = flatten_text(system);
         if !text.is_empty() {
@@ -63,10 +49,7 @@ pub fn to_openai_request(anthropic: &Value, model: &str) -> Value {
         "stream": anthropic.get("stream").and_then(Value::as_bool).unwrap_or(false),
     });
 
-    // `max_tokens` is required by Anthropic and optional for OpenAI, so it
-    // always survives; the rest are copied only when present rather than
-    // defaulted, because a default here would silently overrule whatever the
-    // endpoint's own default is.
+    // Copied only when present: a default here would overrule the endpoint's own.
     for key in ["max_tokens", "temperature", "top_p", "stop_sequences"] {
         if let Some(value) = anthropic.get(key) {
             let name = if key == "stop_sequences" { "stop" } else { key };
@@ -120,15 +103,13 @@ fn tool_choice(anthropic: &Value) -> Value {
 
 /// Translate one Anthropic message, which may become several OpenAI ones.
 ///
-/// The expansion is the interesting part. Anthropic puts tool results inside a
-/// *user* message as content blocks; OpenAI makes each one its own message with
-/// `role: "tool"`. So a single user turn carrying three tool results becomes
-/// three messages, and any accompanying text becomes a fourth.
+/// Anthropic nests tool results in a user message; OpenAI wants one
+/// `role: "tool"` message each, so one user turn can expand to several.
 fn translate_message(message: &Value, out: &mut Vec<Value>) {
     let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
 
     let Some(blocks) = message.get("content").and_then(Value::as_array) else {
-        // Plain string content, which is the common case for a simple turn.
+        // Plain string content.
         out.push(json!({
             "role": role,
             "content": message.get("content").cloned().unwrap_or_else(|| json!("")),
@@ -151,8 +132,7 @@ fn translate_message(message: &Value, out: &mut Vec<Value>) {
                 "type": "function",
                 "function": {
                     "name": block.get("name").cloned().unwrap_or(Value::Null),
-                    // OpenAI wants the arguments as a JSON *string*, which is
-                    // the single most common place this translation goes wrong.
+                    // OpenAI wants the arguments as a JSON *string*.
                     "arguments": block
                         .get("input")
                         .map(|input| input.to_string())
@@ -160,9 +140,8 @@ fn translate_message(message: &Value, out: &mut Vec<Value>) {
                 },
             })),
             Some("tool_result") => {
-                // Emitted immediately and in order: a tool result must follow
-                // the assistant message that called for it, and reordering them
-                // makes the endpoint reject the whole conversation.
+                // Emitted in order: a tool result must follow the assistant message that
+                // called for it, or the endpoint rejects the conversation.
                 out.push(json!({
                     "role": "tool",
                     "tool_call_id": block.get("tool_use_id").cloned().unwrap_or(Value::Null),
@@ -171,16 +150,15 @@ fn translate_message(message: &Value, out: &mut Vec<Value>) {
                     ),
                 }));
             }
-            // An image block on a path that cannot carry one. Dropped rather
-            // than passed through as an unknown shape the endpoint would reject.
+            // Image blocks can't be carried on this path; dropped rather than passed
+            // on in a shape the endpoint would reject.
             _ => {}
         }
     }
 
     if !tool_calls.is_empty() {
         let mut assistant = json!({ "role": "assistant", "tool_calls": tool_calls });
-        // Content must be present even when empty, or several endpoints reject
-        // the message outright.
+        // `content` must be present (null here) or several endpoints reject the message.
         assistant["content"] = if text.is_empty() { Value::Null } else { json!(text) };
         out.push(assistant);
     } else if !text.is_empty() {
@@ -256,9 +234,7 @@ pub fn tool_use_block(call: &Value) -> Value {
         "type": "tool_use",
         "id": call.get("id").cloned().unwrap_or_else(|| json!("toolu_kuro")),
         "name": call.pointer("/function/name").cloned().unwrap_or(Value::Null),
-        // Back to an object. A model that emitted malformed JSON would
-        // otherwise produce an `input` that is a string, which Claude Code
-        // reads as a tool call with no arguments at all.
+        // Back to an object: a string `input` reads as a tool call with no arguments.
         "input": serde_json::from_str::<Value>(arguments)
             .unwrap_or_else(|_| json!({})),
     })
@@ -299,7 +275,7 @@ pub fn requested_model(anthropic: &Value) -> Option<&str> {
     anthropic.get("model").and_then(Value::as_str)
 }
 
-/// Merge extra headers a provider needs. Kept here so the route stays short.
+/// The value as a JSON object, if it is one.
 pub fn is_object(value: &Value) -> Option<&Map<String, Value>> {
     value.as_object()
 }
@@ -362,8 +338,6 @@ mod tests {
 
     #[test]
     fn an_assistant_tool_call_becomes_tool_calls_with_string_arguments() {
-        // The single most common place this translation goes wrong: OpenAI
-        // wants the arguments as a JSON string, not as an object.
         let request = json!({
             "messages": [{
                 "role": "assistant",
@@ -390,9 +364,6 @@ mod tests {
 
     #[test]
     fn tool_results_become_their_own_messages_in_order() {
-        // Anthropic puts results inside a user message; OpenAI gives each its
-        // own `role: tool` message, and the order has to survive or the
-        // endpoint rejects the conversation.
         let request = json!({
             "messages": [{
                 "role": "user",
@@ -478,16 +449,13 @@ mod tests {
 
         assert_eq!(anthropic["content"][0]["type"], "tool_use");
         assert_eq!(anthropic["content"][0]["name"], "read_file");
-        // Parsed back into an object: left as a string, Claude Code reads it as
-        // a tool call with no arguments.
         assert_eq!(anthropic["content"][0]["input"]["path"], "a.rs");
         assert_eq!(anthropic["stop_reason"], "tool_use");
     }
 
     #[test]
     fn malformed_tool_arguments_become_an_empty_object_rather_than_a_string() {
-        // Small models emit invalid JSON here often enough that this is the
-        // normal case, not the exotic one.
+        // Small models emit invalid JSON often enough that this is the normal case.
         let call = json!({
             "id": "c1",
             "function": { "name": "x", "arguments": "{not json" },
@@ -525,8 +493,6 @@ mod tests {
         let openai = to_openai_request(&bare, "m");
 
         assert_eq!(openai["max_tokens"], 100);
-        // Absent rather than defaulted: a default here would overrule whatever
-        // the endpoint's own is.
         assert!(openai.get("temperature").is_none());
     }
 }

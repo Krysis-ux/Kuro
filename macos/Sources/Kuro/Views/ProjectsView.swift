@@ -156,7 +156,10 @@ struct ProjectDetailView: View {
             } header: {
                 Text("Instructions")
             } footer: {
-                Text("Added to the model's brief for every chat in this project, ahead of Kuro's own guidance. Concrete beats aspirational: “assume PostgreSQL 16” earns its place, “be helpful” does not.")
+                Group {
+                    Text("Added to the model's brief for every chat in this project, ahead of Kuro's own guidance. Concrete beats aspirational: “assume PostgreSQL 16” earns its place, “be helpful” does not.")
+                }
+                .formNote()
             }
 
             Section {
@@ -174,7 +177,10 @@ struct ProjectDetailView: View {
             } header: {
                 Text("Defaults for New Chats")
             } footer: {
-                Text(project.modelId == nil ? "Inherits whatever the composer is set to." : "New chats here start on this model.")
+                Group {
+                    Text(project.modelId == nil ? "Inherits whatever the composer is set to." : "New chats here start on this model.")
+                }
+                .formNote()
             }
 
             Section("Chats") {
@@ -205,7 +211,7 @@ struct ProjectDetailView: View {
                 Button("Delete Project…", role: .destructive) { confirmDelete = true }
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
     }
 
     private func load() async {

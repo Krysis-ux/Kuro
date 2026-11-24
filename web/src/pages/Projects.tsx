@@ -10,6 +10,7 @@ import {
   SparkIcon,
   TrashIcon,
 } from '../components/icons'
+import { HelpTip, TitleWithHelp } from '../components/HelpTip'
 
 /**
  * Projects.
@@ -46,9 +47,9 @@ export function ProjectsPage() {
     <div className="page">
       <header className="page-head">
         <h1>Projects</h1>
-        <p className="muted">
-          Standing instructions plus a place for related chats. What you write here is added to the
-          model's brief for every conversation in the project, so you only say it once.
+        <p className="muted title-help">
+          Standing instructions and related chats.
+          <HelpTip text="What you write here is added to the model's brief for every conversation in the project, so you only say it once." />
         </p>
       </header>
 
@@ -99,10 +100,7 @@ export function ProjectsPage() {
         )}
 
         {list.length === 0 && !creating && (
-          <p className="faint panel-note">
-            None yet. A project is worth making as soon as you notice yourself retyping the same
-            context at the top of every chat.
-          </p>
+          <span className="faint">None yet</span>
         )}
 
         <div className="project-grid">
@@ -211,11 +209,9 @@ export function ProjectPage() {
       />
 
       <section className="panel">
-        <h2 className="panel-title">Defaults for new chats here</h2>
-        <p className="faint panel-note">
-          A project can be "the one that always uses the big model". Leave a field alone to inherit
-          whatever the composer is set to.
-        </p>
+        <h2 className="panel-title">
+          <TitleWithHelp title="Defaults for New Chats" help="Leave a field alone to inherit whatever the composer is set to." />
+        </h2>
 
         <div className="field">
           <div className="field-label">
@@ -257,9 +253,7 @@ export function ProjectPage() {
         </div>
 
         {conversations.length === 0 ? (
-          <p className="faint panel-note">
-            No chats yet. One started here inherits the instructions above.
-          </p>
+          <span className="faint">No chats yet</span>
         ) : (
           <div className="server-rows">
             {conversations.map((conversation) => (
@@ -291,11 +285,9 @@ export function ProjectPage() {
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Delete</h2>
-        <p className="faint panel-note">
-          Deleting a project keeps its chats — they move back to the top level. The project is only a
-          grouping.
-        </p>
+        <h2 className="panel-title">
+          <TitleWithHelp title="Delete" help="Its chats are kept and move back to the top level. A project is only a grouping." />
+        </h2>
         <button className="btn btn-danger btn-sm" onClick={() => remove.mutate()}>
           <TrashIcon size={13} />
           Delete project
@@ -343,11 +335,10 @@ function InstructionsPanel({
         )}
       </div>
 
-      <p className="faint panel-note">
-        Added to the model's brief for every chat in this project, and given precedence over Kuro's
-        own guidance. Concrete beats aspirational: "assume PostgreSQL 16" earns its place, "be
-        helpful" does not.
-      </p>
+      <span className="faint title-help">
+        Added to every chat's brief
+        <HelpTip text="Takes precedence over Kuro's own guidance. Concrete beats aspirational: “assume PostgreSQL 16” earns its place, “be helpful” does not." />
+      </span>
 
       <textarea
         className="input project-instructions"

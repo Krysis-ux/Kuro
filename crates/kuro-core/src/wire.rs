@@ -1,18 +1,9 @@
-//! How an endpoint departs from the plain OpenAI shape.
+//! How an endpoint departs from the plain OpenAI shape. Per-provider differences
+//! live here as data instead of a `match` in the streaming code.
 //!
-//! Every field here exists because one provider does one thing differently, and
-//! the alternative — a `match slug` in the middle of the function that streams
-//! every reply — puts provider trivia in the one place that must stay readable.
-//!
-//! This lives outside [`crate::free`] on purpose. Cohere and NVIDIA can equally
-//! be added as ordinary cloud connectors, and a quirk is a property of an
-//! endpoint rather than of a free tier; putting it in `free` would make
-//! [`crate::cloud`] depend on the free pool for a reason that has nothing to do
-//! with free tiers.
-//!
-//! The default, [`Quirks::OPENAI`], is exactly what every provider did before
-//! this module existed, so an endpoint that needs nothing carries it and
-//! nothing changes.
+//! This is separate from [`crate::free`] because a quirk belongs to an endpoint,
+//! not a free tier, and [`crate::cloud`] should not depend on the free pool.
+//! [`Quirks::OPENAI`] is the default for endpoints that need nothing special.
 
 use std::time::Duration;
 
@@ -23,20 +14,13 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Auth {
-    /// `Authorization: Bearer <the user's key>`. Everything, until now.
+    /// `Authorization: Bearer <the user's key>`.
     Bearer,
-    /// No `Authorization` header at all.
-    ///
-    /// Kilo and OVH answer anonymous requests. Sending them an empty bearer
-    /// reads as a malformed key rather than as an absent one, so the header has
-    /// to be genuinely absent — which is why this is a variant rather than an
-    /// empty string.
+    /// No `Authorization` header at all (Kilo, OVH). An empty bearer would be
+    /// read as a malformed key, so the header must be absent.
     None,
-    /// A literal the endpoint expects but does not check.
-    ///
-    /// Used when the user has no key of their own. A real key, if one is
-    /// stored, is sent instead — on the endpoints that work this way a real key
-    /// usually buys a larger allowance or better queue priority.
+    /// A placeholder the endpoint requires but does not check, used when the user
+    /// has no key. A stored real key is sent instead (usually a larger allowance).
     Anonymous(&'static str),
 }
 
@@ -46,12 +30,9 @@ impl Auth {
         !matches!(self, Self::Bearer)
     }
 
-    /// The `Authorization` value to send, or `None` for no header at all.
-    ///
-    /// Pure, so the whole table is testable without a socket. `Bearer` with no
-    /// key answers `None` rather than `Bearer `, because a caller that reaches
-    /// here has already made a mistake and an empty bearer turns that mistake
-    /// into a confusing 401 instead of an obvious one.
+    /// The `Authorization` value to send, or `None` for no header. `Bearer` with
+    /// no key yields `None` rather than an empty bearer, which would only show up
+    /// as a confusing 401.
     pub fn authorization(self, stored: Option<&str>) -> Option<String> {
         let stored = stored.map(str::trim).filter(|key| !key.is_empty());
         match (self, stored) {
@@ -80,7 +61,7 @@ pub struct Quirks {
 }
 
 impl Quirks {
-    /// What every provider did before this module existed.
+    /// Plain OpenAI behaviour.
     pub const OPENAI: Self = Self {
         auth: Auth::Bearer,
         chat_path: "/chat/completions",
@@ -105,14 +86,11 @@ impl Default for Quirks {
 /// JSON Schema keywords that some providers reject outright.
 const REJECTED_KEYWORDS: &[&str] = &["additionalProperties", "$schema"];
 
-/// Remove the schema keywords a provider will not accept, at every depth.
+/// Remove the keywords a provider rejects (Cohere rejects `additionalProperties`
+/// and `$schema`, which every built-in tool emits) at every depth.
 ///
-/// Cohere's compatibility endpoint rejects a tool whose parameter schema
-/// carries `additionalProperties` or `$schema`, which every Kuro built-in
-/// emits. Recursing through the schema's own structural keywords — rather than
-/// stripping every key with those names anywhere — matters: a tool may
-/// legitimately take a *property named* `$schema`, and deleting that would
-/// change what the tool accepts rather than how it is described.
+/// Only the schema's structural keywords are followed, so a tool *property* that
+/// happens to be named `$schema` is kept.
 pub fn strip_schema_keywords(value: &mut Value) {
     match value {
         Value::Array(items) => {
@@ -125,22 +103,21 @@ pub fn strip_schema_keywords(value: &mut Value) {
                 map.remove(*keyword);
             }
 
-            // `properties` maps names to schemas: recurse into the values, and
-            // never treat a name as a keyword.
+            // `properties` maps names to schemas: recurse into values only.
             if let Some(Value::Object(properties)) = map.get_mut("properties") {
                 for schema in properties.values_mut() {
                     strip_schema_keywords(schema);
                 }
             }
 
-            // The keywords whose values are themselves schemas.
+            // Keywords whose values are schemas.
             for nested in ["items", "additionalItems", "not", "if", "then", "else"] {
                 if let Some(schema) = map.get_mut(nested) {
                     strip_schema_keywords(schema);
                 }
             }
 
-            // The keywords whose values are arrays of schemas.
+            // Keywords whose values are arrays of schemas.
             for nested in ["allOf", "anyOf", "oneOf", "prefixItems"] {
                 if let Some(Value::Array(schemas)) = map.get_mut(nested) {
                     for schema in schemas {
@@ -149,7 +126,7 @@ pub fn strip_schema_keywords(value: &mut Value) {
                 }
             }
 
-            // A tool definition wraps its schema; follow the wrappers too.
+            // Tool-definition wrappers and schema definition tables.
             for nested in ["function", "parameters", "$defs", "definitions"] {
                 if let Some(schema) = map.get_mut(nested) {
                     strip_schema_keywords(schema);
@@ -177,8 +154,7 @@ mod tests {
 
     #[test]
     fn a_keyless_endpoint_never_gets_an_authorization_header() {
-        // The bug this rules out by construction: sending `Bearer ` — or worse,
-        // somebody else's key — to a shared anonymous endpoint.
+        // Never send `Bearer ` or someone else's key to a shared anonymous endpoint.
         assert_eq!(Auth::None.authorization(None), None);
         assert_eq!(
             Auth::None.authorization(Some("sk-somebody-elses-key")),
@@ -263,14 +239,14 @@ mod tests {
         assert!(schema.get("additionalProperties").is_none());
         assert!(schema["properties"]["nested"].get("additionalProperties").is_none());
         assert!(schema["items"].get("additionalProperties").is_none());
-        // Everything that describes what the tool takes survives.
+        // The property definitions survive.
         assert_eq!(schema["properties"]["path"]["type"], "string");
         assert_eq!(schema["properties"]["nested"]["properties"]["deep"]["type"], "string");
     }
 
     #[test]
     fn a_property_actually_named_schema_is_left_alone() {
-        // The difference between describing a tool and changing what it takes.
+        // Describing a tool must not change what it accepts.
         let mut schema = json!({
             "type": "object",
             "additionalProperties": false,

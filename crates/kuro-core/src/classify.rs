@@ -1,40 +1,23 @@
 //! What a model's name says about the model.
 //!
-//! Providers advertise a flat list of ids and nothing else. `GET /v1/models` on
-//! NVIDIA NIM answers with sixty-odd strings; on OpenRouter with several
-//! hundred. There is no field saying which of them writes code, which reasons,
-//! which reads images — and, more urgently, no field saying which of them are
-//! not chat models at all.
+//! Providers list flat ids with no field for what a model does, or whether it is
+//! a chat model at all. NVIDIA's catalogue mixes chat models with embedders,
+//! rerankers, speech models, image generators and safety classifiers; offering
+//! those in a picker, or taking one as a fallback, yields rows that answer every
+//! message with an error.
 //!
-//! That last point is why this module exists rather than being a nicety. A
-//! catalogue like NVIDIA's is not sixty-three chat models: it is chat models
-//! mixed with embedding models, rerankers, speech recognisers, image
-//! generators and safety classifiers, all in one list. Offering those in a
-//! model picker is offering rows that answer every message with an error, and
-//! picking one as a fallback — which is what sorting the list and taking the
-//! first entry does — is an outage with no explanation attached.
-//!
-//! So the name is read. It is the only signal on offer, and it is a much better
-//! one than it sounds: model ids are named by their publishers to be legible,
-//! and `qwen/qwen2.5-coder-32b-instruct` says what it is far more reliably than
-//! any heuristic over a description would.
-//!
-//! ## What this is not
-//!
-//! It is not a benchmark and it does not claim to rank anything. It answers
-//! "what was this trained to do" from the name, and where the name says
-//! nothing it says so — [`Speciality::General`] is a real answer here, not a
-//! failure. A hand-written table still beats it for the models Kuro has an
-//! opinion about, which is why [`crate::free::FreeProvider::models`] still
-//! exists and still wins; this fills in the several hundred it does not cover.
+//! So the name is read: publishers name ids to be legible, which makes
+//! `qwen/qwen2.5-coder-32b-instruct` a better signal than any description. This
+//! ranks nothing. Where the name says nothing, [`Speciality::General`] is the
+//! answer, and the hand-written table behind [`crate::free::FreeProvider::models`]
+//! still wins for models Kuro has an opinion about.
 
 use serde::Serialize;
 
 /// What kind of thing a model is, before asking what it is good at.
 ///
-/// The distinction that matters is [`ModelKind::Chat`] versus everything else:
-/// only chat models can serve a conversation, and every other variant here is
-/// a row that must never reach a model picker or a failover.
+/// Only [`ModelKind::Chat`] can serve a conversation; every other kind must
+/// never reach a model picker or a failover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelKind {
@@ -72,8 +55,7 @@ impl ModelKind {
 
 /// What a chat model was trained to be good at.
 ///
-/// Deliberately few. Every extra category is one more thing to be wrong about,
-/// and a picker that files models under nine headings is a picker nobody reads.
+/// Deliberately few: every extra category is one more thing to be wrong about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Speciality {
@@ -133,26 +115,21 @@ impl Classified {
 
 /// Anything at or below this many billion parameters counts as fast.
 ///
-/// Nine rather than eight so the 8B tier lands inside it along with the models
-/// that round up to nine, and well below the 12–14B tier where a laptop starts
-/// to notice.
+/// Nine, not eight, so models that round up to nine are in; the 12–14B tier is out.
 const FAST_PARAMS_B: f32 = 9.0;
 
 /// Substrings that mean a model is not a chat model.
 ///
-/// Ordered most-specific first, and checked before anything else, because a
-/// name can carry both signals: `nvidia/llama-3.2-nv-rerankqa-1b-v2` contains
-/// `llama` and is not a Llama you can talk to.
+/// Ordered most-specific first and checked before the speciality markers:
+/// `nvidia/llama-3.2-nv-rerankqa-1b-v2` contains `llama` but is a reranker.
 const NOT_CHAT: &[(&str, ModelKind)] = &[
-    // Safety classifiers. Checked before embeddings because `nemoguard` names
-    // include a `topic-control` variant that is neither.
+    // Safety classifiers, before embeddings (`nemoguard` has a `topic-control` variant).
     ("guard", ModelKind::Guard),
     ("shield", ModelKind::Guard),
     ("topic-control", ModelKind::Guard),
     ("content-safety", ModelKind::Guard),
     ("jailbreak", ModelKind::Guard),
-    // Rerankers before embeddings: `rerankqa` also contains `qa`, and several
-    // rerankers are named as a variant of an embedding family.
+    // Rerankers before embeddings: several are named as variants of an embedding family.
     ("rerank", ModelKind::Rerank),
     ("embed", ModelKind::Embedding),
     ("retriever", ModelKind::Embedding),
@@ -170,8 +147,7 @@ const NOT_CHAT: &[(&str, ModelKind)] = &[
     ("-tts", ModelKind::Speech),
     ("-asr", ModelKind::Speech),
     ("speech", ModelKind::Speech),
-    // Pixels out rather than in. `stable-diffusion` before any `sd` match so a
-    // model merely named `sdxl` is caught by its own entry.
+    // Visual: image and video generation, OCR and document-structure models.
     ("stable-diffusion", ModelKind::Visual),
     ("sdxl", ModelKind::Visual),
     ("flux", ModelKind::Visual),
@@ -191,9 +167,8 @@ const NOT_CHAT: &[(&str, ModelKind)] = &[
 const CODING: &[&str] = &[
     "coder", "codestral", "devstral", "starcoder", "codegemma", "codegeex", "codellama",
     "sqlcoder", "opencoder", "codeqwen", "codex", "swe-", "codium",
-    // Bare `code` as a whole word. The sentinel dashes around the name are what
-    // make this safe: `-code` matches `north-mini-code` and `granite-code-8b`
-    // without also matching `encode` or `unicode`.
+    // Bare `code` as a whole word: the sentinel dashes added in `classify` let
+    // `-code` match `north-mini-code` and `granite-code-8b` but not `encode`.
     "-code",
 ];
 
@@ -215,30 +190,20 @@ const FAST: &[&str] = &["mini", "flash", "instant", "nano", "tiny", "lite", "tur
 /// Read a model id.
 ///
 /// Case and separators are normalised first, so `Qwen/Qwen2.5-Coder-32B` and
-/// `qwen/qwen2.5_coder_32b` classify identically — providers are not consistent
-/// about either, and two spellings of one model must not land in two groups.
+/// `qwen/qwen2.5_coder_32b` classify identically.
 pub fn classify(model_id: &str) -> Classified {
     let publisher = model_id
         .split_once('/')
         .map(|(head, _)| head.trim().to_ascii_lowercase())
         .filter(|head| !head.is_empty());
 
-    // Only the part after the publisher is read.
-    //
-    // Caught on real data: OpenRouter lists `thinkingmachines/inkling`, and
-    // matching the whole id tagged it as a reasoning model on the strength of
-    // the company's name. A publisher is who made the model, not what it does,
-    // and there are enough companies named after a capability — Thinking
-    // Machines, Perplexity, Vision — for this to keep happening.
+    // Only the part after the publisher is read: a publisher is who made the model,
+    // not what it does (`thinkingmachines/inkling` is not a reasoning model).
     let stem = model_id.split_once('/').map_or(model_id, |(_, tail)| tail);
 
-    // `:` is a separator too — Ollama writes `gpt-oss:20b` — and dropping it
-    // into the same normal form is what lets one pattern list serve both.
-    //
-    // Wrapped in dashes so that a marker anchored to a word boundary works at
-    // the ends of the name as well as inside it: `-o1` has to match `o1`, which
-    // is the entire name of a real model, and `-code` has to match a name that
-    // ends in it.
+    // `:` is a separator too (Ollama writes `gpt-oss:20b`), so one pattern list
+    // serves both. The name is wrapped in dashes so dash-anchored markers match at
+    // the ends too: `-o1` must match a model named `o1`.
     let normal: String = std::iter::once('-')
         .chain(stem.to_ascii_lowercase().chars().map(|character| {
             match character {
@@ -270,8 +235,7 @@ pub fn classify(model_id: &str) -> Classified {
     if VISION.iter().any(|marker| normal.contains(marker)) {
         specialities.push(Speciality::Vision);
     }
-    // Size decides before wording does. A vendor calling a 24B model "small"
-    // is speaking relative to its own range, not to a laptop.
+    // Size decides before wording: a vendor's "small" 24B model is not fast.
     let fast_by_size = params_b.is_some_and(|billions| billions <= FAST_PARAMS_B);
     let fast_by_name = params_b.is_none() && FAST.iter().any(|marker| normal.contains(marker));
     if fast_by_size || fast_by_name {
@@ -302,10 +266,8 @@ fn not_chat_kind(normal: &str) -> Option<ModelKind> {
 
 /// The parameter count a name states, in billions.
 ///
-/// Takes the largest figure in the name rather than the first, so that a
-/// mixture-of-experts id naming both its total and its active count —
-/// `qwen3-235b-a22b` — is read as the 235B model it is. `8x7b` is multiplied
-/// out for the same reason: the memory it needs is the total, not one expert.
+/// Takes the largest figure, so `qwen3-235b-a22b` reads as 235B, and multiplies
+/// out `8x7b`: the memory needed is for the total, not one expert.
 fn params_of(normal: &str) -> Option<f32> {
     let bytes = normal.as_bytes();
     let mut best: Option<f32> = None;
@@ -316,7 +278,7 @@ fn params_of(normal: &str) -> Option<f32> {
             index += 1;
             continue;
         }
-        // A digit may not follow, or `4bit` and `bf16` become parameter counts.
+        // `b` must end the figure, or `4bit` and `bf16` read as parameter counts.
         if bytes
             .get(index + 1)
             .is_some_and(|next| next.is_ascii_alphanumeric())
@@ -360,9 +322,8 @@ fn params_of(normal: &str) -> Option<f32> {
 
 /// Where the run of digits ending just before `end` begins.
 ///
-/// A single decimal point is part of the number, so `3.5b` reads as 3.5. A
-/// second one ends it, because `llama-3.3-70b` must read as 70 and not as the
-/// version number in front of it.
+/// One decimal point is part of the number (`3.5b` is 3.5); a second ends it, so
+/// `llama-3.3-70b` reads as 70, not as the version in front of it.
 fn number_start(bytes: &[u8], end: usize) -> usize {
     let mut start = end;
     let mut seen_point = false;
@@ -427,8 +388,7 @@ mod tests {
             "microsoft/phi-4-reasoning-plus",
         ] {
             let classified = classify(id);
-            // Nemotron Ultra is here to prove the negative: nothing in that name
-            // says "reasoning", so it must not be guessed at.
+            // Nemotron Ultra checks the negative: its name says nothing about reasoning.
             if id.contains("nemotron-ultra") {
                 assert!(!classified.has(Speciality::Reasoning), "`{id}` was guessed at");
                 continue;
@@ -452,9 +412,7 @@ mod tests {
 
     #[test]
     fn the_things_that_are_not_chat_models_are_kept_out() {
-        // The entire reason this module exists. Each of these appears in a real
-        // provider catalogue beside the chat models, and each would answer a
-        // conversation with an error.
+        // Each appears in real provider catalogues beside chat models.
         for (id, expected) in [
             ("nvidia/nv-embedqa-e5-v5", ModelKind::Embedding),
             ("baai/bge-m3", ModelKind::Embedding),
@@ -487,8 +445,7 @@ mod tests {
 
     #[test]
     fn a_llama_that_is_a_reranker_is_not_read_as_a_llama() {
-        // Substring order is load-bearing: this id contains `llama`, and the
-        // check that matters has to win.
+        // Substring order is load-bearing: this id contains `llama`.
         let classified = classify("nvidia/llama-3.2-nv-rerankqa-1b-v2");
         assert_eq!(classified.kind, ModelKind::Rerank);
         assert!(classified.specialities.is_empty());
@@ -505,11 +462,9 @@ mod tests {
 
     #[test]
     fn a_version_number_is_not_a_parameter_count() {
-        // `llama-3.3-70b` must read as 70, never as 3.3.
         assert_eq!(params("meta/llama-3.3-70b-instruct"), Some(70.0));
         assert_eq!(params("mistralai/mistral-nemo-12b-instruct"), Some(12.0));
-        // Nothing in these states a size, and inventing one would put them in
-        // the wrong speed bucket.
+        // No size is stated, and inventing one would pick the wrong speed bucket.
         assert_eq!(params("microsoft/phi-4"), None);
         assert_eq!(params("mistralai/mistral-large-2-instruct"), None);
     }
@@ -523,8 +478,6 @@ mod tests {
 
     #[test]
     fn a_mixture_of_experts_reports_what_it_actually_costs_to_run() {
-        // Both figures appear in the name; the larger is the one that decides
-        // whether this fits anywhere.
         assert_eq!(params("qwen/qwen3-235b-a22b"), Some(235.0));
         assert_eq!(params("qwen/qwen3-30b-a3b"), Some(30.0));
         // And an `8x7b` is 56B of weights, not 7.
@@ -537,8 +490,7 @@ mod tests {
         assert!(classify("qwen/qwen2.5-3b-instruct").has(Speciality::Fast));
         assert!(!classify("meta/llama-3.3-70b-instruct").has(Speciality::Fast));
 
-        // A stated size overrules the vendor's own adjective: Mistral Small is
-        // 24B, which is not fast on anybody's laptop.
+        // A stated size overrules the adjective: Mistral Small is 24B.
         assert!(!classify("mistralai/mistral-small-24b-instruct").has(Speciality::Fast));
         // With no size to go on, the adjective is all there is.
         assert!(classify("google/gemini-flash").has(Speciality::Fast));
@@ -554,17 +506,15 @@ mod tests {
 
     #[test]
     fn a_name_that_says_nothing_says_general_rather_than_nothing() {
-        // An empty speciality list would render as a row with no tag at all,
-        // which reads as a bug rather than as an ordinary model.
+        // An empty list would render as a row with no tag, which reads as a bug.
         let classified = classify("mistralai/mistral-large-2-instruct");
         assert_eq!(classified.specialities, vec![Speciality::General]);
     }
 
     #[test]
     fn a_publisher_named_after_a_capability_does_not_lend_it_to_the_model() {
-        // Found on real OpenRouter data: `thinkingmachines/inkling` was tagged
-        // as a reasoning model because of the company that made it. There are
-        // enough firms named after a capability for this to matter.
+        // Found on OpenRouter: `thinkingmachines/inkling` was tagged as reasoning
+        // because of the company's name.
         let classified = classify("thinkingmachines/inkling");
         assert!(!classified.has(Speciality::Reasoning), "the company thinks; the model may not");
         assert_eq!(classified.specialities, vec![Speciality::General]);
@@ -599,8 +549,7 @@ mod tests {
 
     #[test]
     fn separators_do_not_change_the_answer() {
-        // Ollama writes `gpt-oss:20b`, Hugging Face writes `openai/gpt-oss-20b`.
-        // Two spellings of one model must not land in two groups.
+        // Ollama writes `gpt-oss:20b`, Hugging Face `openai/gpt-oss-20b`.
         let colon = classify("gpt-oss:20b");
         let dash = classify("gpt-oss-20b");
         assert_eq!(colon.specialities, dash.specialities);

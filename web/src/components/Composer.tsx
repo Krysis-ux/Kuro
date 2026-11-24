@@ -703,7 +703,7 @@ function AddMenu({
         enabled
         hint="Manage built-in tools, skills and MCP servers"
         badge={toolCount > 0 ? String(toolCount) : undefined}
-        onClick={() => navigate('/tools', leaving)}
+        onClick={() => navigate('/settings/mcp', leaving)}
       />
 
       {connected.slice(0, 4).map((server) => (
@@ -713,7 +713,7 @@ function AddMenu({
           label={server.name}
           enabled
           hint={`${server.tool_count ?? server.tools.length} tools from this server`}
-          onClick={() => navigate('/tools', leaving)}
+          onClick={() => navigate('/settings/mcp', leaving)}
         />
       ))}
 

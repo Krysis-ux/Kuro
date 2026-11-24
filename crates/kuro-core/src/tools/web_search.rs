@@ -1,28 +1,21 @@
-//! Web search.
+//! Web search, working out of the box via DuckDuckGo's keyless HTML endpoint.
+//! Scraping is fragile, so a parse failure is reported as a provider problem
+//! (with alternatives), never as "nothing was found".
 //!
-//! The point of this module is that search works the moment Kuro is installed.
-//! Requiring an API key before a model can look something up would make the
-//! feature theoretical for most people, so the default provider is DuckDuckGo's
-//! keyless HTML endpoint. Scraping is admittedly fragile — DuckDuckGo can change
-//! its markup — so a failure there is reported as a provider problem with a
-//! pointer to the alternatives, never as "nothing was found".
-//!
-//! Everything else is a proper API and needs a key: Brave and Tavily are hosted,
-//! and SearXNG is whatever instance the user runs. All four return the same
-//! [`SearchResult`] shape, so the tool layer and the UI never branch on provider.
+//! Brave and Tavily (hosted, keyed) and SearXNG (a user-run instance) are real
+//! APIs. All four return [`SearchResult`], so nothing downstream branches on
+//! provider.
 
 use serde::{Deserialize, Serialize};
 
 use crate::tools::html;
 use crate::{KuroError, Result};
 
-/// Results asked of a provider when the caller has no preference. Enough to
-/// answer a question, few enough not to swamp a small context window.
+/// Results requested when the caller has no preference.
 pub const DEFAULT_MAX_RESULTS: usize = 5;
-/// Ceiling regardless of what a model asks for.
+/// Ceiling regardless of what the model asks for.
 const RESULT_LIMIT: usize = 10;
-/// Snippets are truncated to this many characters. A provider occasionally
-/// returns most of a page, which would crowd out the rest of the results.
+/// Snippets are truncated to this many characters.
 const MAX_SNIPPET_CHARS: usize = 400;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,10 +78,8 @@ impl Default for SearchConfig {
 }
 
 impl SearchConfig {
-    /// Whether this configuration can actually run a search.
-    ///
-    /// Checked before a search is attempted so a missing key is a clear message
-    /// rather than a 401 from someone else's API.
+    /// Whether this configuration can run a search. Checked up front so a missing
+    /// key is a clear message, not a 401.
     pub fn validate(&self) -> Result<()> {
         if self.provider.needs_api_key() && self.api_key.as_deref().unwrap_or("").trim().is_empty() {
             return Err(KuroError::bad_request(format!(
@@ -140,15 +131,13 @@ pub async fn search(
 
 /* ---------- DuckDuckGo ---------- */
 
-/// The no-JavaScript endpoint. Its markup is plain enough to read without a
-/// parser, and it does not require a key.
+/// The no-JavaScript endpoint: plain markup, no key.
 const DDG_ENDPOINT: &str = "https://html.duckduckgo.com/html/";
 
 async fn duckduckgo(client: &reqwest::Client, query: &str) -> Result<Vec<SearchResult>> {
     let response = client
         .post(DDG_ENDPOINT)
-        // A browser-shaped Accept header; the API-oriented default gets a
-        // different, harder-to-read page.
+        // Browser-shaped Accept; the API default gets a harder-to-read page.
         .header("Accept", "text/html")
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(format!("q={}", html::percent_encode(query)))
@@ -176,16 +165,11 @@ async fn duckduckgo(client: &reqwest::Client, query: &str) -> Result<Vec<SearchR
     Ok(results)
 }
 
-/// Pull results out of the HTML page.
-///
-/// Keyed on the *shape* of the document rather than on class names, which
-/// DuckDuckGo renames, or on its `/l/?uddg=` redirect, which it has now dropped:
-/// a result is an outbound link to somewhere that is not DuckDuckGo, and each one
-/// appears several times in a row — as an icon, a title, a displayed URL and a
-/// snippet. Grouping the repeats by URL recovers all three fields without caring
-/// which class each carries.
+/// Pull results out of the HTML page. Keyed on document shape, not class names
+/// (which get renamed): a result is an outbound link that appears several times
+/// (icon, title, displayed URL, snippet), so anchors are grouped by URL.
 fn parse_duckduckgo(body: &str) -> Vec<SearchResult> {
-    // Insertion-ordered: the first time a URL appears is its rank.
+    // Insertion-ordered: first appearance is the rank.
     let mut order: Vec<String> = Vec::new();
     let mut texts: Vec<(String, Vec<String>)> = Vec::new();
 
@@ -227,11 +211,8 @@ fn parse_duckduckgo(body: &str) -> Vec<SearchResult> {
         .collect()
 }
 
-/// Decide which of a result's anchor texts is the title and which the snippet.
-///
-/// The longest is the snippet — a description is always longer than a headline.
-/// The title is the longest of what remains that is not just the URL written out,
-/// which is what the third link in each result block contains.
+/// Split a result's anchor texts into (title, snippet): the longest is the
+/// snippet, the title is the next longest that is not just the displayed URL.
 fn split_title_and_snippet(texts: &[String], url: &str) -> (String, String) {
     let host = host_of(url);
 
@@ -245,11 +226,10 @@ fn split_title_and_snippet(texts: &[String], url: &str) -> (String, String) {
         .skip(1)
         .find(|text| !is_displayed_url(text, &host))
         .map(|text| text.to_string())
-        // Some layouts give the title and nothing else; when only one text exists
-        // it is the title, not the snippet.
+        // A lone text is the title.
         .unwrap_or_else(|| if texts.len() == 1 { snippet.clone() } else { host.clone() });
 
-    // A single text is a title, so it must not also be reported as a description.
+    // A lone title must not double as the snippet.
     if texts.len() <= 1 {
         return (title, String::new());
     }
@@ -263,10 +243,8 @@ fn is_displayed_url(text: &str, host: &str) -> bool {
         || normalised.starts_with(&format!("www.{}", host.to_ascii_lowercase()))
 }
 
-/// The outbound URL a result link points at.
-///
-/// Handles the current direct form and the older `/l/?uddg=` redirect, because a
-/// regional or cached deployment may still serve either.
+/// The outbound URL a result link points at: the direct form, or the older
+/// `/l/?uddg=` redirect (some deployments still serve it).
 fn result_target(href: &str) -> Option<String> {
     if href.contains("uddg=") {
         let after = href.split("uddg=").nth(1)?;
@@ -278,8 +256,7 @@ fn result_target(href: &str) -> Option<String> {
     is_outbound(href).then(|| href.to_string())
 }
 
-/// Whether a URL leaves DuckDuckGo. Its own pages, assets and ad redirects do not
-/// count as results.
+/// Whether a URL leaves DuckDuckGo (its own pages, assets and ads are not results).
 fn is_outbound(url: &str) -> bool {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return false;
@@ -288,8 +265,8 @@ fn is_outbound(url: &str) -> bool {
     !(host == "duckduckgo.com" || host.ends_with(".duckduckgo.com"))
 }
 
-/// True when the page is genuinely reporting an empty result set, as opposed to
-/// having a layout this code failed to read.
+/// True when the page reports an empty result set, rather than a layout this
+/// code failed to read.
 fn mentions_no_results(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
     lower.contains("no results") || lower.contains("no-results")
@@ -438,8 +415,7 @@ async fn searxng(
         .get(format!("{base}/search"))
         .query(&[("q", query), ("format", "json")]);
 
-    // Some instances sit behind a token even though the software itself takes
-    // none, so send one when it is configured.
+    // Some instances sit behind a token; send one if configured.
     if let Some(key) = config.api_key.as_deref().filter(|key| !key.trim().is_empty()) {
         request = request.bearer_auth(key);
     }
@@ -461,8 +437,7 @@ async fn searxng(
 
 /* ---------- Shared ---------- */
 
-/// Decode a provider's JSON, turning an HTTP failure into a message that names
-/// the provider and quotes what it said.
+/// Decode a provider's JSON; an HTTP failure becomes a message naming the provider.
 async fn provider_json<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
     provider: &str,
@@ -504,10 +479,8 @@ fn host_of(url: &str) -> String {
         .to_string()
 }
 
-/// Render results as the text a model reads.
-///
-/// Numbered, with the URL on its own line, because that is the shape models are
-/// most reliable at citing back.
+/// Render results as numbered entries with the URL on its own line (the shape
+/// models cite most reliably).
 pub fn format_for_model(query: &str, results: &[SearchResult]) -> String {
     if results.is_empty() {
         return format!("No web results for \"{query}\".");
@@ -606,9 +579,9 @@ mod tests {
         assert_eq!(result_target("//duckduckgo.com/favicon.ico"), None);
         assert_eq!(result_target("https://duckduckgo.com/about"), None);
         assert_eq!(result_target("https://html.duckduckgo.com/html/"), None);
-        // An ad redirect through DuckDuckGo's own host is not a result either.
+        // Ad redirect.
         assert_eq!(result_target("https://duckduckgo.com/y.js?ad=1"), None);
-        // A redirect to something that is not http is not a usable result.
+        // Non-http redirect target.
         assert_eq!(result_target("//duckduckgo.com/l/?uddg=javascript%3Aalert(1)"), None);
     }
 

@@ -29,6 +29,7 @@ import {
   TerminalIcon,
   TrashIcon,
 } from '../components/icons'
+import { HelpTip } from '../components/HelpTip'
 
 /**
  * The Code page.
@@ -93,10 +94,9 @@ function WorkspaceList() {
     <div className="page">
       <header className="page-head">
         <h1>Code</h1>
-        <p className="muted">
-          A workspace is a folder on this computer that a model can work in — reading it,
-          changing it, and running its build and tests. Chat can read these folders; only
-          here can anything be changed.
+        <p className="muted title-help">
+          Folders a model can read, change and build.
+          <HelpTip text="Chat can read these folders; only here can anything be changed." />
         </p>
       </header>
 
@@ -404,7 +404,7 @@ function WorkspaceView({ id }: { id: string }) {
           {history.length === 0 && !turn.stream && !turn.error && turn.notices.length === 0 ? (
             <div className="code-empty">
               <FolderIcon size={26} />
-              <p className="muted">{emptyLine(workspace.mode)}</p>
+              <p className="muted">{modeNote(workspace.mode)}</p>
             </div>
           ) : (
             <MessageList
@@ -460,7 +460,7 @@ function WorkspaceView({ id }: { id: string }) {
           }
           draftKey={`code:${id}`}
           disabledReason={blocked}
-          hint={modeNote(workspace.mode)}
+          hint={history.length === 0 && !turn.stream && !turn.error && turn.notices.length === 0 ? undefined : modeNote(workspace.mode)}
         />
       </main>
 
@@ -889,10 +889,9 @@ function ChangeList({ id }: { id: string }) {
   if (held.length === 0) {
     return (
       <>
-        <p className="faint code-panel-note">Nothing has been changed yet.</p>
-        <p className="faint code-panel-note">
-          Commands are not listed here. A file edit can be put back; a command that has
-          already run cannot.
+        <p className="faint code-panel-note title-help">
+          Nothing changed yet
+          <HelpTip text="Commands are not listed here. A file edit can be put back; a command that has already run cannot." />
         </p>
       </>
     )
@@ -960,19 +959,6 @@ function describeChange(change: WorkspaceChange): string {
 
 /* ---------- Words ---------- */
 
-function emptyLine(mode: WorkspaceMode): string {
-  switch (mode) {
-    case 'ask':
-      return 'Ask mode. The model cannot see this project — paste in what you want to discuss.'
-    case 'plan':
-      return 'Plan mode. Ask about this project and the model will read it before answering.'
-    case 'agent':
-      return 'Agent mode. Describe a change and the model will make it, then build it and run the tests. Every edit can be undone.'
-    case 'bypass':
-      return 'Bypass mode. Same as Agent, with no limit on what commands it may run.'
-  }
-}
-
 function placeholderFor(mode: WorkspaceMode): string {
   switch (mode) {
     case 'ask':
@@ -988,12 +974,12 @@ function placeholderFor(mode: WorkspaceMode): string {
 function modeNote(mode: WorkspaceMode): string {
   switch (mode) {
     case 'ask':
-      return 'Ask mode: no access to this folder.'
+      return 'No access to this folder.'
     case 'plan':
-      return 'Plan mode: can read this folder, and cannot change it or run anything.'
+      return 'Reads this folder. Changes nothing.'
     case 'agent':
-      return 'Agent mode: can change files here and run build and test commands. Every edit can be undone.'
+      return 'Edits files and runs build and test commands. Every edit can be undone.'
     case 'bypass':
-      return 'Bypass mode: can change files here and run any command, with no allowlist.'
+      return 'Edits files and runs any command.'
   }
 }

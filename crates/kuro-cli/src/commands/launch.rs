@@ -1,23 +1,13 @@
 //! `kuro launch` — run another coding tool against a Kuro model.
 //!
-//! The idea is Ollama's: you already have Claude Code installed and you already
-//! like its interface, its file editing and its permission prompts. What you do
-//! not necessarily have is a reason to send every keystroke to one company's
-//! API. So Kuro stands in as the model — local weights, a free provider's
-//! allowance, or a key you hold — and the tool it launches never knows.
+//! Kuro stands in as the model (local weights, a free provider's allowance or a
+//! key you hold) for a tool you already have, such as Claude Code, which never
+//! knows the difference.
 //!
-//! ## How this works, and what it is not
-//!
-//! Claude Code reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from its
-//! environment. So this sets both, points the first at the local daemon's
-//! Anthropic-compatible endpoint, and execs the real binary. Nothing is
-//! installed, nothing is patched, and no configuration file is edited — which
-//! is deliberate. A launcher that rewrote a user's settings would leave them
-//! broken the moment it crashed, and "undo whatever that did" is not a thing
-//! anybody should have to work out. Close the terminal and the effect is gone.
-//!
-//! It is also not a way around anyone's terms. It runs a tool you installed,
-//! against a model you supplied, on your machine.
+//! Claude Code reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`; this sets
+//! both, pointing the first at the daemon's Anthropic-compatible endpoint, and
+//! execs the real binary. Nothing is installed or patched and no configuration
+//! file is edited, so closing the terminal undoes everything.
 
 use std::process::Command;
 
@@ -49,11 +39,8 @@ enum Wire {
     OpenAi,
 }
 
-/// What can be launched today.
-///
-/// Short on purpose. Every entry here is one whose environment variables have
-/// been checked against the tool's own documentation — a list of tools that
-/// *might* work would be a list of ways to waste somebody's afternoon.
+/// What can be launched today. Short on purpose: every entry has had its
+/// environment variables checked against the tool's own documentation.
 const LAUNCHABLE: &[Launchable] = &[
     Launchable {
         name: "claude",
@@ -92,9 +79,7 @@ pub async fn launch(
         bail!("unknown application");
     };
 
-    // The daemon has to be up before anything is pointed at it, or the tool
-    // starts and fails on its first message with a connection error that says
-    // nothing about Kuro.
+    // The daemon must be up first, or the tool fails on its first message with no mention of Kuro.
     client.ensure_running().await?;
 
     let Some(path) = which(target.binary) else {
@@ -103,9 +88,8 @@ pub async fn launch(
         bail!("`{}` not found", target.binary);
     };
 
-    // Checked before launching rather than after: a model name that does not
-    // resolve produces an error inside the other tool's interface, where it
-    // looks like that tool is broken.
+    // Checked before launching: a bad model name would otherwise fail inside the
+    // other tool's UI, where it looks like that tool is broken.
     let model = match model {
         Some(name) => {
             verify_model(client, &name).await?;
@@ -129,9 +113,8 @@ pub async fn launch(
     match target.wire {
         Wire::Anthropic => {
             command.env("ANTHROPIC_BASE_URL", &base);
-            // Kuro listens on loopback and has no authentication, so this is a
-            // placeholder rather than a secret. It exists because the client
-            // refuses to start without one.
+            // Kuro listens on loopback with no authentication, so this is a placeholder,
+            // not a secret; the client refuses to start without one.
             command.env("ANTHROPIC_AUTH_TOKEN", "kuro-local");
             command.env("ANTHROPIC_API_KEY", "kuro-local");
             if let Some(model) = &model {
@@ -147,9 +130,8 @@ pub async fn launch(
         }
     }
 
-    // Replaces this process, so the launched tool owns the terminal completely
-    // — its own key handling, its own resize behaviour, its own exit code.
-    // Anything less makes a full-screen interface feel subtly wrong.
+    // Replaces this process so the launched tool owns the terminal completely
+    // (key handling, resize, exit code).
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -244,8 +226,7 @@ mod tests {
 
     #[test]
     fn every_launchable_says_where_to_get_it() {
-        // A tool that is not installed and does not say where it comes from is
-        // a dead end.
+        // Without an install URL, a missing tool is a dead end.
         for entry in LAUNCHABLE {
             assert!(entry.install.starts_with("https://"), "{}", entry.name);
             assert!(!entry.binary.is_empty());

@@ -9,19 +9,17 @@ use serde_json::{json, Value};
 
 use crate::state::SharedState;
 
-/// Work out where a request should go.
-///
-/// A provider model is recognised by its `cloud:` prefix and resolved against the
-/// provider registry; anything else is a local model and goes through
-/// [`resolve_model_id`]. Doing this in one place means every caller — the native
-/// chat route and the OpenAI-compatible one — treats local and remote alike.
+/// Work out where a request should go. A `cloud:` provider model resolves
+/// against the provider registry and anything else is a local model via
+/// [`resolve_model_id`]; doing it in one place keeps the native and
+/// OpenAI-compatible routes consistent.
 pub async fn resolve_target(state: &SharedState, requested: Option<&str>) -> Result<ChatTarget> {
     let explicit = requested
         .map(str::trim)
         .filter(|name| !name.is_empty() && *name != "auto" && *name != "default");
 
-    // The free pool comes first, because a `free:` id is not a connector id and
-    // would otherwise fall through to the local path and be reported missing.
+    // The free pool comes first: a `free:` id is not a connector id and would fall
+    // through to the local path and be reported missing.
     if let Some(name) = explicit.filter(|name| free::is_free_model(name)) {
         return resolve_free_target(state, name).await;
     }
@@ -30,8 +28,7 @@ pub async fn resolve_target(state: &SharedState, requested: Option<&str>) -> Res
         return state.providers.resolve_target(name);
     }
 
-    // A stored default may itself be a provider model, so it is checked before
-    // falling through to the local-only path.
+    // A stored default may itself be a provider model, so check it before the local-only path.
     if explicit.is_none() {
         if let Some(default) = state
             .db
@@ -50,21 +47,17 @@ pub async fn resolve_target(state: &SharedState, requested: Option<&str>) -> Res
     })
 }
 
-/// Turn a `free:` model id into whichever provider can actually serve it.
+/// Turn a `free:` model id into whichever provider can serve it.
 ///
-/// The failure here is worth spelling out rather than reporting as "no such
-/// model": the id is real, the pool is real, and the reason nothing happens is
-/// that Kuro supplies no keys and this person has not added one yet. A generic
-/// not-found sends them looking for a model that was never missing.
+/// With no key yet the error says so, rather than "no such model", which would
+/// send the user looking for a model that was never missing.
 async fn resolve_free_target(state: &SharedState, model_id: &str) -> Result<ChatTarget> {
     let selection = free::parse_selection(model_id)
         .ok_or_else(|| KuroError::not_found(format!("model `{model_id}`")))?;
 
     let keys = crate::routes::free::stored_keys(state);
 
-    // A model picked by name needs no catalogue: the user already said which
-    // provider and which model, so reading a list to discover that is a round
-    // trip spent confirming what was passed in.
+    // A model picked by name needs no catalogue: provider and model were already named.
     let flavour = match selection {
         free::Selection::Flavour(flavour) => flavour,
         free::Selection::Pinned { slug, model } => {
@@ -78,12 +71,9 @@ async fn resolve_free_target(state: &SharedState, model_id: &str) -> Result<Chat
         }
     };
 
-    // Find out what these providers currently offer — but not while the user
-    // waits. This used to be awaited here, which put the slowest of twenty
-    // catalogue reads in front of the first token on every restart and again
-    // every half hour. Choosing from a stale catalogue costs at worst one 404
-    // and a failover; choosing fifteen seconds late costs a message that looks
-    // like it never sent.
+    // Refresh what these providers offer, but not while the user waits: awaiting
+    // the slowest catalogue read would delay the first token, and a stale catalogue
+    // costs at worst one 404 and a failover.
     crate::routes::free::refresh_catalogues_in_background(state, &keys);
 
     let Some(choice) = state.free.choose(flavour, &keys) else {
@@ -109,29 +99,22 @@ async fn resolve_free_target(state: &SharedState, model_id: &str) -> Result<Chat
 /// Turn a pool choice into somewhere to send the request.
 fn free_target(model_id: &str, choice: free::Choice) -> ChatTarget {
     ChatTarget::Remote {
-        // The connector id is the pool's own model id rather than a provider,
-        // so the conversation records "this was Kuro Free" rather than pinning
-        // it to whichever provider happened to answer that minute.
+        // The pool's own model id rather than a provider, so the conversation records
+        // "Kuro Free" instead of pinning to whichever provider answered.
         connector_id: model_id.to_string(),
         label: format!("Kuro Free · {}", choice.name),
         base_url: choice.base_url,
         authorization: choice.authorization,
         model: choice.model,
         quirks: choice.quirks,
-        // Which allowance this turn actually spends. Distinct from
-        // `connector_id` above, and the line that used to be missing: without
-        // it nothing downstream could say where a message went, so usage could
-        // not be attributed and a failure had to guess at the provider to
-        // blame.
+        // Which allowance this turn spends. Distinct from `connector_id`; it lets usage
+        // be attributed and failures blamed on the right provider.
         upstream: Some(choice.slug),
     }
 }
 
-/// Work out which local model to run.
-///
-/// Falls back to the configured default and then, when the machine has exactly
-/// one usable model, to that one — so a first-time user who has pulled a single
-/// model never has to name it.
+/// Work out which local model to run: the configured default, then the only
+/// usable model if there is exactly one, so a first-time user never has to name it.
 pub async fn resolve_model_id(state: &SharedState, requested: Option<&str>) -> Result<String> {
     let explicit = requested
         .map(str::trim)
@@ -187,27 +170,11 @@ pub async fn resolve_model_id(state: &SharedState, requested: Option<&str>) -> R
 
 /// Convert stored history into the message array the engine expects.
 ///
-/// Placeholder assistant rows — created before generation and still empty
-/// because a request failed — are dropped so a past failure cannot corrupt the
-/// context of every later turn. A row that ran tools is kept even when it has no
-/// text, because what it *did* is the part later turns need.
-///
-/// ## Why the tool trail is replayed
-///
-/// This used to send `{role, content}` and nothing else, which meant a model
-/// entered every turn with no record of its own actions. The failure that
-/// produces is specific and bad: asked to start a dev server it starts one,
-/// and asked in the next message to stop it, it answers — sincerely — that it
-/// never started anything, because from inside the context window it didn't.
-/// The user is then in the position of arguing with an assistant about events
-/// they both witnessed, and the assistant's confidence is entirely a function
-/// of having been handed an amnesiac transcript.
-///
-/// So each assistant turn that used tools is followed by a record of what it
-/// ran. It is addressed to the model as Kuro's own log rather than as something
-/// the user said, because the distinction matters when the two disagree: the log
-/// is what happened, and a model that has one has no reason to reason about what
-/// it "would have" done.
+/// Empty placeholder assistant rows (from failed requests) are dropped so they
+/// cannot corrupt later context; a row that ran tools is kept even without text.
+/// Each assistant turn that used tools is followed by a system message logging
+/// what ran, in Kuro's own voice rather than the user's, so the model does not
+/// forget its actions (for example deny starting a dev server it started).
 pub fn history_to_messages(history: &[Message]) -> Vec<Value> {
     let mut out = Vec::with_capacity(history.len());
 
@@ -229,18 +196,14 @@ pub fn history_to_messages(history: &[Message]) -> Vec<Value> {
 }
 
 /// The most tool calls described back to the model from any one past turn.
-///
-/// A long agentic turn can make dozens; replaying all of them into every
-/// subsequent turn would crowd out the conversation it is supposed to be
-/// supporting. The most recent ones are the ones later questions are about.
+/// Replaying dozens would crowd out the conversation; the most recent are what
+/// later questions are about.
 const MAX_REPLAYED_CALLS: usize = 12;
 /// How much of each stored preview is replayed.
 const PREVIEW_CHARS: usize = 240;
 
 /// One assistant turn's tool calls, written out for the next turn to read.
-///
-/// Returns `None` when the turn used no tools, which is most of them — an
-/// ordinary answer should not gain a system message describing an empty list.
+/// `None` when no tools were used, so an ordinary answer gains no system message.
 fn tool_trail_of(message: &Message) -> Option<String> {
     if message.role != "assistant" {
         return None;
@@ -375,9 +338,7 @@ mod tests {
 
     #[test]
     fn a_turn_that_ran_tools_is_followed_by_a_record_of_them() {
-        // The bug this exists for: a model that started a server, was asked to
-        // stop it, and insisted it had never started one — because its own
-        // actions were not in the transcript it was handed.
+        // Without the record, a model that started a server denies it when asked to stop it.
         let history = vec![
             message("user", "run it for me"),
             with_tools(
@@ -432,8 +393,7 @@ mod tests {
 
     #[test]
     fn a_turn_that_only_ran_tools_survives_the_empty_filter() {
-        // Dropped before this change: the row has no text, so it looked like a
-        // failed placeholder — and the actions went with it.
+        // No text, so it could be mistaken for a failed placeholder and lose its actions.
         let history = vec![with_tools(
             "",
             json!([{ "name": "stop_process", "arguments": {}, "ok": true }]),

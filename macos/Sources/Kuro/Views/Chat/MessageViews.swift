@@ -58,7 +58,6 @@ struct MessageRow: View, Equatable {
 
     @ViewBuilder private var assistant: some View {
         let tools = message.toolCalls ?? []
-        // A reply that failed before producing anything is hidden rather than shown empty.
         if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || message.reasoningContent != nil || !tools.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 if !tools.isEmpty {
@@ -78,6 +77,10 @@ struct MessageRow: View, Equatable {
                 if showDetails { details(tools: tools.count) }
                 if actionable { actions(edit: false) }
             }
+        } else if message.finishReason == "error" {
+            Label("No reply. The model failed to answer.", systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 

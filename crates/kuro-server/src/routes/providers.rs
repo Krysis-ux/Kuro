@@ -1,13 +1,10 @@
-//! Remote model endpoints: API providers, and hardware you rent.
+//! Remote model endpoints: API providers and rented hardware.
 //!
-//! One endpoint serves both, because the mechanism is identical — an
-//! OpenAI-compatible URL and a key the user holds. What differs is the decision,
-//! so every entry carries a `surface` (`provider` or `cloud`) and the interface
-//! shows them on two screens. See [`kuro_core::cloud::presets::Surface`] for why
-//! that separation is worth making.
-//!
-//! The storage table is still `cloud_connectors`; renaming it would need a
-//! migration that buys nothing.
+//! One endpoint serves both because the mechanism is the same: an
+//! OpenAI-compatible URL plus a key the user holds. Each entry carries a
+//! `surface` (`provider` or `cloud`) so the UI can show them on two screens; see
+//! [`kuro_core::cloud::presets::Surface`]. The storage table is still
+//! `cloud_connectors`.
 
 use axum::extract::{Path, State};
 use axum::Json;
@@ -29,21 +26,18 @@ pub async fn list_providers(State(state): State<SharedState>) -> AppResult<Json<
         .map(|connector| {
             let has_key = state.providers.has_key(&connector);
             let mut encoded = serde_json::to_value(&connector).unwrap_or_else(|_| json!({}));
-            // The reference is an internal detail and looks like a secret to a
-            // reader of the API, so it is not published.
+            // An internal detail that looks like a secret; not published.
             if let Some(object) = encoded.as_object_mut() {
                 object.remove("keychain_ref");
             }
             encoded["hasKey"] = json!(has_key);
-            // Which of the two screens this belongs on, resolved from the preset
-            // it was created from so the client never has to know the mapping.
+            // Screen this belongs on, derived from its preset so clients need not know the mapping.
             encoded["surface"] = json!(surface_for(&connector.provider).as_str());
             encoded
         })
         .collect();
 
-    // `surface` is derived from `kind` rather than stored on the preset, so that
-    // there is one place deciding which screen an entry belongs on.
+    // `surface` is derived from `kind`, not stored, so one place decides an entry's screen.
     let presets: Vec<Value> = PRESETS
         .iter()
         .map(|preset| {
@@ -90,8 +84,7 @@ pub async fn add_provider(
         )
         .await?;
 
-    // The probe already ran inside `add`, so the record carries its own verdict —
-    // including a failure, which leaves the provider saved and fixable.
+    // `add` already probed; the record carries the verdict, and a failed provider stays saved.
     Ok(Json(json!({
         "provider": {
             "id": connector.id,

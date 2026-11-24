@@ -1,8 +1,5 @@
-//! Projects.
-//!
-//! Standing instructions plus a grouping of conversations. The value is the
-//! instructions — said once, applied to every chat in the project — and the
-//! grouping is what makes them findable again later.
+//! Projects: standing instructions applied to every chat in the project, plus
+//! a grouping that makes those conversations findable.
 
 use axum::extract::{Path, State};
 use axum::Json;

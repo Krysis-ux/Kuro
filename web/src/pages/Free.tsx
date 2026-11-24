@@ -1,46 +1,29 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ProviderLogo } from '../components/BrandLogo'
+import { HelpTip, TitleWithHelp } from '../components/HelpTip'
+import { Switch } from './Tools'
 import {
   api,
   type FreeProvider,
   type FreeProviderUsage,
   type FreeUsage,
 } from '../lib/api'
-import {
-  ChartIcon,
-  CheckIcon,
-  ExternalIcon,
-  GiftIcon,
-  KeyIcon,
-  RefreshIcon,
-  TrashIcon,
-} from '../components/icons'
+import { ExternalIcon, GiftIcon, RefreshIcon, TrashIcon } from '../components/icons'
 
 /**
- * Free models.
+ * Kuro Free: your own free-tier keys pooled into one model, which sends each
+ * request to whichever provider still has allowance. Shown inside Providers.
  *
- * Every company running an inference API gives some of it away, and individually
- * each allowance is a toy. The reason nobody uses them together is the
- * bookkeeping: a dozen keys, a dozen dashboards, and no way to know which one
- * still has quota this hour.
- *
- * This screen is that bookkeeping. Paste in whichever keys you have and they
- * become one model in the picker, called Kuro Free, which sends each request to
- * whichever provider is currently able to serve it.
- *
- * The page is written to prevent one specific misunderstanding: that Kuro is
- * giving away inference. It is not. There is no shared account and no key here
- * that Kuro supplies, and nothing works until you have added one of your own.
- * Saying that once at the top is cheaper than letting somebody discover it from
- * an error message.
+ * Kuro supplies no keys; nothing works until you add one of your own. Shared
+ * endpoints are listed last because they are tried last: the order on screen is
+ * the order requests are routed in.
  */
-export function FreePage() {
+export function FreeDetail() {
   const queryClient = useQueryClient()
   const overview = useQuery({ queryKey: ['free'], queryFn: api.free.overview })
-  // A separate query from the overview, which is re-read after every key edit.
-  // This is the one request whose cost grows with the size of the message
-  // table, and coupling it to key editing would re-run it constantly.
+  // Apart from the overview, which is re-read after every key edit: this is the
+  // one request whose cost grows with the message table.
   const usage = useQuery({ queryKey: ['free', 'usage'], queryFn: api.free.usage })
 
   const setKeyless = useMutation({
@@ -53,138 +36,96 @@ export function FreePage() {
 
   const held = overview.data
   const providers = held?.providers ?? []
-  // Shared endpoints are their own group, listed last, because the order on
-  // screen has to be the order requests are routed in — a page that mixed them
-  // among the keyed providers would be claiming something the pool will not do.
   const shared = providers.filter((provider) => provider.keyless)
   const owned = providers.filter((provider) => !provider.keyless)
   const withKeys = owned.filter((provider) => provider.hasKey)
   const without = owned.filter((provider) => !provider.hasKey)
 
+  const statusLine = !held
+    ? 'Loading…'
+    : held.keyCount === 0
+      ? 'Add a free key to turn it on.'
+      : `${held.availableCount} of ${held.keyCount} ${held.keyCount === 1 ? 'key' : 'keys'} working`
+
   return (
-    <div className="page">
-      <header className="page-head">
-        <h1>Free models</h1>
-        <p className="muted">
-          Most inference providers have a free tier. Add the keys you have and Kuro pools them
-          into one model — it picks whichever provider can answer, and moves to the next when
-          one runs out of allowance for the day.
-        </p>
-      </header>
+    <div className="prov-pane">
+      <div className="prov-title">
+        <span className="icon-tile icon-tile-lg">
+          <GiftIcon size={17} />
+        </span>
+        <div className="prov-title-text">
+          <span className="title-help">
+            <strong>Kuro Free</strong>
+            <HelpTip text="Kuro supplies no keys. Each one is yours, on a free tier, in your own name. Requests leave this machine, and free tiers are the likeliest to train on them: keep private work local." />
+          </span>
+          <span className="muted">{statusLine}</span>
+        </div>
+      </div>
 
-      <section className="panel">
-        <h2 className="panel-title">
-          <GiftIcon size={15} />
-          How this works
-        </h2>
-        <p className="faint panel-note">
-          <strong>Kuro does not supply any keys.</strong> Every key below is one you sign up
-          for yourself, on a free tier, in your own name. Nothing here works until you have
-          added at least one — and once you have, <code className="mono">Kuro Free</code>{' '}
-          appears in the model picker beside your local models.
-        </p>
-        <p className="faint panel-note">
-          These requests leave this machine, exactly as a paid provider's would. Free tiers are
-          also the ones most likely to train on what they receive, so keep anything private on
-          a local model.
-        </p>
-
-        {held && (
-          <div className="row">
-            <span className="faint">Ready</span>
-            <span>
-              {held.availableCount === 0
-                ? 'No providers yet'
-                : `${held.availableCount} of ${held.keyCount} added ${
-                    held.keyCount === 1 ? 'key' : 'keys'
-                  } working`}
-            </span>
-          </div>
-        )}
-
-        {held && held.keyCount > 0 && (
-          <div className="free-flavours">
-            {held.flavours.map((flavour) => (
-              <div
-                key={flavour.id}
-                className={`free-flavour ${flavour.available ? '' : 'is-off'}`}
-              >
-                <div className="free-flavour-head">
-                  <code className="mono">{flavour.id}</code>
-                  {flavour.available ? (
-                    <span className="tag tag-live">ready</span>
-                  ) : (
-                    <span className="tag">no provider for this</span>
-                  )}
-                </div>
-                <p className="muted">{flavour.blurb}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {overview.isError && (
-        <section className="panel">
-          <p className="form-error">The free-provider list could not be read.</p>
-        </section>
-      )}
-
-      {withKeys.length > 0 && (
-        <section className="panel">
-          <h2 className="panel-title">Your keys</h2>
-          <div className="server-rows">
-            {withKeys.map((provider) => (
-              <ProviderRow key={provider.slug} provider={provider} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="panel">
-        <h2 className="panel-title">{withKeys.length > 0 ? 'Add more' : 'Providers'}</h2>
-        <p className="faint panel-note">
-          Each of these is free to sign up for and needs no card. Adding more is what makes the
-          pool worth having: when one is out of allowance, the next one answers.
-        </p>
-        <div className="server-rows">
-          {without.map((provider) => (
-            <ProviderRow key={provider.slug} provider={provider} />
+      {held && held.keyCount > 0 && (
+        <div className="free-flavours">
+          {held.flavours.map((flavour) => (
+            <div key={flavour.id} className="row" title={flavour.blurb}>
+              <code className="mono">{flavour.id}</code>
+              <span className={`tag ${flavour.available ? 'tag-live' : ''}`}>
+                {flavour.available ? 'ready' : 'no provider'}
+              </span>
+            </div>
           ))}
         </div>
-      </section>
+      )}
+
+      {overview.isError && <p className="form-error">The free-provider list could not be read.</p>}
+
+      {withKeys.length > 0 && (
+        <FreeGroup title="Your Keys">
+          {withKeys.map((provider) => (
+            <ProviderRow key={provider.slug} provider={provider} />
+          ))}
+        </FreeGroup>
+      )}
+
+      <FreeGroup
+        title={withKeys.length > 0 ? 'Add More' : 'Add a Free Key'}
+        help="Each is free to sign up for and needs no card. More keys make the pool sturdier: when one runs out, the next answers."
+      >
+        {without.map((provider) => (
+          <ProviderRow key={provider.slug} provider={provider} />
+        ))}
+      </FreeGroup>
 
       {shared.length > 0 && (
-        <section className="panel">
-          <h2 className="panel-title">Shared endpoints</h2>
-          <p className="faint panel-note">
-            These answer with no account and no key at all, which is what makes Kuro Free work
-            before you have signed up for anything. They are used <strong>last</strong> — any
-            provider you hold a key for is tried first, even when it has fallen back to a model
-            Kuro had to guess at. They are shared, so they are rate limited by your address and
-            often busy, and several keep or train on what they are sent.
-          </p>
-
-          <label className="row toggle-row">
-            <input
-              type="checkbox"
-              checked={held?.allowKeyless ?? true}
-              onChange={(event) => setKeyless.mutate(event.target.checked)}
-              disabled={setKeyless.isPending}
+        <FreeGroup title="Shared Endpoints">
+          <div className="row">
+            <TitleWithHelp
+              title="Use as a last resort"
+              help="These answer with no account, so Kuro Free works before you sign up for anything. They are rate limited, often busy, and several keep or train on what they are sent."
             />
-            <span>Use shared endpoints when nothing else can answer</span>
-          </label>
-
-          <div className="server-rows">
-            {shared.map((provider) => (
-              <ProviderRow key={provider.slug} provider={provider} />
-            ))}
+            <Switch
+              checked={held?.allowKeyless ?? true}
+              label="Use shared endpoints as a last resort"
+              onChange={(enabled) => setKeyless.mutate(enabled)}
+            />
           </div>
-        </section>
+          {shared.map((provider) => (
+            <ProviderRow key={provider.slug} provider={provider} />
+          ))}
+        </FreeGroup>
       )}
 
       <UsagePanel usage={usage.data} />
     </div>
+  )
+}
+
+function FreeGroup({ title, help, children }: { title: string; help?: string; children: React.ReactNode }) {
+  return (
+    <section className="free-group">
+      <span className="tile-group-title muted">
+        <TitleWithHelp title={title} help={help} />
+      </span>
+      <div className="sunken-card">{children}</div>
+    </section>
   )
 }
 
@@ -217,11 +158,11 @@ function LimitField({ provider }: { provider: FreeProvider }) {
 
   return (
     <label className="limit-field">
-      <span className="faint">Monthly allowance, if you know it</span>
+      <span className="faint">Monthly limit</span>
       <input
         className="input limit-input"
         inputMode="numeric"
-        placeholder="e.g. 1000000 tokens"
+        placeholder="tokens"
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => {
@@ -252,17 +193,20 @@ function UsagePanel({ usage }: { usage?: FreeUsage }) {
   const nothingYet = usage.month.turns === 0
 
   return (
-    <section className="panel">
-      <h2 className="panel-title">
-        <ChartIcon size={15} />
-        What you have used
-      </h2>
-
+    <section className="free-group">
+      <span className="tile-group-title muted">
+        <TitleWithHelp
+          title="Usage"
+          help={
+            usage.month.unreportedTurns > 0
+              ? `${usage.month.unreportedTurns} ${usage.month.unreportedTurns === 1 ? 'turn' : 'turns'} this month returned no token counts, so the totals are a floor.`
+              : undefined
+          }
+        />
+      </span>
+      <div className="sunken-card">
       {nothingYet ? (
-        <p className="faint panel-note">
-          Nothing yet this month. Once a free provider answers a message, what it cost appears
-          here.
-        </p>
+        <span className="faint">Nothing used this month</span>
       ) : (
         <>
           <div className="usage-totals">
@@ -290,15 +234,9 @@ function UsagePanel({ usage }: { usage?: FreeUsage }) {
             ))}
           </div>
 
-          {usage.month.unreportedTurns > 0 && (
-            <p className="faint panel-note">
-              {usage.month.unreportedTurns} {usage.month.unreportedTurns === 1 ? 'turn' : 'turns'}{' '}
-              this month returned no token counts, so those are not included above. Several free
-              tiers do not report them.
-            </p>
-          )}
         </>
       )}
+      </div>
     </section>
   )
 }
@@ -340,7 +278,7 @@ function UsageRow({ row }: { row: FreeProviderUsage }) {
       )}
       <span className="faint usage-row-note">
         {row.turns} {row.turns === 1 ? 'message' : 'messages'}
-        {used !== null ? ` · ${used.toFixed(used < 1 ? 2 : 0)}% of what you entered` : ''}
+        {used !== null ? ` · ${used.toFixed(used < 1 ? 2 : 0)}% of your limit` : ''}
       </span>
     </div>
   )
@@ -385,8 +323,8 @@ function ProviderRow({ provider }: { provider: FreeProvider }) {
   })
 
   return (
-    <div className={`server-row ${provider.hasKey ? '' : 'is-off'}`}>
-      <ProviderLogo slug={provider.slug} label={provider.name} size={32} />
+    <div className={`server-row free-row ${provider.hasKey || provider.keyless ? '' : 'is-off'}`}>
+      <ProviderLogo slug={provider.slug} label={provider.name} size={24} />
       <div className="server-row-main">
         <div className="server-row-head">
           <span
@@ -395,13 +333,8 @@ function ProviderRow({ provider }: { provider: FreeProvider }) {
             }`}
           />
           <span className="server-row-name">{provider.name}</span>
-          {provider.hasKey && (
-            <span className="tag">
-              <KeyIcon size={10} /> key stored
-            </span>
-          )}
           {provider.trouble === 'rate_limited' && (
-            <span className="tag tag-warn">out of allowance for now</span>
+            <span className="tag tag-warn" title="Out of allowance for now">used up</span>
           )}
           {provider.trouble === 'rejected' && (
             <span className="tag tag-warn">key refused</span>
@@ -409,27 +342,25 @@ function ProviderRow({ provider }: { provider: FreeProvider }) {
           {/* The server has always been able to say this; the type omitted it,
               so the tag never appeared. */}
           {provider.trouble === 'model_gone' && (
-            <span className="tag tag-warn">its models moved — rechecking</span>
+            <span className="tag tag-warn" title="Its models moved; Kuro is rechecking">rechecking</span>
           )}
-          {provider.keyless && <span className="tag">no account needed</span>}
           {provider.expired && <span className="tag tag-warn">trial ended</span>}
           {provider.privacy.trains && (
             <span className="tag tag-warn" title="Prompts sent here may be kept and used to train models">
-              may train on prompts
+              may train
             </span>
           )}
           {provider.privacy.logged && !provider.privacy.trains && (
-            <span className="tag">may be logged</span>
+            <span className="tag" title="Prompts sent here may be logged">logged</span>
           )}
         </div>
 
-        <p className="muted">{provider.allowance}</p>
+        <span className="muted truncate" title={provider.allowance}>{provider.allowance}</span>
+
+        {provider.hasKey && <LimitField provider={provider} />}
 
         {provider.baseUrl.includes('ACCOUNT_ID') && provider.hasKey && (
-          <p className="form-error">
-            This provider's address needs your account id substituted into it, which Kuro
-            cannot do for you yet. Add it as a custom endpoint under Cloud instead.
-          </p>
+          <p className="form-error">Needs your account id. Add it as a custom provider instead.</p>
         )}
 
         {/* A shared endpoint takes no key, and the server refuses one. Offering
@@ -447,14 +378,14 @@ function ProviderRow({ provider }: { provider: FreeProvider }) {
               }}
             />
             <button
-              className="btn btn-solid btn-sm"
+              className="btn btn-solid"
               disabled={!draft.trim() || save.isPending}
               onClick={() => save.mutate(draft.trim())}
             >
               Save
             </button>
             {editing && (
-              <button className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>
+              <button className="btn" onClick={() => setEditing(false)}>
                 Cancel
               </button>
             )}
@@ -467,28 +398,28 @@ function ProviderRow({ provider }: { provider: FreeProvider }) {
           </p>
         )}
 
-        <a
-          className="external-link faint"
-          href={provider.credentialsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {provider.keyless ? 'How this endpoint works' : 'Get a free key'}
-          <ExternalIcon size={11} />
-        </a>
+        {!provider.hasKey && (
+          <a
+            className="external-link faint"
+            href={provider.credentialsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {provider.keyless ? 'How it works' : 'Get a free key'}
+            <ExternalIcon size={11} />
+          </a>
+        )}
       </div>
-
-      {provider.hasKey && <LimitField provider={provider} />}
 
       {provider.hasKey && (
         <div className="server-row-actions">
           <button
-            className="btn btn-ghost btn-sm"
+            className="btn"
             onClick={() => test.mutate()}
             disabled={test.isPending}
             title="Ask this provider whether the key works"
           >
-            {test.isPending ? <span className="spinner" /> : <CheckIcon size={13} />}
+            {test.isPending ? <span className="spinner" /> : null}
             Test
           </button>
           <button

@@ -1,18 +1,14 @@
-import { lazy, Suspense, useEffect } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { lazy, Suspense, useEffect, useRef } from 'react'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Sidebar } from './components/Sidebar'
 import { api } from './lib/api'
 import { ChatPage } from './pages/Chat'
 import { CodePage } from './pages/Code'
-import { CloudPage } from './pages/Cloud'
-import { FreePage } from './pages/Free'
 import { ModelsPage } from './pages/Models'
 import { ProjectPage, ProjectsPage } from './pages/Projects'
-import { ProvidersPage } from './pages/Providers'
-import { SettingsPage } from './pages/Settings'
-import { ToolsPage } from './pages/Tools'
+import { SettingsPage, SettingsSidebar } from './pages/Settings'
 import { applyTheme, useUi } from './store/ui'
 
 // Loaded on first visit: the model-card renderer parses and sanitizes HTML,
@@ -23,6 +19,15 @@ const ModelDetailPage = lazy(() =>
 
 export function App() {
   const theme = useUi((state) => state.theme)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const inSettings = location.pathname.startsWith('/settings')
+
+  // Where "Back to app" returns to: the last page that was not Settings.
+  const lastAppPath = useRef('/')
+  useEffect(() => {
+    if (!inSettings) lastAppPath.current = location.pathname + location.search
+  }, [inSettings, location.pathname, location.search])
 
   useEffect(() => applyTheme(theme), [theme])
 
@@ -30,7 +35,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Sidebar />
+      {inSettings ? <SettingsSidebar onBack={() => navigate(lastAppPath.current)} /> : <Sidebar />}
       <main className="main">
         <Routes>
           <Route path="/" element={<ErrorBoundary label="chat"><ChatPage /></ErrorBoundary>} />
@@ -41,13 +46,14 @@ export function App() {
           <Route path="/projects/:id" element={<ErrorBoundary label="projects"><ProjectPage /></ErrorBoundary>} />
           <Route path="/models" element={<ErrorBoundary label="models"><ModelsPage /></ErrorBoundary>} />
           <Route path="/models/:owner/:name" element={<ErrorBoundary label="model"><Suspense><ModelDetailPage /></Suspense></ErrorBoundary>} />
-          <Route path="/free" element={<ErrorBoundary label="free"><FreePage /></ErrorBoundary>} />
-          <Route path="/tools" element={<ErrorBoundary label="tools"><ToolsPage /></ErrorBoundary>} />
-          <Route path="/providers" element={<ErrorBoundary label="providers"><ProvidersPage /></ErrorBoundary>} />
-          <Route path="/cloud" element={<ErrorBoundary label="cloud"><CloudPage /></ErrorBoundary>} />
-          <Route path="/settings" element={<ErrorBoundary label="settings"><SettingsPage /></ErrorBoundary>} />
-          {/* The tools page absorbed the old MCP-only screen; keep the link working. */}
-          <Route path="/mcp" element={<Navigate to="/tools" replace />} />
+          <Route path="/settings/:pane" element={<ErrorBoundary label="settings"><SettingsPage /></ErrorBoundary>} />
+          <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
+          {/* Pages that folded into Settings; old links still land somewhere sensible. */}
+          <Route path="/free" element={<Navigate to="/settings/providers?show=free" replace />} />
+          <Route path="/providers" element={<Navigate to="/settings/providers" replace />} />
+          <Route path="/cloud" element={<Navigate to="/settings/providers?show=add" replace />} />
+          <Route path="/tools" element={<Navigate to="/settings/skills" replace />} />
+          <Route path="/mcp" element={<Navigate to="/settings/mcp" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
