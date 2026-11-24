@@ -12,17 +12,11 @@
   /* Neutral ramp, dark theme: charcoal, as in the macOS app's `Palette`.
      0 is the page, 12 is the brightest text. */
   --n-0: #181818;
-  --n-1: #1c1c1c;
-  --n-2: #232323;
-  --n-3: #2a2a2a;
-  --n-4: #303030;
   --n-5: #383838;
   --n-6: #444444;
   --n-7: #5a5a5a;
   --n-8: #737373;
   --n-9: #949494;
-  --n-10: #b4b4b4;
-  --n-11: #d8d8d8;
   --n-12: #f2f2f2;
 
   /* Hairlines and washes are the text colour at low opacity, so they sit right
@@ -107,7 +101,6 @@
 
   /* Surface depth: a sheen and top edge catching light, a shadow underneath. */
   /* Cards are flat: a fill and a hairline, no sheen or shadow. */
-  --panel-sheen: rgba(255, 255, 255, 0);
   --panel-edge: rgba(255, 255, 255, 0);
   --panel-shadow: none;
   --card-lift: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -118,17 +111,11 @@
     color-scheme: light;
 
     --n-0: #ffffff;
-    --n-1: #f5f5f4;
-    --n-2: #ececeb;
-    --n-3: #e4e4e3;
-    --n-4: #dcdcda;
     --n-5: #d0d0ce;
     --n-6: #c0c0be;
     --n-7: #a3a3a1;
     --n-8: #82827f;
     --n-9: #63635f;
-    --n-10: #45453f;
-    --n-11: #2a2a26;
     --n-12: #111111;
 
     --ink-rgb: 0 0 0;
@@ -147,7 +134,6 @@
 
     --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
 
-    --panel-sheen: rgba(255, 255, 255, 0);
     --panel-edge: rgba(255, 255, 255, 0);
     --panel-shadow: none;
     --card-lift: 0 8px 24px rgba(0, 0, 0, 0.08);
@@ -159,17 +145,11 @@
     color-scheme: light;
 
     --n-0: #ffffff;
-    --n-1: #f5f5f4;
-    --n-2: #ececeb;
-    --n-3: #e4e4e3;
-    --n-4: #dcdcda;
     --n-5: #d0d0ce;
     --n-6: #c0c0be;
     --n-7: #a3a3a1;
     --n-8: #82827f;
     --n-9: #63635f;
-    --n-10: #45453f;
-    --n-11: #2a2a26;
     --n-12: #111111;
 
     --ink-rgb: 0 0 0;
@@ -188,7 +168,6 @@
 
     --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
 
-    --panel-sheen: rgba(255, 255, 255, 0);
     --panel-edge: rgba(255, 255, 255, 0);
     --panel-shadow: none;
     --card-lift: 0 8px 24px rgba(0, 0, 0, 0.08);

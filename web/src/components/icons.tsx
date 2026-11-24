@@ -198,12 +198,6 @@ export const ExternalIcon = (props: IconProps) => (
   </Svg>
 )
 
-export const StoreIcon = (props: IconProps) => (
-  <Svg {...props}>
-    <path d="M3 9h18l-1.5-5.2A1 1 0 0 0 18.5 3h-13a1 1 0 0 0-1 .8zM4 9v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9M9 21v-6h6v6" />
-  </Svg>
-)
-
 export const PowerIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="M12 3v9M18.4 6.6a9 9 0 1 1-12.8 0" />
@@ -267,15 +261,6 @@ export const EyeIcon = (props: IconProps) => (
   </Svg>
 )
 
-export const SlidersIcon = (props: IconProps) => (
-  <Svg {...props}>
-    <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h10M18 18h2" />
-    <circle cx="16" cy="6" r="2" />
-    <circle cx="10" cy="12" r="2" />
-    <circle cx="16" cy="18" r="2" />
-  </Svg>
-)
-
 export const BoltIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
@@ -298,12 +283,6 @@ export const ShieldOffIcon = (props: IconProps) => (
   <Svg {...props}>
     <path d="M19.7 14A8.4 8.4 0 0 0 20 12V5l-8-3-3.3 1.2M6.3 6.3 4 5v7c0 5 8 10 8 10a20 20 0 0 0 4.6-3.3" />
     <path d="M2 2l20 20" />
-  </Svg>
-)
-
-export const ChartIcon = (props: IconProps) => (
-  <Svg {...props}>
-    <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
   </Svg>
 )
 

@@ -389,13 +389,6 @@ impl Db {
         })
     }
 
-    pub fn delete_message(&self, id: &str) -> Result<()> {
-        self.with(|conn| {
-            conn.execute("DELETE FROM messages WHERE id = ?1", params![id])?;
-            Ok(())
-        })
-    }
-
     /// Delete `message_id` and everything after it (editing a message: later turns
     /// answered the old wording). The cut compares `(created_at, rowid)`, the order
     /// [`Db::list_messages`] reads back, so same-tick messages cut where the user

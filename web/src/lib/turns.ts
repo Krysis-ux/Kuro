@@ -78,22 +78,9 @@ function emptyStream(): StreamingState {
   return { content: '', reasoning: '', tools: [], touchedAt: Date.now() }
 }
 
-export function isRunning(key: string | null): boolean {
-  return key !== null && controllers.has(key)
-}
-
-export function runningCount(): number {
-  return controllers.size
-}
-
 export function stopTurn(key: string | null) {
   if (key === null) return
   controllers.get(key)?.abort()
-}
-
-export function clearTurnError(key: string | null) {
-  if (key === null) return
-  update(key, (state) => ({ ...state, error: null, notices: [] }))
 }
 
 export async function runTurn(
@@ -205,14 +192,6 @@ export function useTurn(key: string | null): TurnState {
     subscribe,
     () => read(key),
     () => EMPTY,
-  )
-}
-
-export function useAnyTurnRunning(): number {
-  return useSyncExternalStore(
-    subscribe,
-    () => controllers.size,
-    () => 0,
   )
 }
 

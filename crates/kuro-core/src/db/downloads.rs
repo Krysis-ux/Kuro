@@ -227,12 +227,6 @@ impl Db {
         })
     }
 
-    pub fn delete_download(&self, id: &str) -> Result<()> {
-        self.with(|conn| {
-            conn.execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
-            Ok(())
-        })
-    }
 }
 
 #[cfg(test)]

@@ -52,10 +52,6 @@ const FALLBACK: Option = {
   thinking: false,
 }
 
-export function labelForEffort(effort: Effort): string {
-  return OPTIONS.find((option) => option.effort === effort)?.label ?? 'Balanced'
-}
-
 interface ThinkingPickerProps {
   value: Effort
   onChange: (effort: Effort) => void
