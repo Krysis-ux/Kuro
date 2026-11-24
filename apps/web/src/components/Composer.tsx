@@ -306,6 +306,9 @@ export function Composer({
     ? 'Message — this one goes to your provider…'
     : 'Message Kuro…'
 
+  // Only when there is something to say: the placeholder already says where a message goes.
+  const note = disabledReason ?? hint ?? (active.isRemote ? 'Runs on your provider, not this machine.' : null)
+
   return (
     <div className={`composer-shell ${centred ? 'is-centred' : ''}`}>
       {slashOpen && (
@@ -455,13 +458,7 @@ export function Composer({
         />
       </div>
 
-      <p className="composer-hint faint">
-        {disabledReason ??
-          hint ??
-          (active.isRemote
-            ? 'Enter to send, Shift+Enter for a new line. This model runs on your provider, not here.'
-            : 'Enter to send, Shift+Enter for a new line. Models run entirely on this machine.')}
-      </p>
+      {note && <p className="composer-hint faint">{note}</p>}
     </div>
   )
 }
