@@ -1,38 +1,41 @@
 # Notices
 
-Kuro's own code is Kuro's. This file records third-party work that Kuro's
-skills were adapted from, because the licences those projects use require the
-copyright notice to travel with the material even when it has been rewritten.
+Third-party work used by Kuro.
 
-Nothing here appears in Kuro's interface. Every skill is presented under Kuro's
-own name and wording — the guidance was rewritten in Kuro's voice and format,
-not copied — but "rewritten" is not the same as "unrelated", and the honest
-record belongs somewhere.
+## llama.cpp (inference engine)
 
-If a skill below is ever removed from `crates/kuro-core/src/skills/mod.rs`, its
-entry here should go with it.
+- Source: https://github.com/ggml-org/llama.cpp
+- Licence: MIT
 
----
+Kuro downloads a prebuilt llama.cpp engine on first use into
+`~/Library/Application Support/Kuro/engine/` and renames it `kuro-engine`. The binary
+is not changed. The pinned version is `DEFAULT_ENGINE_TAG` in
+`crates/kuro-core/src/engine/bootstrap.rs`.
 
-## impeccable
+## Model weights
+
+Downloaded from Hugging Face or wherever you point Kuro. Each model has its own
+licence from its publisher. Kuro does not relicense or redistribute them.
+
+## Providers
+
+Remote providers and your own servers have their own terms. Kuro only sends your
+requests to the endpoint you set up.
+
+## LobeHub Icons (logos)
+
+- Source: https://github.com/lobehub/lobe-icons (`@lobehub/icons-static-svg` 1.101.0)
+- Licence: MIT
+
+The logos in `apps/web/src/assets/logos/` (also bundled in the Mac app). Some SVG
+arcs were rewritten so macOS can draw them; the drawings are unchanged. The marks
+belong to their owners and only show whose model or service is listed.
+
+## impeccable (design skills)
 
 - Source: https://github.com/pbakaus/impeccable
 - Copyright: Paul Bakaus and contributors
-- Licence: Apache License 2.0
+- Licence: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
 
-Adapted into the `design-intent` and `design-refusals` skills.
-
-The upstream project is a router over roughly two dozen reference playbooks plus
-a Node context script, which does not fit Kuro's format — a Kuro skill is a
-single block of instructions appended to the system prompt under a token budget.
-What was adapted is therefore the substance rather than the structure: the four
-surface modes (Persuade, Operate, Read, Experience), the rule that a stated
-brief outranks the model's own taste, the distinction between refining and
-redesigning, the instruction to verify in bounded passes rather than an
-open-ended loop, and the list of saturated visual defaults to recognise and
-avoid.
-
-Apache-2.0 section 4(b) requires stating that changes were made: the text was
-rewritten, condensed, and re-voiced for Kuro; no upstream file is included.
-
-Apache License 2.0 — full text: https://www.apache.org/licenses/LICENSE-2.0
+Adapted into the `design-intent` and `design-refusals` skills. The text was
+rewritten and shortened for Kuro; no upstream file is included.

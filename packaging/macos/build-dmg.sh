@@ -39,7 +39,7 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE" "$ROOT/dist"
 cp -R "$APP" "$STAGE/Kuro.app"
 ln -s /Applications "$STAGE/Applications"
-cp "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/" 2>/dev/null || true
+cp "$ROOT/NOTICES.md" "$STAGE/" 2>/dev/null || true
 
 rm -f "$DMG"
 hdiutil create -volname "Kuro $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -quiet "$DMG"

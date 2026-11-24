@@ -76,7 +76,7 @@ done
 
 for arch in "${ARCHES[@]}"; do
   bold "Compiling the app ($arch)"
-  swift build -c release --package-path macos --triple "$arch-apple-macosx14.0" --product Kuro
+  swift build -c release --package-path apps/macos --triple "$arch-apple-macosx14.0" --product Kuro
 done
 
 # ---------------------------------------------------------------------------
@@ -85,10 +85,10 @@ done
 
 WEB_BUILT=0
 if command -v npm >/dev/null 2>&1; then
-  if [ ! -f web/dist/index.html ] || [ -n "$(find web/src web/index.html web/package.json -newer web/dist/index.html -print -quit)" ]; then
+  if [ ! -f apps/web/dist/index.html ] || [ -n "$(find apps/web/src apps/web/index.html apps/web/package.json -newer apps/web/dist/index.html -print -quit)" ]; then
     bold "Building the browser interface"
-    [ -d web/node_modules ] || npm --prefix web ci
-    npm --prefix web run build
+    [ -d apps/web/node_modules ] || npm --prefix apps/web ci
+    npm --prefix apps/web run build
   fi
   WEB_BUILT=1
 else
@@ -123,13 +123,13 @@ lipo_into "$CONTENTS/Resources/bin/kuro-server" $(slices kuro-server)
 lipo_into "$CONTENTS/Resources/bin/kuro" $(slices kuro)
 app_slices=()
 for arch in "${ARCHES[@]}"; do
-  app_slices+=("$(swift build -c release --package-path macos --triple "$arch-apple-macosx14.0" --show-bin-path)/Kuro")
+  app_slices+=("$(swift build -c release --package-path apps/macos --triple "$arch-apple-macosx14.0" --show-bin-path)/Kuro")
 done
 lipo_into "$CONTENTS/MacOS/Kuro" "${app_slices[@]}"
 
-[ "$WEB_BUILT" -eq 1 ] && cp -R web/dist "$CONTENTS/Resources/web"
+[ "$WEB_BUILT" -eq 1 ] && cp -R apps/web/dist "$CONTENTS/Resources/web"
 # Model and provider logos, shared with the browser interface.
-cp -R web/src/assets/logos "$CONTENTS/Resources/logos"
+cp -R apps/web/src/assets/logos "$CONTENTS/Resources/logos"
 
 # The icon, rendered from the SVG with macOS's own Quick Look renderer.
 ICON_WORK="$ROOT/build/macos/icon"

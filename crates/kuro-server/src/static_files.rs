@@ -1,4 +1,4 @@
-//! Serves the built web interface from `web/dist`, on the same origin as the API.
+//! Serves the built web interface from `apps/web/dist`, on the same origin as the API.
 
 use std::path::PathBuf;
 
@@ -29,8 +29,8 @@ fn web_dir() -> Option<PathBuf> {
 
     // Next to the binary when packaged; relative to the working directory under `cargo run`.
     let candidates = [
-        PathBuf::from("web/dist"),
-        PathBuf::from("../web/dist"),
+        PathBuf::from("apps/web/dist"),
+        PathBuf::from("../../apps/web/dist"),
         std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(|dir| dir.join("web")))
