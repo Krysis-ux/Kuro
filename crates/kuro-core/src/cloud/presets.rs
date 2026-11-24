@@ -1,7 +1,4 @@
 //! The providers Kuro knows the shape of.
-//!
-//! A preset only saves the user finding a base URL; there is no per-provider code
-//! path. Anything not listed here still works through `custom`.
 
 use serde::Serialize;
 
@@ -19,11 +16,6 @@ pub enum PresetKind {
 }
 
 /// Which screen an entry belongs on.
-///
-/// Same mechanism (an OpenAI-compatible URL and a key), different decisions:
-/// OpenAI means paying a company per token to run their model; a RunPod
-/// endpoint runs *your* model on rented hardware, where the model, quantisation
-/// and context length stay yours.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Surface {
@@ -52,9 +44,6 @@ impl Surface {
 }
 
 /// Which screen a connector belongs on, given the preset slug it was created from.
-///
-/// An unrecognised slug is treated as cloud: the only way to get one is to have
-/// added a custom endpoint, which is what the cloud screen is for.
 pub fn surface_for(provider_slug: &str) -> Surface {
     find(provider_slug)
         .map(|preset| preset.kind.surface())

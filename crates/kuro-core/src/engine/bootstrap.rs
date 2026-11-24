@@ -1,10 +1,4 @@
-//! Obtaining the engine binary. On first use Kuro downloads the prebuilt release
-//! for this machine, extracts it into a per-tag directory, records it, and
-//! renames the executable to `kuro-engine` (the name users see in process lists
-//! and logs).
-//!
-//! The tag is pinned rather than tracking `latest`, because upstream asset
-//! naming changes and would otherwise break model loading for everyone at once.
+//! Obtaining the engine binary.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -244,9 +238,8 @@ pub fn find_engine_binary(root: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-/// Rename an already-cached engine to Kuro's naming, updating its record, so
-/// older installs need no re-download. Failure is not fatal: the binary still
-/// runs under its old name.
+/// Rename an already-cached engine to Kuro's naming, updating its record, so older installs need no
+/// re-download.
 pub fn adopt_installed(db: &Db, existing: EngineRuntimeRecord) -> Result<EngineRuntimeRecord> {
     let path = Path::new(&existing.path);
     if is_adopted(path) {
@@ -283,8 +276,6 @@ fn is_adopted(path: &Path) -> bool {
 }
 
 /// Rename the unpacked directory and the executable inside it to Kuro's names.
-/// Both renames are in place: the executable finds its libraries through
-/// `@loader_path`, so they must stay beside it.
 fn adopt_binary(extracted: &Path) -> Result<PathBuf> {
     let home = extracted
         .parent()

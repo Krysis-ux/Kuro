@@ -1,7 +1,4 @@
 //! Thin HTTP client for the local Kuro daemon.
-//!
-//! The CLI holds no model or engine logic; it consumes the same API as the web
-//! UI and the macOS app, so they cannot drift apart.
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;

@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { QuestionIcon } from './icons'
 
 /**
- * A question mark that explains a feature in a small popover, so the page itself
- * needs only a title and a few words. The web twin of the macOS `HelpTip`.
+ * A question mark that explains a feature in a small popover, so the page itself needs only a title
+ * and a few words.
  */
 export function HelpTip({ text }: { text: string }) {
   const [open, setOpen] = useState(false)

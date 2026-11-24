@@ -1,9 +1,4 @@
-/**
- * The Kuro mark: a rounded k whose upper arm is a dot.
- *
- * Drawn on a 100-unit grid shared with `public/favicon.svg`, the macOS app's
- * `KuroGlyph` and `packaging/macos/icon.svg`. Change them together.
- */
+/** The Kuro mark: a rounded k whose upper arm is a dot. */
 export function Logo({ size = 24, className }: { size?: number; className?: string }) {
   return (
     <svg

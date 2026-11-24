@@ -4,11 +4,6 @@ import SwiftUI
 import KuroKit
 
 /// One Hugging Face repository, with everything the Hub shows about it.
-///
-/// The question this screen answers first is "which file do I download", so
-/// the quantizations lead, each with its real size and how it fits this Mac;
-/// the model card, papers and specs follow. Works for repositories without GGUF
-/// weights too, which is how a quantized model's original is shown.
 struct ModelDetailView: View {
     @Environment(AppModel.self) private var app
     let repo: String

@@ -410,10 +410,7 @@ interface Group {
   options: Option[]
 }
 
-/**
- * The maker's mark on one row. A provider's model whose name names no maker
- * gets the provider's mark instead, so a remote row is never a bare letter.
- */
+/** The maker's mark on one row. */
 function OptionLogo({ name, group }: { name: string; group: Group }) {
   if (group.remote && !modelBrand(name)) {
     return <ProviderLogo slug={group.provider ?? ''} label={group.label} size={14} bare />

@@ -57,9 +57,8 @@ const PLEASANTRIES: &[&str] = &[
     "how's it going", "how do you do", "whats good", "what's good",
 ];
 
-/// Phrases meaning the question is about this application, this machine, or the
-/// model's configuration. Kept specific: a loose rule would swallow real
-/// questions ("can you read this paper for me" is a fetch).
+/// Phrases meaning the question is about this application, this machine, or the model's
+/// configuration.
 const ABOUT_THIS_SETUP: &[&str] = &[
     "mcp server",
     "mcp servers",

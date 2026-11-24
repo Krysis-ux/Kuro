@@ -1,8 +1,4 @@
 //! The free-tier pool's API.
-//!
-//! Keys are write-only: the overview reports whether a provider has one stored
-//! and whether it works, and a key leaves the credential store only on its way
-//! into an outbound request.
 
 use std::collections::HashMap;
 
@@ -142,9 +138,7 @@ pub struct AllowanceRequest {
     pub tokens_per_month: Option<i64>,
 }
 
-/// Record what the user says this provider's allowance is. Kuro cannot discover
-/// it (providers state it in incompatible units and do not expose it), so it is
-/// kept as written and used only to draw a bar next to a number Kuro measured.
+/// Record what the user says this provider's allowance is.
 pub async fn set_allowance(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -162,9 +156,7 @@ pub async fn set_allowance(
     Ok(Json(json!({ "slug": provider.slug, "limit": allowance })))
 }
 
-/// What each provider's allowance has actually been spent on. Separate from
-/// [`overview`], which is re-read after every key edit, because this query's
-/// cost grows with the message table.
+/// What each provider's allowance has actually been spent on.
 pub async fn usage(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     // Windows use the *local* clock: a UTC-midnight day would file an evening's work
     // under tomorrow for anyone west of Greenwich.
@@ -284,9 +276,7 @@ struct Totals {
     total: i64,
 }
 
-/// A local date-time as the UTC RFC 3339 string `created_at` is compared
-/// against. It must be converted, not just formatted, or "since local midnight"
-/// would mean "since UTC midnight".
+/// A local date-time as the UTC RFC 3339 string `created_at` is compared against.
 fn local_rfc3339(naive: chrono::NaiveDateTime) -> String {
     use chrono::TimeZone;
     chrono::Local
@@ -324,9 +314,7 @@ pub async fn delete_key(
     Ok(Json(json!({ "slug": provider.slug, "hasKey": false })))
 }
 
-/// Ask a provider for its model list, to find out whether the key works. A real
-/// request rather than a shape check, since a key from the wrong account or an
-/// expired one looks fine until something asks.
+/// Ask a provider for its model list, to find out whether the key works.
 pub async fn test_key(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -382,13 +370,6 @@ pub async fn test_key(
 }
 
 /// Every free key Kuro can find, keyed by provider slug.
-///
-/// A credential store read that fails counts as "no key"; failing the whole
-/// models list would remove the screen where it gets fixed.
-///
-/// Keys added under Providers count too (an OpenRouter key is an OpenRouter key),
-/// so the user does not maintain two copies of one secret. A key pasted into the
-/// free screen wins, being the more specific statement (it may be a throwaway account).
 pub fn stored_keys(state: &SharedState) -> HashMap<String, String> {
     let connectors: Vec<(String, String)> = state
         .db
@@ -409,9 +390,8 @@ fn today() -> String {
     chrono::Utc::now().date_naive().to_string()
 }
 
-/// The key-picking half of [`stored_keys`], with the clock and credential store
-/// passed in so the precedence rule is testable. `connectors` is `(provider
-/// slug, credential reference)` for every enabled provider connection.
+/// The key-picking half of [`stored_keys`], with the clock and credential store passed in so the
+/// precedence rule is testable.
 fn gather_keys(
     connectors: &[(String, String)],
     today: &str,
@@ -448,12 +428,6 @@ fn gather_keys(
 }
 
 /// Start a catalogue read in the background and return at once.
-///
-/// Chat turns call this instead of awaiting `refresh_catalogues`, which takes as
-/// long as the slowest provider (up to the 15 s timeout) and would put dead air
-/// before the first token. Nothing needs it synchronous: an unknown provider is
-/// tried with its curated models, and a retired model answers 404, which is
-/// handled as `Gone` (a short cooldown and a failover).
 pub fn refresh_catalogues_in_background(state: &SharedState, keys: &HashMap<String, String>) {
     if !state.free.needs_any_catalogue(keys) {
         return;
@@ -472,10 +446,6 @@ pub fn refresh_catalogues_in_background(state: &SharedState, keys: &HashMap<Stri
 }
 
 /// Read the model lists of every provider whose catalogue is missing or stale.
-///
-/// Concurrent and best-effort: an unreachable provider keeps its old catalogue,
-/// and one never read stays unknown, which the pool treats as "try the curated
-/// models" rather than "offers nothing". Cached lists last half an hour.
 pub async fn refresh_catalogues(state: &SharedState, keys: &HashMap<String, String>) {
     let allow_keyless = state.free.allows_keyless();
 
@@ -550,8 +520,6 @@ pub fn stored_troubles(db: &kuro_core::db::Db) -> Vec<(String, String, u64)> {
 }
 
 /// Write the catalogues to storage so the next start already has them.
-/// Otherwise the picker starts without a free provider's models and, since the
-/// list is fetched once rather than polled, stays that way.
 fn save_catalogues(state: &SharedState) {
     let stored = state.free.catalogues();
     if let Err(error) = state

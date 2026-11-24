@@ -1,18 +1,4 @@
 //! Specialists a coding turn can hand work to.
-//!
-//! A subagent is the same model with a different brief, different skills and a
-//! fresh context holding only the task it was handed.
-//!
-//! The fresh context is the point. By the twentieth tool call a long turn's
-//! context is full of stale files and build logs, and answers degrade because of
-//! what is in the window. Delegating "work out why the login test fails" hands
-//! that to a clean context and brings back a paragraph instead of forty thousand
-//! tokens of investigation.
-//!
-//! The list is short: one agent per *kind of work*, not per language. The
-//! language skill is already chosen from the project folder
-//! ([`crate::orchestrate::detect_languages`]), and twenty near-identical agents
-//! would only give a small model more to choose between.
 
 use std::sync::RwLock;
 
@@ -141,9 +127,8 @@ pub const AGENTS: &[Agent] = &[
     },
 ];
 
-/// Subagents the user wrote, leaked into `'static` when loaded so they share
-/// `Agent` with the built-ins. The same trade as `skills::custom`: a few hundred
-/// bytes per agent, leaked only when the user saves or removes one.
+/// Subagents the user wrote, leaked into `'static` when loaded so they share `Agent` with the
+/// built-ins.
 static CUSTOM: RwLock<Vec<&'static Agent>> = RwLock::new(Vec::new());
 
 /// Skills one user agent may load. More would crowd its brief.

@@ -1,12 +1,4 @@
 //! Long-running processes a workspace started (dev servers, watchers).
-//!
-//! A background process has an id, its output goes into a ring buffer the model
-//! and the interface can both read, and the local address it prints on startup is
-//! picked out of that output so the interface can point a preview at it.
-//!
-//! Processes belong to the daemon, not to a conversation: a dev server started in
-//! one turn keeps serving in the next. They are killed when the daemon exits and
-//! can be stopped explicitly at any time.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -53,9 +45,7 @@ struct Entry {
     pid: Option<u32>,
     started_at: chrono::DateTime<chrono::Utc>,
     shared: Arc<Mutex<Shared>>,
-    /// Asks the process's own task to kill it. A channel, not a shared `Child`:
-    /// waiting needs `&mut`, so a lock around the child would be held by the
-    /// waiter for the process's whole life and `stop` would deadlock.
+    /// Asks the process's own task to kill it.
     stop: tokio::sync::watch::Sender<bool>,
 }
 
@@ -439,9 +429,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_process_can_be_stopped_after_it_has_settled() {
-        // The pause matters: a deadlock between `stop` and the waiting task only
-        // shows once the waiter has been scheduled. The timeout turns a deadlock
-        // into a failure.
+        // The pause matters: a deadlock between `stop` and the waiting task only shows once the
+        // waiter has been scheduled.
         let registry = ProcessRegistry::new();
         let started = registry
             .start("w1", &std::env::temp_dir(), "sleep 60")

@@ -1,6 +1,5 @@
-//! Assembling and running the tools available to one turn: build a [`ToolSet`],
-//! then dispatch against it. Kept out of `chat.rs` so that route stays about
-//! streaming a reply.
+//! Assembling and running the tools available to one turn: build a [`ToolSet`], then dispatch
+//! against it.
 
 use kuro_core::tools::{
     self, Builtin, BuiltinContext, ToolGroup, ToolOrigin, ToolOutcome, ToolSpec, WebSource,
@@ -16,11 +15,8 @@ pub struct ToolSet {
 }
 
 impl ToolSet {
-    /// Build the set from the enabled groups, the workspace this turn runs in (if
-    /// any) and every connected MCP server.
-    ///
-    /// Built-ins and workspace tools come first so an MCP server cannot take a name
-    /// like `web_search` or `edit_file` and replace it.
+    /// Build the set from the enabled groups, the workspace this turn runs in (if any) and every
+    /// connected MCP server.
     pub async fn assemble(
         state: &SharedState,
         groups: &[ToolGroup],

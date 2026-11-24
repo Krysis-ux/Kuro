@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 use crate::{KuroError, Result};
 
 /// Where Kuro keeps its database, models, engine binaries and logs.
-///
-/// The default root is `~/Library/Application Support/Kuro` (macOS only for
-/// now); `KURO_HOME` overrides it.
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub root: PathBuf,
@@ -39,9 +36,7 @@ impl Paths {
         }
     }
 
-    /// Point model downloads somewhere else. The directory is created here so an
-    /// unusable path fails at startup, not mid-download. Existing weights are not
-    /// moved but are still found, since the database stores full paths.
+    /// Point model downloads somewhere else.
     pub fn with_models_dir(mut self, dir: impl Into<PathBuf>) -> Result<Self> {
         let dir = dir.into();
         if dir.as_os_str().is_empty() {

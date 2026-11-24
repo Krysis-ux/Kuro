@@ -1,6 +1,4 @@
-//! Storage for remote model providers (OpenRouter, OpenAI, Anthropic, any
-//! OpenAI-compatible URL). The API key is not here, only a reference into the
-//! credential store.
+//! Storage for remote model providers (OpenRouter, OpenAI, Anthropic, any OpenAI-compatible URL).
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};

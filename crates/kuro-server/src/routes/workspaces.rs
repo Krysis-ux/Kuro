@@ -1,9 +1,4 @@
 //! Coding workspaces: the Code page's API.
-//!
-//! Everything that reads or changes a file on this machine goes through a
-//! workspace, so this is the only route module that touches the user's own
-//! folders. It stays small (list, read, put a change back); tool execution lives
-//! in the chat turn.
 
 use std::path::PathBuf;
 
@@ -293,9 +288,7 @@ pub async fn undo_change(
 /// Lines of a process's output returned at once.
 const LOG_LINES: usize = 400;
 
-/// What is running in this workspace and what each is serving. The preview
-/// panel polls this, so it is cheap: the registry is in memory and the log is
-/// read separately.
+/// What is running in this workspace and what each is serving.
 pub async fn list_processes(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -309,9 +302,7 @@ pub struct StartProcessRequest {
     pub command: String,
 }
 
-/// Start a command from the interface rather than a model. It is vetted against
-/// the workspace's mode exactly like a model's call; a button that outranked the
-/// mode would make the mode meaningless.
+/// Start a command from the interface rather than a model.
 pub async fn start_process(
     State(state): State<SharedState>,
     Path(id): Path<String>,
@@ -420,9 +411,7 @@ fn load(state: &SharedState, id: &str) -> Result<kuro_core::db::WorkspaceRecord,
         .ok_or_else(|| KuroError::not_found(format!("workspace `{id}`")))
 }
 
-/// The enforcement object for a stored workspace at a chosen mode. The mode is
-/// passed because the UI's reads and undos are not the model's: viewing works in
-/// any mode and undo is a write whatever the workspace is set to.
+/// The enforcement object for a stored workspace at a chosen mode.
 fn as_workspace(record: &kuro_core::db::WorkspaceRecord, mode: WorkspaceMode) -> Workspace {
     Workspace {
         id: record.id.clone(),

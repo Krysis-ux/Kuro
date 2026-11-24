@@ -18,12 +18,8 @@ const RESET: &str = "\x1b[0m";
 /// Frames of the waiting spinner.
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// A spinner covering the wait before the first token (a local model loading, a
-/// reasoning model thinking, a free provider failing over), so a slow answer
-/// can be told from a hung one.
-///
-/// On stderr, so `kuro run qwen "…" > out.txt` still writes clean output.
-/// Skipped when stderr is not a terminal, since escape codes in a log are noise.
+/// A spinner covering the wait before the first token (a local model loading, a reasoning model
+/// thinking, a free provider failing over), so a slow answer can be told from a hung one.
 struct Thinking(Option<tokio::task::JoinHandle<()>>);
 
 impl Thinking {

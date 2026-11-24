@@ -1,10 +1,5 @@
-//! API keys and bearer tokens, kept out of the database (which users copy and
-//! attach to bug reports) in a separate owner-only file; the database stores
-//! only a reference.
-//!
-//! The file is written `0600` and replaced atomically, so a crash mid-write
-//! cannot leave a truncated store. Values are never returned to the browser,
-//! only whether a reference is set.
+//! API keys and bearer tokens, kept out of the database (which users copy and attach to bug
+//! reports) in a separate owner-only file; the database stores only a reference.
 
 use std::collections::BTreeMap;
 use std::io::Write;

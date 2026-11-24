@@ -1,14 +1,4 @@
 //! Skills: expertise you switch on.
-//!
-//! A skill is a short instruction block appended to the system prompt. There is
-//! no execution, sandbox or plugin runtime, which is what makes one safe to
-//! install with one click. Prompt guidance is the highest-leverage gain on a
-//! small local model, at zero inference cost.
-//!
-//! The user's switches say which skills Kuro *may* use; `crate::orchestrate`
-//! ranks the enabled set against each message and sends what fits a token
-//! budget. A fresh install starts with every selectable skill on (see
-//! [`default_slugs`]).
 
 use serde::Serialize;
 
@@ -77,9 +67,7 @@ pub struct Skill {
     pub instructions: &'static str,
     /// Rough context cost in tokens, for the UI's warning.
     pub approx_tokens: usize,
-    /// Always on inside a coding workspace and hidden from the store. For rules
-    /// that are not preferences ("read a file before you edit it"), which should
-    /// not be a toggle at all. Keep this list short.
+    /// Always on inside a coding workspace and hidden from the store.
     pub essential: bool,
 }
 
@@ -613,9 +601,8 @@ When debugging:
 - Once the cause is known, say why it produced this symptom before giving the patch.",
     },
     Skill {
-        // About the shape of an attempt: small models repeat a failed approach,
-        // so the rule is to say what the last attempt ruled out before the next.
-        // `remember`/`recall` are named because they are real tools that ship on.
+        // About the shape of an attempt: small models repeat a failed approach, so the rule is to
+        // say what the last attempt ruled out before the next.
         slug: "recursive-learning",
         name: "Learning as you go",
         blurb: "Never repeat a failed attempt. Carry forward what each one ruled out.",
@@ -1074,10 +1061,7 @@ pub fn selectable() -> Vec<&'static Skill> {
     all
 }
 
-/// What a fresh install starts with switched on: every selectable skill. An
-/// enabled skill is only a candidate; [`crate::orchestrate`] ranks the enabled
-/// set per turn and sends what fits a token budget, so an irrelevant one costs
-/// nothing.
+/// What a fresh install starts with switched on: every selectable skill.
 pub fn default_slugs() -> Vec<String> {
     selectable().iter().map(|skill| skill.slug.to_string()).collect()
 }

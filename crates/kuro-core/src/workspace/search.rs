@@ -1,6 +1,5 @@
-//! Finding things in a project: a file tree/glob search ("what is in here") and
-//! a literal text search ("where is this string"). Both skip dependency and
-//! build directories (`node_modules`, `.git`, ...) that would swamp the results.
+//! Finding things in a project: a file tree/glob search ("what is in here") and a literal text
+//! search ("where is this string").
 
 use std::path::{Path, PathBuf};
 
@@ -101,9 +100,7 @@ pub fn tree(root: &Path) -> Result<Vec<String>> {
     Ok(found)
 }
 
-/// Find files whose path matches a glob (`*.rs`, `src/**/*.ts`, `*test*`), not a
-/// regex. Matched against the path relative to the root; a pattern with no slash
-/// matches the file name alone, so `*.rs` finds Rust files at any depth.
+/// Find files whose path matches a glob (`*.rs`, `src/**/*.ts`, `*test*`), not a regex.
 pub fn find_files(root: &Path, pattern: &str) -> Result<Vec<String>> {
     let pattern = pattern.trim();
     if pattern.is_empty() {

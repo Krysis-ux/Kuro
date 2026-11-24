@@ -1,8 +1,4 @@
 //! MCP server management.
-//!
-//! Adding a server and learning whether it works are one action: a successful
-//! insert is followed by a connection attempt, and the result comes back in the
-//! same response.
 
 use axum::extract::{Path, Query, State};
 use axum::Json;

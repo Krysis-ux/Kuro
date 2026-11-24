@@ -7,9 +7,7 @@ use serde::Serialize;
 use super::{now, Db};
 use crate::Result;
 
-/// Upper bound on one skill's instructions. A skill is appended to the system
-/// prompt on every turn it is on, so a whole reference manual would eat the
-/// context window.
+/// Upper bound on one skill's instructions.
 pub const MAX_INSTRUCTION_CHARS: usize = 12_000;
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,8 +1,4 @@
 //! Built-in tools, search configuration and memory.
-//!
-//! Separate from `/api/mcp` because these are Kuro's own capabilities. The UI
-//! presents them together; the API keeps them apart so a user with no MCP
-//! servers still has a coherent tools screen.
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
@@ -24,9 +20,8 @@ use serde_json::{json, Value};
 use crate::error::AppResult;
 use crate::state::SharedState;
 
-/// What one turn will actually carry, at each surface and effort: the ceiling on
-/// what any turn spends from the pool of enabled skills. This is the headline
-/// number, not the all-skills total.
+/// What one turn will actually carry, at each surface and effort: the ceiling on what any turn
+/// spends from the pool of enabled skills.
 fn budget_summary() -> Value {
     let describe = |surface: Surface| {
         [Effort::Low, Effort::Balanced, Effort::High, Effort::Max, Effort::Ultra]

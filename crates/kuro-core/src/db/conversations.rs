@@ -59,9 +59,7 @@ pub struct NewMessage {
     pub used_web_search: bool,
     pub web_sources: Option<Value>,
     pub model_id: Option<String>,
-    /// Provider whose allowance this turn spends. Set at insert and never changed
-    /// (a refusing provider is skipped for the *next* message), so each row maps to
-    /// exactly one provider, which the usage totals rely on.
+    /// Provider whose allowance this turn spends.
     pub provider_slug: Option<String>,
 }
 
@@ -389,10 +387,8 @@ impl Db {
         })
     }
 
-    /// Delete `message_id` and everything after it (editing a message: later turns
-    /// answered the old wording). The cut compares `(created_at, rowid)`, the order
-    /// [`Db::list_messages`] reads back, so same-tick messages cut where the user
-    /// saw them. Returns how many messages were removed.
+    /// Delete `message_id` and everything after it (editing a message: later turns answered the old
+    /// wording).
     pub fn delete_from(&self, conversation_id: &str, message_id: &str) -> Result<usize> {
         self.with(|conn| {
             // A message id from another conversation would otherwise delete nothing
@@ -442,9 +438,8 @@ impl Db {
         })
     }
 
-    /// Copy a conversation up to and including `up_to_message_id` (`None` copies
-    /// all), carrying each assistant turn's usage and tool trail so a fork's request
-    /// inspector isn't empty.
+    /// Copy a conversation up to and including `up_to_message_id` (`None` copies all), carrying
+    /// each assistant turn's usage and tool trail so a fork's request inspector isn't empty.
     pub fn fork_conversation(
         &self,
         source_id: &str,
@@ -493,9 +488,6 @@ impl Db {
 
             for message in &keep {
                 // Original timestamps are kept so the copy reads back in order.
-                // `provider_slug` is deliberately not copied (stays NULL): usage totals sum
-                // over rows with a slug and a fork spent no allowance, so copying it would
-                // double-bill. Usage numbers are copied so the inspector isn't empty.
                 conn.execute(
                     "INSERT INTO messages (
                          id, conversation_id, role, content, reasoning_content, tool_calls,

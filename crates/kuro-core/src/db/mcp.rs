@@ -1,6 +1,4 @@
-//! Storage for MCP tool servers. A row is a *configuration*, not a connection;
-//! `status` and `tool_count` cache the last connection attempt so the list page
-//! needn't dial every server.
+//! Storage for MCP tool servers.
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -193,9 +191,7 @@ impl Db {
             .ok_or_else(|| KuroError::other("the server disappeared immediately after insert"))
     }
 
-    /// Point a server at its entry in the credential store. Separate from insert
-    /// because the reference is derived from the id, which doesn't exist until the
-    /// row does.
+    /// Point a server at its entry in the credential store.
     pub fn set_mcp_auth_ref(&self, id: &str, auth_ref: Option<&str>) -> Result<()> {
         self.with(|conn| {
             let changed = conn.execute(

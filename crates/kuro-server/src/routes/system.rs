@@ -30,12 +30,8 @@ pub async fn status(State(state): State<SharedState>) -> AppResult<Json<Value>> 
     })))
 }
 
-/// Stop the daemon.
-///
-/// Replies first and shuts down after a short delay, because a request that
-/// dies with the server it is killing looks like a crash to the browser.
-/// Engines are stopped first so their processes (gigabytes of memory) do not
-/// outlive the daemon.
+/// Stop the daemon. Replies first and shuts down after a short delay, because a request that dies
+/// with the server it is killing looks like a crash to the browser.
 pub async fn shutdown(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     let loaded = state.engines.loaded().await.len();
     tracing::info!(engines = loaded, "shutdown requested from the interface");
@@ -60,12 +56,8 @@ pub async fn shutdown(State(state): State<SharedState>) -> AppResult<Json<Value>
     })))
 }
 
-/// Relaunch the daemon, for when a restart is the fix: an engine setting that
-/// applies on load, a wedged child process, a new build on disk.
-///
-/// The successor starts before this process exits, with a marker telling it to
-/// wait for the port instead of failing. Exiting first would turn a restart
-/// into a shutdown.
+/// Relaunch the daemon, for when a restart is the fix: an engine setting that applies on load, a
+/// wedged child process, a new build on disk.
 pub async fn restart(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     let executable = std::env::current_exe()
         .map_err(|error| KuroError::other(format!("cannot find Kuro's own binary: {error}")))?;

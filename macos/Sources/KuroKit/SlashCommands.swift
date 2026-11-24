@@ -1,10 +1,6 @@
 import Foundation
 
 /// The `/` palette in the composer.
-///
-/// A command either flips a switch for this message (`/web`) or names a skill
-/// (`/rust`). Skills stay in the text where they were written, so the model
-/// reads the request and the reason for the guidance together.
 public struct SlashCommand: Hashable, Sendable, Identifiable {
     /// `custom` is one of the user's saved commands: its text replaces the word.
     public enum Kind: Hashable, Sendable { case toggle, skill, custom }
@@ -81,9 +77,6 @@ public struct CommandToken: Equatable, Sendable {
 
 public enum Slash {
     /// The command the caret is inside, if any.
-    ///
-    /// A command is a word that starts with `/`, so `https://x.com` and `and/or`
-    /// never open the palette. A word with a second slash is a path, not a command.
     public static func token(in text: String, caret: Int) -> CommandToken? {
         let units = Array(text.utf16)
         let position = max(0, min(caret, units.count))

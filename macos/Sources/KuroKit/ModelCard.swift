@@ -91,12 +91,6 @@ public struct CardImage: Hashable, Sendable {
 }
 
 /// Turns a Hub model card into blocks the native markdown renderer can draw.
-///
-/// Cards mix markdown with HTML — centred logos, badge rows, links, demo
-/// videos — and Foundation's parser shows HTML as raw text and drops images.
-/// So media is lifted out into its own blocks, the commonest tags become their
-/// markdown equivalents, the rest are removed, and relative paths are pointed
-/// at the repository. Code, fenced or inline, is left exactly as written.
 public enum ModelCardText {
     public static func blocks(_ readme: String, repo: String) -> [CardBlock] {
         var blocks: [CardBlock] = []

@@ -1,7 +1,4 @@
-//! Storage for what the model has been asked to remember. Recall is a substring
-//! match, not an embedding search: no second resident model, predictable
-//! results, and the table is small. Only [`Db::recall_memories`] changes if
-//! that is swapped for vector search.
+//! Storage for what the model has been asked to remember.
 
 use rusqlite::{params, Row};
 use serde::Serialize;

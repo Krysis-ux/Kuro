@@ -1,12 +1,8 @@
 import SwiftUI
 import KuroKit
 
-/// Every model reached over the internet, in one place: Kuro Free, the
-/// providers you hold a key for, and endpoints on hardware you rent.
-///
-/// A provider rents you their model per token; a cloud endpoint runs your model
-/// on hardware you rent. Both store a key and probe an OpenAI-compatible
-/// endpoint, so they share this page and are told apart by their group.
+/// Every model reached over the internet, in one place: Kuro Free, the providers you hold a key
+/// for, and endpoints on hardware you rent.
 struct ProvidersPage: View {
     @Environment(AppModel.self) private var app
 

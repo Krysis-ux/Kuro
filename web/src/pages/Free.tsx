@@ -12,12 +12,8 @@ import {
 import { ExternalIcon, GiftIcon, RefreshIcon, TrashIcon } from '../components/icons'
 
 /**
- * Kuro Free: your own free-tier keys pooled into one model, which sends each
- * request to whichever provider still has allowance. Shown inside Providers.
- *
- * Kuro supplies no keys; nothing works until you add one of your own. Shared
- * endpoints are listed last because they are tried last: the order on screen is
- * the order requests are routed in.
+ * Kuro Free: your own free-tier keys pooled into one model, which sends each request to whichever
+ * provider still has allowance.
  */
 export function FreeDetail() {
   const queryClient = useQueryClient()
@@ -129,15 +125,7 @@ function FreeGroup({ title, help, children }: { title: string; help?: string; ch
   )
 }
 
-/**
- * What the user says this provider's monthly allowance is.
- *
- * Asked for rather than discovered, because it cannot be discovered: the
- * providers state these in requests per minute, tokens per day, neurons and
- * dollars of credit, none of them expose it over the API, and all of them
- * change it without notice. A number Kuro guessed at would be worse than no
- * number, because it would look measured.
- */
+/** What the user says this provider's monthly allowance is. */
 function LimitField({ provider }: { provider: FreeProvider }) {
   const queryClient = useQueryClient()
   const stored = provider.limit?.tokensPerMonth
@@ -178,15 +166,7 @@ function count(value: number): string {
   return value.toLocaleString()
 }
 
-/**
- * What the keys have actually been spent on.
- *
- * Kuro measures this itself, from the token counts providers return, so it is
- * the one number on this screen that is not somebody's marketing copy. It is
- * still a floor rather than a total, and the panel says by how much rather than
- * hedging: a provider that returns no counts contributes a turn and no tokens,
- * and the number of those turns is shown so it can be judged.
- */
+/** What the keys have actually been spent on. */
 function UsagePanel({ usage }: { usage?: FreeUsage }) {
   if (!usage) return null
 
@@ -251,13 +231,7 @@ function Figure({ label, value, unit }: { label: string; value: string; unit: st
   )
 }
 
-/**
- * One provider's month, with a bar only where a limit was entered.
- *
- * No limit means no bar — not a bar at zero. Kuro cannot discover what these
- * allowances are (the providers state them in incompatible units and none
- * expose them over the API), and drawing an empty bar would imply it knew.
- */
+/** One provider's month, with a bar only where a limit was entered. */
 function UsageRow({ row }: { row: FreeProviderUsage }) {
   const limit = row.limit?.tokensPerMonth ?? null
   const used = limit ? Math.min(100, (row.totalTokens / limit) * 100) : null

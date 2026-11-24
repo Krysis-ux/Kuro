@@ -1,14 +1,4 @@
 //! Telling the model where it is and what it can do.
-//!
-//! Without this a model does not know it runs inside Kuro, that a web search tool
-//! exists, or that live search results are in its context. It answers "do you have
-//! internet access" from its training data, invents URLs when asked to look
-//! something up, and ignores real results.
-//!
-//! Written for the *small* end of the model range: a 0.5B model needs this most
-//! and drowns in a long brief, so every line has to earn its place. Capabilities
-//! are present-tense facts ("You can search the web right now"), not
-//! conditionals, which small models handle far better.
 
 use crate::skills::Skill;
 use crate::workspace::WorkspaceMode;
@@ -30,8 +20,6 @@ pub struct PromptContext<'a> {
     /// Tool names offered this turn, exactly as the model will see them.
     pub tool_names: &'a [String],
     /// Names of the MCP servers currently connected.
-    ///
-    /// Without them a model can only guess which server each tool came from.
     pub mcp_servers: &'a [String],
     /// The coding workspace this turn is running in, when there is one. Absent
     /// in an ordinary chat, which has no access to files at all.
@@ -179,11 +167,6 @@ fn capabilities(context: &PromptContext<'_>) -> String {
 }
 
 /// What the model can do with the user's files, stated exactly.
-///
-/// Told only "you have file tools", a model claims the whole machine or refuses
-/// a folder it was given, so the folder and mode are named. The writing modes
-/// also say commands can be run, or the model describes the test it would have
-/// run instead of running it.
 fn files_line(context: &PromptContext<'_>) -> String {
     let Some(workspace) = &context.workspace else {
         let projects = if context.projects_readable {
@@ -251,11 +234,6 @@ fn tools(context: &PromptContext<'_>) -> String {
 }
 
 /// The rules that stop failures seen in real transcripts.
-///
-/// Order is load-bearing: a small model weights the first rule most heavily.
-/// Replying normally comes first and "I don't know" last, scoped to facts that
-/// were asked for and are missing; leading with it makes a model answer a
-/// greeting with "I don't know".
 fn honesty(context: &PromptContext<'_>) -> String {
     let mut out = String::from("Rules:\n");
 
@@ -666,9 +644,7 @@ mod tests {
         });
 
         let words = prompt.split_whitespace().count();
-        // Every switch on at once is the worst case. The ceiling has risen as lines were
-        // added (files, MCP servers, commands, dev server), each fixing a specific wrong
-        // answer, but it needs a limit or the smallest models drown.
+        // Every switch on at once is the worst case.
         assert!(
             words < 560,
             "a 0.5B model has little context to spare; got {words} words"

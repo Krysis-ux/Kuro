@@ -1,10 +1,4 @@
 //! Web search, working out of the box via DuckDuckGo's keyless HTML endpoint.
-//! Scraping is fragile, so a parse failure is reported as a provider problem
-//! (with alternatives), never as "nothing was found".
-//!
-//! Brave and Tavily (hosted, keyed) and SearXNG (a user-run instance) are real
-//! APIs. All four return [`SearchResult`], so nothing downstream branches on
-//! provider.
 
 use serde::{Deserialize, Serialize};
 
@@ -165,9 +159,7 @@ async fn duckduckgo(client: &reqwest::Client, query: &str) -> Result<Vec<SearchR
     Ok(results)
 }
 
-/// Pull results out of the HTML page. Keyed on document shape, not class names
-/// (which get renamed): a result is an outbound link that appears several times
-/// (icon, title, displayed URL, snippet), so anchors are grouped by URL.
+/// Pull results out of the HTML page.
 fn parse_duckduckgo(body: &str) -> Vec<SearchResult> {
     // Insertion-ordered: first appearance is the rank.
     let mut order: Vec<String> = Vec::new();

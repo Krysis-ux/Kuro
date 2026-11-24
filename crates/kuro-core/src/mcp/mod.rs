@@ -157,9 +157,7 @@ impl McpManager {
         }
     }
 
-    /// Every server with its tools, for the management page. `connect` decides
-    /// whether servers are dialled; the page passes `false` on load (instant) and
-    /// `true` on an explicit refresh.
+    /// Every server with its tools, for the management page.
     pub async fn list_with_tools(&self, connect: bool) -> Result<Vec<ServerWithTools>> {
         let servers = self.db.list_mcp_servers()?;
         let mut out = Vec::with_capacity(servers.len());

@@ -1,10 +1,4 @@
 //! Choosing a folder without typing its path.
-//!
-//! A browser cannot open a native folder picker that returns a path, so the
-//! daemon walks its own filesystem and returns directory names for the UI to
-//! list. Only directories are shown, never file contents; hidden ones need a
-//! flag; and the deny list from [`files`] applies, so browsing cannot reveal
-//! that something like `.ssh` exists.
 
 use std::path::{Path, PathBuf};
 
@@ -49,12 +43,8 @@ struct Shortcut {
     path: String,
 }
 
-/// Open the operating system's own folder chooser (macOS `osascript`), which
-/// people already know how to use. The daemon is on the same machine as the
-/// folders, so it can ask directly.
-///
-/// The dialog can open behind the browser, so the wait is bounded and the UI
-/// keeps the list picker as a fallback if this is unavailable or dismissed.
+/// Open the operating system's own folder chooser (macOS `osascript`), which people already know
+/// how to use.
 pub async fn native_picker(State(_state): State<SharedState>) -> AppResult<Json<Value>> {
     if !cfg!(target_os = "macos") {
         return Ok(Json(json!({

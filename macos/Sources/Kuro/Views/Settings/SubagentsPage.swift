@@ -1,9 +1,7 @@
 import SwiftUI
 import KuroKit
 
-/// The specialists a coding turn can delegate to: Kuro's own, and ones the user
-/// wrote. Each runs in a fresh context and returns a report; the ones that
-/// cannot edit are given no write tools.
+/// The specialists a coding turn can delegate to: Kuro's own, and ones the user wrote.
 struct SubagentsPage: View {
     @Environment(AppModel.self) private var app
     @State private var editing: EditorRequest?

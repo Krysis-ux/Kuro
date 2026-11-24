@@ -2,9 +2,6 @@ import AppKit
 import KuroKit
 
 /// Starts Kuro's server, watches it, and stops it on quit.
-///
-/// If a server is already answering on the port (say, `kuro serve` in a
-/// terminal), the app uses it and leaves it running when it quits.
 @MainActor @Observable
 final class ServerController {
     enum Phase: Equatable {

@@ -1,10 +1,4 @@
 //! Remote model endpoints: API providers and rented hardware.
-//!
-//! One endpoint serves both because the mechanism is the same: an
-//! OpenAI-compatible URL plus a key the user holds. Each entry carries a
-//! `surface` (`provider` or `cloud`) so the UI can show them on two screens; see
-//! [`kuro_core::cloud::presets::Surface`]. The storage table is still
-//! `cloud_connectors`.
 
 use axum::extract::{Path, State};
 use axum::Json;

@@ -156,9 +156,7 @@ struct SettingsSidebar: View {
     @State private var query = ""
 
     var body: some View {
-        // Only the list scrolls. A scroll view at the very top of the sidebar is inset for
-        // the title bar twice when drawn but once when clicked, so every click landed
-        // about two rows below the row under the pointer.
+        // Only the list scrolls.
         VStack(alignment: .leading, spacing: 1) {
             SidebarRow("Back to app", systemImage: "arrow.left", selected: false) { app.leaveSettings() }
                 .keyboardShortcut(.escape, modifiers: [])

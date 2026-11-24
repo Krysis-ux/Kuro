@@ -4,9 +4,6 @@ import WebKit
 import KuroKit
 
 /// What a workspace is running, its output, and the page it serves.
-///
-/// The address comes from the process's own output, so a server that has not
-/// printed one yet shows its log instead of an empty frame.
 struct RunningPanel: View {
     @Environment(AppModel.self) private var app
     let workspace: Workspace

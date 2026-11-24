@@ -132,17 +132,10 @@ pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Val
 }
 
 /// The free pool's entries for the model picker.
-///
-/// Only flavours that can actually be served appear; the free-models screen is
-/// where to explain why none are. "Can be served" is asked of the pool, not the
-/// key list, because with shared endpoints on there are no keys and the pool can
-/// still answer.
 fn free_models(state: &SharedState) -> Vec<kuro_core::cloud::RemoteModel> {
     let keys = crate::routes::free::stored_keys(state);
 
-    // Opening the picker is the moment to learn what these keys reach, so refresh
-    // the catalogues. In the background, so the picker still opens instantly; the
-    // list arrives on the next poll.
+    // Opening the picker is the moment to learn what these keys reach, so refresh the catalogues.
     crate::routes::free::refresh_catalogues_in_background(state, &keys);
 
     let mut out: Vec<kuro_core::cloud::RemoteModel> = free::FreeFlavour::ALL
@@ -191,10 +184,6 @@ fn explain(trouble: free::Trouble, provider: &str) -> String {
 }
 
 /// Each free provider's own catalogue, named individually.
-///
-/// The pooled rows above mean "give me something that works"; these answer
-/// "which models does the key I pasted reach?". Grouped under the provider, not
-/// Kuro Free, because picking one pins the request to that provider.
 fn named_free_models(
     state: &SharedState,
     keys: &std::collections::HashMap<String, String>,

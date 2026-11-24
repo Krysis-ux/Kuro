@@ -9,10 +9,7 @@ use serde_json::{json, Value};
 
 use crate::state::SharedState;
 
-/// Work out where a request should go. A `cloud:` provider model resolves
-/// against the provider registry and anything else is a local model via
-/// [`resolve_model_id`]; doing it in one place keeps the native and
-/// OpenAI-compatible routes consistent.
+/// Work out where a request should go.
 pub async fn resolve_target(state: &SharedState, requested: Option<&str>) -> Result<ChatTarget> {
     let explicit = requested
         .map(str::trim)
@@ -48,9 +45,6 @@ pub async fn resolve_target(state: &SharedState, requested: Option<&str>) -> Res
 }
 
 /// Turn a `free:` model id into whichever provider can serve it.
-///
-/// With no key yet the error says so, rather than "no such model", which would
-/// send the user looking for a model that was never missing.
 async fn resolve_free_target(state: &SharedState, model_id: &str) -> Result<ChatTarget> {
     let selection = free::parse_selection(model_id)
         .ok_or_else(|| KuroError::not_found(format!("model `{model_id}`")))?;
@@ -71,9 +65,9 @@ async fn resolve_free_target(state: &SharedState, model_id: &str) -> Result<Chat
         }
     };
 
-    // Refresh what these providers offer, but not while the user waits: awaiting
-    // the slowest catalogue read would delay the first token, and a stale catalogue
-    // costs at worst one 404 and a failover.
+    // Refresh what these providers offer, but not while the user waits: awaiting the slowest
+    // catalogue read would delay the first token, and a stale catalogue costs at worst one 404 and
+    // a failover.
     crate::routes::free::refresh_catalogues_in_background(state, &keys);
 
     let Some(choice) = state.free.choose(flavour, &keys) else {
@@ -169,12 +163,6 @@ pub async fn resolve_model_id(state: &SharedState, requested: Option<&str>) -> R
 }
 
 /// Convert stored history into the message array the engine expects.
-///
-/// Empty placeholder assistant rows (from failed requests) are dropped so they
-/// cannot corrupt later context; a row that ran tools is kept even without text.
-/// Each assistant turn that used tools is followed by a system message logging
-/// what ran, in Kuro's own voice rather than the user's, so the model does not
-/// forget its actions (for example deny starting a dev server it started).
 pub fn history_to_messages(history: &[Message]) -> Vec<Value> {
     let mut out = Vec::with_capacity(history.len());
 
@@ -196,8 +184,6 @@ pub fn history_to_messages(history: &[Message]) -> Vec<Value> {
 }
 
 /// The most tool calls described back to the model from any one past turn.
-/// Replaying dozens would crowd out the conversation; the most recent are what
-/// later questions are about.
 const MAX_REPLAYED_CALLS: usize = 12;
 /// How much of each stored preview is replayed.
 const PREVIEW_CHARS: usize = 240;

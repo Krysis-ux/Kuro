@@ -1,12 +1,4 @@
 //! `POST /v1/messages`, the Anthropic-compatible endpoint behind `kuro launch claude`.
-//!
-//! Claude Code speaks only the Messages API, while every endpoint Kuro reaches
-//! speaks the OpenAI shape. Translation lives in [`kuro_core::gateway`]; this
-//! module resolves the target and converts one stream into the other.
-//!
-//! Kuro's own tools are deliberately not offered: Claude Code brings its own and
-//! enforces its own permissions, and a second tool layer would sidestep the
-//! workspace mode.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -68,9 +60,6 @@ pub async fn messages(State(state): State<SharedState>, Json(body): Json<Value>)
 }
 
 /// Build the upstream request for either kind of target.
-///
-/// One of three places that do this (see `subagent.rs`); provider quirks must be
-/// handled identically in all of them.
 fn upstream_request(
     state: &SharedState,
     target: &ChatTarget,

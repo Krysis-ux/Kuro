@@ -1,6 +1,6 @@
-//! Everything Hugging Face publishes about one repository — the model card,
-//! the papers it cites, what it was quantized from and every weights file — so
-//! the detail screen can answer "what is this" without sending anyone to the Hub.
+//! Everything Hugging Face publishes about one repository — the model card, the papers it cites,
+//! what it was quantized from and every weights file — so the detail screen can answer "what is
+//! this" without sending anyone to the Hub.
 
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};

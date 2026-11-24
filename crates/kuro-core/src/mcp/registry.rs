@@ -1,7 +1,5 @@
-//! The recommended MCP servers: static data shipped in the binary (a local-first
-//! app should not call home to show what is installable). Entries are keyless
-//! where possible and run by the owner of what they connect to; any that need a
-//! key say so up front, with a link to get one.
+//! The recommended MCP servers: static data shipped in the binary (a local-first app should not
+//! call home to show what is installable).
 
 use serde::Serialize;
 

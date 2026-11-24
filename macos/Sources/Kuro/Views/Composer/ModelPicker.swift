@@ -1,11 +1,7 @@
 import SwiftUI
 import KuroKit
 
-/// The model chooser.
-///
-/// Local models come first, grouped by maker. Each provider is a closed
-/// section, because one key can reach hundreds of models; searching opens
-/// everything.
+/// The model chooser. Local models come first, grouped by maker.
 struct ModelPicker: View {
     @Environment(AppModel.self) private var app
     @Binding var selection: String?

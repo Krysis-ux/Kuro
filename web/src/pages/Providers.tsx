@@ -19,14 +19,8 @@ import { FreeDetail } from './Free'
 import { Switch } from './Tools'
 
 /**
- * Every model reached over the internet, in one place: Kuro Free, the providers
- * you hold a key for, and endpoints on hardware you rent. A provider rents you
- * their model per token; a cloud endpoint runs yours on a GPU you rent. Both
- * store a key and probe an OpenAI-compatible endpoint, so they share this page
- * and are told apart by their group.
- *
- * What the right side shows lives in the URL (`?show=`), so the header's Add
- * provider button and the old /free and /cloud links can point straight at it.
+ * Every model reached over the internet, in one place: Kuro Free, the providers you hold a key for,
+ * and endpoints on hardware you rent.
  */
 export function ProvidersPane() {
   const [params, setParams] = useSearchParams()

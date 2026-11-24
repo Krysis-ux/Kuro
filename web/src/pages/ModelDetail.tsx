@@ -23,14 +23,7 @@ import { DownloadsPanel, FitBadge, modelPath, usePull } from './Models'
 
 const HUB = 'https://huggingface.co'
 
-/**
- * One Hugging Face repository, with everything the Hub shows about it.
- *
- * The question this page answers first is "which file do I download", so the
- * quantizations lead — each with its real size and how it fits this machine —
- * and the model card, papers and specs follow. Works for repositories without
- * GGUF weights too, which is how a quantized model's original is shown.
- */
+/** One Hugging Face repository, with everything the Hub shows about it. */
 export function ModelDetailPage() {
   const { owner = '', name = '' } = useParams()
   const repo = `${owner}/${name}`

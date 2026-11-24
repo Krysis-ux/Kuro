@@ -1,10 +1,4 @@
-//! Reading a web page (search only returns snippets). Works without a search
-//! provider.
-//!
-//! The model chooses the URL, so a malicious page could talk it into fetching a
-//! loopback or private address (Kuro's own API, engine ports). [`is_permitted`]
-//! checks the URL as written; [`guarded_client`] checks where its name resolves
-//! and where every redirect goes, before connecting.
+//! Reading a web page (search only returns snippets).
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -91,11 +85,8 @@ pub async fn fetch_url(url: &str) -> Result<FetchedPage> {
     })
 }
 
-/// Reject anything that is not a public web address: loopback and private
-/// ranges reach Kuro's own API, the engine ports and local services.
-///
-/// The URL is parsed exactly as the HTTP client will parse it, so `\\`, userinfo,
-/// `127.1` and `2130706433` mean here what they will mean on the wire.
+/// Reject anything that is not a public web address: loopback and private ranges reach Kuro's own
+/// API, the engine ports and local services.
 pub fn is_permitted(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url.trim())
         .map_err(|_| KuroError::bad_request("that is not a valid URL"))?;

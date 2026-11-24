@@ -1,6 +1,4 @@
-//! HTML to readable text. Not a parser: it strips markup, drops browser-only
-//! elements and decodes common entities. The failure mode is an occasional stray
-//! character.
+//! HTML to readable text.
 
 /// Elements whose contents are never prose.
 const SKIPPED_ELEMENTS: &[&str] = &["script", "style", "noscript", "svg", "head", "template"];

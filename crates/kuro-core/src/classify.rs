@@ -1,23 +1,8 @@
 //! What a model's name says about the model.
-//!
-//! Providers list flat ids with no field for what a model does, or whether it is
-//! a chat model at all. NVIDIA's catalogue mixes chat models with embedders,
-//! rerankers, speech models, image generators and safety classifiers; offering
-//! those in a picker, or taking one as a fallback, yields rows that answer every
-//! message with an error.
-//!
-//! So the name is read: publishers name ids to be legible, which makes
-//! `qwen/qwen2.5-coder-32b-instruct` a better signal than any description. This
-//! ranks nothing. Where the name says nothing, [`Speciality::General`] is the
-//! answer, and the hand-written table behind [`crate::free::FreeProvider::models`]
-//! still wins for models Kuro has an opinion about.
 
 use serde::Serialize;
 
 /// What kind of thing a model is, before asking what it is good at.
-///
-/// Only [`ModelKind::Chat`] can serve a conversation; every other kind must
-/// never reach a model picker or a failover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelKind {
@@ -54,8 +39,6 @@ impl ModelKind {
 }
 
 /// What a chat model was trained to be good at.
-///
-/// Deliberately few: every extra category is one more thing to be wrong about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Speciality {
@@ -114,14 +97,9 @@ impl Classified {
 }
 
 /// Anything at or below this many billion parameters counts as fast.
-///
-/// Nine, not eight, so models that round up to nine are in; the 12–14B tier is out.
 const FAST_PARAMS_B: f32 = 9.0;
 
 /// Substrings that mean a model is not a chat model.
-///
-/// Ordered most-specific first and checked before the speciality markers:
-/// `nvidia/llama-3.2-nv-rerankqa-1b-v2` contains `llama` but is a reranker.
 const NOT_CHAT: &[(&str, ModelKind)] = &[
     // Safety classifiers, before embeddings (`nemoguard` has a `topic-control` variant).
     ("guard", ModelKind::Guard),
@@ -187,9 +165,7 @@ const VISION: &[&str] = &[
 /// Substrings a publisher uses to mean "this one is quick".
 const FAST: &[&str] = &["mini", "flash", "instant", "nano", "tiny", "lite", "turbo", "-air"];
 
-/// Read a model id.
-///
-/// Case and separators are normalised first, so `Qwen/Qwen2.5-Coder-32B` and
+/// Read a model id. Case and separators are normalised first, so `Qwen/Qwen2.5-Coder-32B` and
 /// `qwen/qwen2.5_coder_32b` classify identically.
 pub fn classify(model_id: &str) -> Classified {
     let publisher = model_id
@@ -201,9 +177,7 @@ pub fn classify(model_id: &str) -> Classified {
     // not what it does (`thinkingmachines/inkling` is not a reasoning model).
     let stem = model_id.split_once('/').map_or(model_id, |(_, tail)| tail);
 
-    // `:` is a separator too (Ollama writes `gpt-oss:20b`), so one pattern list
-    // serves both. The name is wrapped in dashes so dash-anchored markers match at
-    // the ends too: `-o1` must match a model named `o1`.
+    // `:` is a separator too (Ollama writes `gpt-oss:20b`), so one pattern list serves both.
     let normal: String = std::iter::once('-')
         .chain(stem.to_ascii_lowercase().chars().map(|character| {
             match character {
@@ -265,9 +239,6 @@ fn not_chat_kind(normal: &str) -> Option<ModelKind> {
 }
 
 /// The parameter count a name states, in billions.
-///
-/// Takes the largest figure, so `qwen3-235b-a22b` reads as 235B, and multiplies
-/// out `8x7b`: the memory needed is for the total, not one expert.
 fn params_of(normal: &str) -> Option<f32> {
     let bytes = normal.as_bytes();
     let mut best: Option<f32> = None;
@@ -321,9 +292,6 @@ fn params_of(normal: &str) -> Option<f32> {
 }
 
 /// Where the run of digits ending just before `end` begins.
-///
-/// One decimal point is part of the number (`3.5b` is 3.5); a second ends it, so
-/// `llama-3.3-70b` reads as 70, not as the version in front of it.
 fn number_start(bytes: &[u8], end: usize) -> usize {
     let mut start = end;
     let mut seen_point = false;

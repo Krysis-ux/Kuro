@@ -1,6 +1,4 @@
-//! Raw settings key/value storage. Values are JSON, so a setting can be any type
-//! without schema changes; typed accessors and defaults are in [`crate::settings`].
-//! Secrets are not stored here; they go to the credential store (`secrets.rs`).
+//! Raw settings key/value storage.
 
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;

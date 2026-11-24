@@ -1,13 +1,4 @@
-/**
- * Which maker a model or provider belongs to, for the logo beside its name.
- *
- * Read off the name, because that is all a GGUF repository reliably says about
- * where its weights came from: `unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF` is a
- * DeepSeek model that unsloth quantized, and the logo should say DeepSeek, not
- * unsloth. The quantizer gets its own, smaller mark from its Hub avatar.
- *
- * The SVGs are LobeHub's icon set (MIT), vendored so no logo needs the network.
- */
+/** Which maker a model or provider belongs to, for the logo beside its name. */
 
 const FILES = import.meta.glob('../assets/logos/*.svg', {
   eager: true,
@@ -28,9 +19,9 @@ function brand(label: string, file: string): Brand | null {
 }
 
 /**
- * First match wins, so fine-tuners and distillations sit above the families
- * their names also contain: `DeepSeek-R1-Distill-Llama` is DeepSeek's,
- * `Hermes-3-Llama` is Nous Research's, `Llama-3.1-Nemotron` is NVIDIA's.
+ * First match wins, so fine-tuners and distillations sit above the families their names also
+ * contain: `DeepSeek-R1-Distill-Llama` is DeepSeek's, `Hermes-3-Llama` is Nous Research's,
+ * `Llama-3.1-Nemotron` is NVIDIA's. /
  */
 const MODEL_BRANDS: [RegExp, string, string][] = [
   [/deepseek/, 'DeepSeek', 'deepseek-color'],
@@ -120,13 +111,7 @@ export function providerBrand(slug: string | null | undefined): Brand | null {
   return entry ? brand(entry[0], entry[1]) : null
 }
 
-/**
- * A Hub user's or organisation's avatar.
- *
- * The Hub serves the two from different paths and the owner's name does not
- * say which it is, so the organisation path is tried first (most model
- * publishers are organisations) and the image falls back to the user path.
- */
+/** A Hub user's or organisation's avatar. */
 export function hubAvatarUrls(owner: string): string[] {
   const name = encodeURIComponent(owner)
   return [

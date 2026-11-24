@@ -1,13 +1,4 @@
 //! Turning an effort level into an actual amount of work.
-//!
-//! Effort resolves into a [`Plan`]: how many tool rounds the turn may spend, and
-//! which skills go into the brief on top of whatever the user switched on.
-//!
-//! Skills are not auto-selected for chat ([`crate::skills`]), because guessing
-//! what a *message* needs is often wrong. A coding workspace is different: a
-//! `Cargo.toml` is evidence, not an inference about intent, so language skills for
-//! languages the project demonstrably contains are added automatically. This is
-//! switchable per surface so a curated list is not silently added to.
 
 use std::path::Path;
 
@@ -28,15 +19,9 @@ pub enum Surface {
 }
 
 /// Ceiling on tool rounds, whatever the effort.
-///
-/// A model still going after this many rounds is looping.
 pub const MAX_ROUNDS_CEILING: usize = 16;
 
 /// What Ultra is allowed, which is the real ceiling.
-///
-/// Two and a half times Max. A long agentic run (read the project, change six
-/// files, build, fix, test, fix) costs this many rounds; stopping short reports
-/// partial work as finished.
 pub const ULTRA_ROUNDS: usize = 40;
 
 /// What one turn is allowed to do.
@@ -44,17 +29,12 @@ pub const ULTRA_ROUNDS: usize = 40;
 pub struct Plan {
     /// How many times the model may call tools and be asked again.
     pub max_tool_rounds: usize,
-    /// The brief's actual skill list: what the user switched on and what
-    /// orchestration added, ranked by relevance and cut to the budget.
-    ///
-    /// This is what the caller should send, not everything the user enabled.
+    /// The brief's actual skill list: what the user switched on and what orchestration added,
+    /// ranked by relevance and cut to the budget.
     pub skills: Vec<&'static Skill>,
     /// Of `skills`, the ones the user had not switched on themselves.
     pub added_skills: Vec<&'static Skill>,
     /// Skills left out because the brief had no room for them.
-    ///
-    /// Reported, not dropped silently: "the brief was full" is a different problem
-    /// from "the switch did not work".
     pub trimmed_skills: Vec<&'static Skill>,
     /// The ceiling this turn was fitted to.
     pub budget_tokens: usize,
@@ -73,27 +53,14 @@ pub struct Request<'a> {
     pub workspace: Option<(&'a Path, WorkspaceMode)>,
     /// Whether the user has auto-orchestration on for this surface.
     pub auto: bool,
-    /// What the user actually asked, so a skill about the subject at hand can
-    /// outrank one that merely happens to be switched on.
-    ///
-    /// The only guess in the module. It only *orders* candidates and never admits
-    /// one, so a wrong guess costs a slightly worse ordering, not unwanted expertise.
+    /// What the user actually asked, so a skill about the subject at hand can outrank one that
+    /// merely happens to be switched on.
     pub message: &'a str,
     /// Skills the user named for this turn, by slug.
-    ///
-    /// The `/rust` in a composer. Outside the budget and the ranking: a typed name is
-    /// more specific than any heuristic.
     pub pinned: &'a [String],
 }
 
-/// How many tokens of skill guidance a turn may carry, over and above the
-/// essentials.
-///
-/// Skills are additive: with everything switched on the brief ran past forty
-/// thousand tokens, most of a small local model's context window. The budget makes
-/// leaving them all on a reasonable default; a turn takes the most relevant few
-/// and says which it left behind. The essentials sit outside it, since rationing
-/// the rules about not destroying the user's code is the wrong trade at any budget.
+/// How many tokens of skill guidance a turn may carry, over and above the essentials.
 pub fn budget_for(effort: Effort, surface: Surface) -> usize {
     match (surface, effort) {
         (Surface::Chat, Effort::Low) => 200,
@@ -111,12 +78,6 @@ pub fn budget_for(effort: Effort, surface: Surface) -> usize {
 }
 
 /// Which skills a request's own words call for.
-///
-/// Deliberately small; a skill not listed falls back to matching its own slug.
-/// Triggers derived from skill names yield words like "way" that match everything,
-/// and a wrong-word match is invisible, so the table must be predictable on its
-/// own. Matching is on whole words (`go` does not fire on "going"); `sqlite` is
-/// listed under `sql` on purpose.
 const TRIGGERS: &[(&str, &[&str])] = &[
     ("rust", &["rust", "cargo", "clippy", "rustc", "crate"]),
     ("python", &["python", "py", "pip", "django", "flask", "pandas", "numpy", "pytest"]),
@@ -164,8 +125,6 @@ pub fn plan(request: &Request<'_>, already_enabled: &[&'static Skill]) -> Plan {
 
     if !request.auto {
         // Orchestration off: the user's own list goes in verbatim, with no budget.
-        // A skill named on the message still goes in: this switch is about guessing,
-        // not a refusal to be told.
         let mut skills = already_enabled.to_vec();
         for slug in request.pinned {
             if let Some(skill) = skills::find(slug) {
@@ -450,9 +409,6 @@ fn describe(
 }
 
 /// How many tool rounds an effort level buys.
-///
-/// A coding turn gets more than a chat at the same setting: reading three files
-/// and running a build is four rounds before any answer exists.
 fn rounds_for(effort: Effort, surface: Surface) -> usize {
     let base = match (surface, effort) {
         (Surface::Chat, Effort::Low) => 2,
@@ -472,9 +428,6 @@ fn rounds_for(effort: Effort, surface: Surface) -> usize {
 }
 
 /// Marker files that say what a project is written in.
-///
-/// Only the top level is read: a root `Cargo.toml` is what the project is, but a
-/// `package.json` deep inside `examples/` is not.
 const MARKERS: &[(&str, &[&str])] = &[
     ("Cargo.toml", &["rust"]),
     ("go.mod", &["go"]),
@@ -496,8 +449,6 @@ const MARKERS: &[(&str, &[&str])] = &[
 ];
 
 /// Extra evidence found *inside* a marker file.
-///
-/// `package.json` says JavaScript; its dependency list says which framework.
 const PACKAGE_HINTS: &[(&str, &str)] = &[
     ("\"react\"", "react"),
     ("\"react-dom\"", "react"),

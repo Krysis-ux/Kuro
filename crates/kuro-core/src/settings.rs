@@ -1,8 +1,4 @@
 //! Typed access to the settings the backend itself acts on.
-//!
-//! The `settings` table is otherwise a free-form JSON store owned by the
-//! frontend. Only keys the Rust side decides on get typed accessors here, so
-//! UI-only preferences need no backend change.
 
 use std::collections::HashMap;
 
@@ -30,9 +26,6 @@ pub const KEY_MEMORY_PRELOAD: &str = "tools.memoryPreload";
 pub const KEY_MEMORY_ABOUT_YOU: &str = "memory.aboutYou";
 
 /// What the user wants every model to know about them.
-///
-/// A paragraph the user writes and rewrites deliberately, unlike the memories a
-/// model accumulates with `remember`.
 pub fn about_you(db: &Db) -> Result<Option<String>> {
     Ok(db
         .get_setting(KEY_MEMORY_ABOUT_YOU)?
@@ -65,10 +58,6 @@ pub const KEY_FREE_ALLOW_KEYLESS: &str = "free.allowKeyless";
 pub const KEY_FREE_ALLOWANCES: &str = "free.allowances";
 
 /// Whether shared, keyless endpoints may answer.
-///
-/// On by default so Kuro Free works before any sign-up. These endpoints are
-/// shared, rate-limited per address, and several log or train on what they
-/// receive, so they always rank below providers the user holds a key for.
 pub fn allow_keyless(db: &Db) -> Result<bool> {
     Ok(db
         .get_setting(KEY_FREE_ALLOW_KEYLESS)?
@@ -77,9 +66,6 @@ pub fn allow_keyless(db: &Db) -> Result<bool> {
 }
 
 /// A ceiling the user typed in for one provider.
-///
-/// Optional and unverified: providers state allowances in incompatible units and
-/// change them without notice, so Kuro asks rather than guesses.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Allowance {
     #[serde(rename = "tokensPerDay", skip_serializing_if = "Option::is_none")]
@@ -116,8 +102,6 @@ pub fn set_free_allowance(db: &Db, slug: &str, allowance: Option<Allowance>) -> 
 }
 
 /// Whether effort should also pick skills and a tool budget.
-///
-/// On by default; otherwise effort only moves a temperature.
 pub fn auto_orchestrate(db: &Db, surface: crate::orchestrate::Surface) -> Result<bool> {
     let key = match surface {
         crate::orchestrate::Surface::Chat => KEY_CHAT_AUTO_ORCHESTRATE,
@@ -127,8 +111,6 @@ pub fn auto_orchestrate(db: &Db, surface: crate::orchestrate::Surface) -> Result
 }
 
 /// The effort a surface starts at.
-///
-/// Coding defaults higher: its first rounds go on reading the project.
 pub fn default_effort(db: &Db, surface: crate::orchestrate::Surface) -> Result<Effort> {
     let (key, fallback) = match surface {
         crate::orchestrate::Surface::Chat => (KEY_CHAT_DEFAULT_EFFORT, Effort::Balanced),
@@ -142,10 +124,6 @@ pub fn default_effort(db: &Db, surface: crate::orchestrate::Surface) -> Result<E
 }
 
 /// The mode a newly opened workspace starts in.
-///
-/// Agent, because the Code page is built around it: every change is recorded with
-/// the previous contents and is one click from undo. Bypass is never a default;
-/// it is the only mode that turns a protection off.
 pub fn default_workspace_mode(db: &Db) -> Result<crate::workspace::WorkspaceMode> {
     Ok(db
         .get_setting(KEY_CODE_DEFAULT_MODE)?
@@ -161,9 +139,7 @@ pub fn default_workspace_mode(db: &Db) -> Result<crate::workspace::WorkspaceMode
 /// Zero means "keep it loaded until told otherwise".
 const DEFAULT_IDLE_UNLOAD_MINUTES: u32 = 30;
 
-/// Engine options resolved against the user's overrides and this machine's
-/// capabilities. A stored value of `0` (or `-1` for GPU layers) means "Auto",
-/// which is what the Settings UI shows by default.
+/// Engine options resolved against the user's overrides and this machine's capabilities.
 #[derive(Debug, Clone, Serialize)]
 pub struct EngineSettings {
     pub context_size: u32,
@@ -200,9 +176,6 @@ impl EngineSettings {
 }
 
 /// Web search preferences.
-///
-/// The API key is deliberately absent: it lives in the credential store and the
-/// settings endpoint is readable by the browser.
 #[derive(Debug, Clone)]
 pub struct SearchSettings {
     pub provider: SearchProvider,
@@ -230,9 +203,6 @@ impl SearchSettings {
 }
 
 /// Tool groups a new conversation starts with.
-///
-/// Memory and Projects are on, web is not: search sends the query off the
-/// machine, which this application promises not to do unprompted.
 pub fn default_tool_groups(db: &Db) -> Result<Vec<ToolGroup>> {
     let fallback = || vec![ToolGroup::Memory, ToolGroup::Projects];
 
@@ -272,10 +242,6 @@ fn read_i64(db: &Db, key: &str) -> Result<Option<i64>> {
 }
 
 /// How much compute to spend on a reply.
-///
-/// The single control in the chat composer; the raw sampling knobs live in
-/// Settings. Declaration order is the ordering (`Low < Balanced < High < Max <
-/// Ultra`), so callers can ask "at least High".
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default,
 )]
@@ -287,9 +253,6 @@ pub enum Effort {
     High,
     Max,
     /// Everything, and only offered when coding.
-    ///
-    /// A chat has nothing to spend this on. It stops rationing: every justified skill
-    /// on, and the tool loop runs as long as it is allowed to.
     Ultra,
 }
 

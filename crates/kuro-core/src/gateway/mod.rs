@@ -1,16 +1,4 @@
 //! Anthropic Messages API in, OpenAI chat API out.
-//!
-//! Lets Claude Code talk to whatever Kuro is pointed at. It sends
-//! `POST /v1/messages` and expects Anthropic's streaming events, while every
-//! endpoint Kuro can reach (local llama.cpp, OpenRouter, free providers) speaks
-//! the OpenAI shape.
-//!
-//! This is a translator, not a proxy: `/v1/chat/completions` passes straight
-//! through to the local engine and cannot reach a provider, and both halves of
-//! the format need rewriting.
-//!
-//! No tool *execution* here. Claude Code runs its own tools, so a `tool_use`
-//! block is translated and passed on, and its result translated back.
 
 use serde_json::{json, Value};
 
@@ -19,9 +7,6 @@ pub mod stream;
 pub use stream::{AnthropicEvent, StreamTranslator};
 
 /// Turn an Anthropic Messages request into an OpenAI chat request.
-///
-/// `model` is the id the chosen endpoint knows; the one in the body is whatever
-/// Claude Code was configured with.
 pub fn to_openai_request(anthropic: &Value, model: &str) -> Value {
     let mut messages: Vec<Value> = Vec::new();
 
@@ -102,9 +87,6 @@ fn tool_choice(anthropic: &Value) -> Value {
 }
 
 /// Translate one Anthropic message, which may become several OpenAI ones.
-///
-/// Anthropic nests tool results in a user message; OpenAI wants one
-/// `role: "tool"` message each, so one user turn can expand to several.
 fn translate_message(message: &Value, out: &mut Vec<Value>) {
     let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
 

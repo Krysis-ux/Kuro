@@ -1,10 +1,5 @@
-//! Tracks which engines are running: one process per loaded model, started on
-//! demand and stopped when idle.
-//!
-//! Loads are serialised behind one lock so two large models never compete for
-//! memory. A supervisor task watches each child; on an unexpected exit it drops
-//! the entry and logs, and the next request starts a fresh engine (recovery
-//! without a restart loop).
+//! Tracks which engines are running: one process per loaded model, started on demand and stopped
+//! when idle.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -53,9 +48,7 @@ pub struct EngineManager {
     outbound: reqwest::Client,
     loopback: reqwest::Client,
     engines: Arc<Mutex<HashMap<String, EngineHandle>>>,
-    /// Held for the whole of a load, so two loads cannot take the same port. Kept
-    /// apart from `engines`, which a load only touches briefly: a chat with a
-    /// model already loaded must not wait minutes behind another model's start.
+    /// Held for the whole of a load, so two loads cannot take the same port.
     loading: Mutex<()>,
 }
 

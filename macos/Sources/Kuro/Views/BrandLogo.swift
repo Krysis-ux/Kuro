@@ -3,10 +3,6 @@ import SwiftUI
 import KuroKit
 
 /// The maker's mark beside a model or provider name.
-///
-/// Every variant draws the same rounded tile, so a list mixing brand marks, Hub
-/// avatars and letters still lines up. `bare` drops the tile for rows too small
-/// to frame it, such as the model picker's.
 struct ModelLogo: View {
     let name: String
     var owner: String?

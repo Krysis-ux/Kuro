@@ -1,6 +1,5 @@
-//! Finding GGUF models on Hugging Face from inside Kuro, filtered to GGUF so
-//! every result can run here. Results carry a size and fit verdict, since "will
-//! this run on my machine" is what matters when choosing and the Hub can't say.
+//! Finding GGUF models on Hugging Face from inside Kuro, filtered to GGUF so every result can run
+//! here.
 
 use serde::{Deserialize, Serialize};
 
@@ -215,9 +214,7 @@ fn param_count_from_name(name: &str) -> Option<String> {
         .map(|token| token.to_ascii_uppercase())
 }
 
-/// Estimate whether a hit will run here from its smallest single-file
-/// quantization. Search results carry no file sizes, so this is derived from the
-/// parameter count and quantization; approximate, and the UI says so.
+/// Estimate whether a hit will run here from its smallest single-file quantization.
 pub fn estimate_fit(hit: &SearchHit, hardware: &HardwareInfo) -> Option<fit::FitEstimate> {
     let params = parse_billions(hit.param_count.as_deref()?)?;
     let quant = hit.quants.first().map(String::as_str).unwrap_or("Q4_K_M");

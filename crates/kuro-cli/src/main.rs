@@ -1,7 +1,4 @@
 //! `kuro` — the Kuro LLM command line.
-//!
-//! Every command except `serve` is a client of the local daemon's HTTP API, the
-//! same one the web UI and the macOS app use.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -33,11 +30,8 @@ enum Command {
         port: Option<u16>,
     },
 
-    /// Download a model.
-    ///
-    /// Accepts a recommended name (`qwen3-4b`), a Hugging Face repository
-    /// (`owner/repo`), or a pasted Hugging Face URL. Add `:QUANT` to choose a
-    /// quantization, for example `qwen3-4b:Q5_K_M`.
+    /// Download a model. Accepts a recommended name (`qwen3-4b`), a Hugging Face repository
+    /// (`owner/repo`), or a pasted Hugging Face URL.
     Pull { model: String },
 
     /// Show what a pull would download, without downloading it.
@@ -100,8 +94,6 @@ enum Command {
     Free,
 
     /// Run another coding tool against a Kuro model.
-    ///
-    /// Start a supported coding client against the Kuro model you choose.
     Launch {
         /// Supported tool name. Omit to see the list.
         app: Option<String>,

@@ -25,9 +25,7 @@ use crate::db::Db;
 use crate::tools::web_search::{SearchConfig, SearchResult};
 use crate::Result;
 
-/// Tools that ship with Kuro. All are read-only with respect to this machine:
-/// they reach the network, Kuro's database, or (via [`projects`]) the contents of
-/// a folder the user chose. The project tools cannot write, structurally.
+/// Tools that ship with Kuro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     WebSearch,
@@ -467,9 +465,7 @@ pub fn parse_arguments(raw: Option<&Value>) -> Value {
     }
 }
 
-/// Make a name safe to expose to a model. Engines validate tool names against
-/// `^[a-zA-Z0-9_-]+$` and reject the whole request on a bad one, so names are
-/// rewritten rather than dropped.
+/// Make a name safe to expose to a model.
 pub fn sanitize_tool_name(raw: &str) -> String {
     let cleaned: String = raw
         .chars()
@@ -597,9 +593,9 @@ mod tests {
 
     #[test]
     fn no_builtin_can_change_a_file() {
-        // Chat may read a workspace folder but never write one: no builtin takes
-        // file contents, and the read tools use Plan-tier permissions regardless
-        // of the workspace's mode (see `tools::projects`).
+        // Chat may read a workspace folder but never write one: no builtin takes file contents, and
+        // the read tools use Plan-tier permissions regardless of the workspace's mode (see
+        // `tools::projects`).
         for tool in Builtin::ALL {
             let name = tool.name();
             assert!(

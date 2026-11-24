@@ -1,7 +1,4 @@
-//! Server-sent event parsing, for both the engine's OpenAI-style stream and
-//! Kuro's own. Chunks arrive on arbitrary byte boundaries, so bytes are buffered
-//! and only complete events decoded (decoding early would split multi-byte
-//! characters).
+//! Server-sent event parsing, for both the engine's OpenAI-style stream and Kuro's own.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SseEvent {

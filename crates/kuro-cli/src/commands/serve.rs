@@ -5,9 +5,6 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 
 /// Hand this process over to the daemon binary.
-///
-/// Using `exec` rather than a child process keeps Ctrl-C, job control and the
-/// exit status the same as if the daemon had been started directly.
 pub fn serve(port: Option<u16>) -> Result<()> {
     use std::os::unix::process::CommandExt;
 

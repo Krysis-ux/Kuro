@@ -4,15 +4,7 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 
-/**
- * A Hugging Face model card, rendered the way the Hub renders it.
- *
- * Cards mix markdown with raw HTML — centred logos, badge rows, benchmark
- * tables, demo videos — so HTML is parsed rather than escaped, and then passed
- * through the same allowlist GitHub uses, widened only for `<video>`. Nothing a
- * card author writes can run script here: no `style`, no event handlers, no
- * `javascript:` URLs.
- */
+/** A Hugging Face model card, rendered the way the Hub renders it. */
 
 const SCHEMA = {
   ...defaultSchema,
@@ -66,13 +58,7 @@ function CardLink({ href, children }: { href?: string; children?: ReactNode }) {
   )
 }
 
-/**
- * Point the card's relative paths at the repository they came from.
- *
- * `figures/benchmark.png` in a card means a file in that repo, and resolving it
- * against Kuro's own address would request it from the daemon. Links go to the
- * file's page on the Hub; images and video to the raw file.
- */
+/** Point the card's relative paths at the repository they came from. */
 function resolveUrl(repo: string, url: string, key: string): string {
   const safe = defaultUrlTransform(url)
   if (!safe || safe.startsWith('#') || /^([a-z][a-z\d+.-]*:|\/\/)/i.test(safe)) return safe

@@ -28,10 +28,6 @@ use crate::{KuroError, Result};
 pub use presets::{Preset, PRESETS};
 
 /// Prefix on a model id that marks it as belonging to a provider.
-///
-/// `cloud:<connector id>/<model name>`. A prefix rather than a separate field, so
-/// a provider model travels anywhere a local model id can (composer,
-/// conversation row, OpenAI-compatible API) unchanged.
 pub const MODEL_PREFIX: &str = "cloud:";
 
 /// Credential reference for a provider. Namespaced away from MCP tokens.
@@ -40,15 +36,9 @@ fn key_reference(connector_id: &str) -> String {
 }
 
 /// What marks a model on a provider as costing nothing.
-///
-/// OpenRouter's convention, and the only one that is a convention rather than a
-/// per-model fact. A provider that does not use it has no pool, not a guessed one.
 const FREE_SUFFIX: &str = ":free";
 
 /// The reserved model name behind "free models".
-///
-/// No slash, because [`parse_model_id`] splits on the first one and every real
-/// OpenRouter id has several, so nothing a provider returns can collide with it.
 pub const FREE_POOL_MODEL: &str = "kuro:free-pool";
 
 /// The free models among a connector's list, in the order they will be tried.
@@ -80,11 +70,8 @@ pub enum ChatTarget {
         model: String,
         /// How this endpoint departs from the plain OpenAI shape.
         quirks: Quirks,
-        /// Which upstream actually answered, when `connector_id` names a pool
-        /// rather than one endpoint.
-        ///
-        /// A free turn's `connector_id` is `free:auto`, which is what the conversation
-        /// remembers; this says which provider's allowance the turn spent.
+        /// Which upstream actually answered, when `connector_id` names a pool rather than one
+        /// endpoint.
         upstream: Option<String>,
     },
 }
@@ -132,8 +119,6 @@ impl ChatTarget {
 }
 
 /// Split `cloud:<id>/<model>` into its parts.
-///
-/// `None` means a plain local model id, which is how callers tell them apart.
 pub fn parse_model_id(model_id: &str) -> Option<(String, String)> {
     let rest = model_id.strip_prefix(MODEL_PREFIX)?;
     let (connector_id, model) = rest.split_once('/')?;
@@ -159,15 +144,10 @@ pub struct RemoteModel {
     pub connector_label: String,
     pub provider: String,
     /// Whether this row is the free pool rather than one named model.
-    ///
-    /// The picker marks the row and keeps it at the top of its provider's group.
     pub pooled: bool,
     /// How many models the pool covers. Zero for an ordinary row.
     pub pool_size: usize,
     /// Whether this model costs nothing on the key that reaches it.
-    ///
-    /// Per model, not per provider: one OpenRouter key reaches many models it bills
-    /// for and a few it does not.
     pub free: bool,
     /// What the model's name says it was trained for, as words the picker can
     /// put on the row. Empty only for a pooled row, which is not one model.
@@ -175,24 +155,13 @@ pub struct RemoteModel {
     /// Size in billions of parameters, when the name states one.
     pub params_b: Option<f32>,
     /// Why this cannot be picked right now, when it cannot.
-    ///
-    /// The row stays in the list, greyed, rather than vanishing: the reason (out of
-    /// allowance until tomorrow, key not issued for it) is what the user needs to act.
     pub unavailable: Option<String>,
     /// Where to go to make it work, when there is somewhere to go.
-    ///
-    /// For example NVIDIA provisions models per key, and the fix is a page on
-    /// build.nvidia.com for that model.
     pub fix_url: Option<String>,
 }
 
 impl RemoteModel {
     /// Describe one named model, reading its name for what it is.
-    ///
-    /// The id is passed in because callers address models differently (`cloud:` ids
-    /// via the registry, `free:` ids via the pool); the rest is shared. Non-chat
-    /// models are the caller's to filter out, as refusing here would need a `None`
-    /// the pooled rows would trip over.
     pub fn described(id: String, group: RemoteGroup<'_>, model: &str, free: bool) -> Self {
         let classified = crate::classify::classify(model);
         Self {
@@ -225,10 +194,6 @@ pub struct RemoteGroup<'a> {
 }
 
 /// Which free model a connector is currently using, and which have refused.
-///
-/// Sticky rather than round-robin: rotating per request would put consecutive
-/// messages of one conversation on different models. One model answers until it
-/// refuses, and the refusal moves the cursor on.
 #[derive(Default)]
 struct PoolState {
     cursor: usize,
@@ -254,9 +219,6 @@ pub struct ProviderRegistry {
     secrets: SecretStore,
     client: reqwest::Client,
     /// Free-pool state per connector.
-    ///
-    /// In memory: it describes the next few minutes, and a persisted cooldown would
-    /// outlive the rate limit.
     pools: Arc<Mutex<HashMap<String, PoolState>>>,
 }
 
@@ -271,8 +233,6 @@ impl ProviderRegistry {
     }
 
     /// Add a provider: store the key, record the endpoint, then probe it.
-    ///
-    /// Probed immediately so a bad key shows while the user is still on the form.
     pub async fn add(
         &self,
         provider: &str,
@@ -313,9 +273,7 @@ impl ProviderRegistry {
             .or_else(|| preset.map(|preset| preset.name.to_string()))
             .ok_or_else(|| KuroError::bad_request("the provider needs a name"))?;
 
-        // Row first, so the credential reference has an id. A failure between the two
-        // leaves a provider with no key (shown as "needs a key"), which is recoverable,
-        // unlike an orphaned secret.
+        // Row first, so the credential reference has an id.
         let record = self.db.insert_cloud_connector(
             provider,
             &resolved_label,
@@ -364,9 +322,6 @@ impl ProviderRegistry {
     }
 
     /// Every model from every enabled, working provider.
-    ///
-    /// A provider with free models also gets a pool row at the top of its list: all
-    /// of them behind one id, so nobody has to hunt for them in a long list.
     pub fn remote_models(&self) -> Result<Vec<RemoteModel>> {
         let mut out = Vec::new();
 
@@ -451,10 +406,6 @@ impl ProviderRegistry {
     }
 
     /// Which free model this connector should answer with right now.
-    ///
-    /// The cursor's model, unless it has recently refused; then the next that has
-    /// not. If every model is cooling down the cursor's is used anyway: a request
-    /// that might work beats an error that definitely does not.
     fn choose_free(&self, connector: &CloudConnectorRecord) -> Result<String> {
         let free = free_models_of(&connector.models);
 
@@ -485,10 +436,6 @@ impl ProviderRegistry {
     }
 
     /// Note that a model refused, so the pool moves on from it.
-    ///
-    /// Called on every failing remote response, not just pooled ones: an entry for a
-    /// non-pooled model is never consulted, which beats threading "was this a pool
-    /// pick" through the turn.
     pub fn note_trouble(&self, connector_id: &str, model: &str, status: u16) {
         let Some(trouble) = Trouble::from_status(status) else {
             return;

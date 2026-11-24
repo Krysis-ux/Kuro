@@ -1,6 +1,4 @@
-//! Automations: saved prompts that run on a schedule. The runs themselves are
-//! ordinary chat turns (see `kuro-server`'s `routes::automations`); this file
-//! stores the automations and decides when each is next due.
+//! Automations: saved prompts that run on a schedule.
 
 use std::fmt;
 
@@ -53,10 +51,6 @@ impl Schedule {
     }
 
     /// The first run strictly after `after`.
-    ///
-    /// Callers pass the time a run started (or now), never the slot it was due
-    /// in, so a Mac that slept through several slots runs once on waking rather
-    /// than once per slot.
     pub fn next_after<Tz: TimeZone>(&self, after: &DateTime<Tz>) -> DateTime<Tz> {
         let (at, weekdays_only) = match *self {
             Self::Every { minutes } => return after.clone() + Duration::minutes(minutes.into()),
@@ -217,9 +211,7 @@ impl Db {
             .ok_or_else(|| KuroError::other("an automation vanished as it was saved"))
     }
 
-    /// Replace what the user wrote. The next run is counted afresh from now, so
-    /// switching one back on after a week does not fire it at once. `None` when
-    /// there is no such automation.
+    /// Replace what the user wrote.
     pub fn update_automation(&self, id: &str, input: &AutomationInput) -> Result<Option<AutomationRecord>> {
         let (input, schedule) = input.checked()?;
         let changed = self.with(|conn| {

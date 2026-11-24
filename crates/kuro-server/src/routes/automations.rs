@@ -1,6 +1,5 @@
-//! Automations: saved prompts that run on a schedule, each reply landing in a
-//! chat the user can open. A run is an ordinary chat turn (`chat::start_turn`)
-//! that nobody is watching.
+//! Automations: saved prompts that run on a schedule, each reply landing in a chat the user can
+//! open.
 
 use std::collections::BTreeSet;
 use std::sync::Mutex;
@@ -94,11 +93,7 @@ pub async fn run_automation(
     Ok(Json(start_run(&state, &automation).await?.into()))
 }
 
-/// Wake every [`TICK`] and start whatever is due. Started from `main`.
-///
-/// Due is judged by the wall clock and each run counts the next from when it
-/// started, so a Mac that slept (or a server that was off) through several slots
-/// runs each automation once on waking.
+/// Wake every [`TICK`] and start whatever is due.
 pub async fn run_scheduler(state: SharedState) {
     let mut ticker = tokio::time::interval(TICK);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);

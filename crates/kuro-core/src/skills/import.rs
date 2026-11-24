@@ -1,13 +1,4 @@
 //! Pulling skills out of a GitHub repository.
-//!
-//! Reads the repository's tree through the API (one call), then fetches each
-//! `SKILL.md`, instead of cloning: most of a skills repository is not skills, and
-//! cloning needs `git` and leaves a checkout behind.
-//!
-//! Only `SKILL.md` is imported. Importing a skill's `scripts/` would put
-//! someone else's executable code where a model can call it, from a URL with no
-//! review step. A skill that references scripts is flagged via
-//! [`Found::wants_scripts`] instead.
 
 use serde::Deserialize;
 
@@ -45,9 +36,8 @@ pub fn parse_repo(raw: &str) -> Result<Repo> {
         .or_else(|| trimmed.strip_prefix("git@github.com:"))
         .or_else(|| trimmed.strip_prefix("github.com/"));
 
-    // A bare `owner/name` is allowed, but anything with a scheme or host must
-    // have matched a form above (else `https://example.com` parses as owner
-    // `https:`).
+    // A bare `owner/name` is allowed, but anything with a scheme or host must have matched a form
+    // above (else `https://example.com` parses as owner `https:`).
     let path = match matched {
         Some(rest) => rest,
         None if trimmed.contains("://") || trimmed.contains('@') => {
@@ -187,9 +177,8 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
 
         match parse_skill_md(&text, &fallback) {
             Ok(parsed) => {
-                // Repositories mirror one skill under `.claude/`, `.cursor/`, etc.
-                // Dedupe by slug (not directory), since a lone copy under
-                // `.claude/skills/` must still import.
+                // Repositories mirror one skill under `.claude/`, `.cursor/`, etc. Dedupe by slug
+                // (not directory), since a lone copy under `.claude/skills/` must still import.
                 if seen.iter().any(|held| held == &parsed.slug) {
                     continue;
                 }

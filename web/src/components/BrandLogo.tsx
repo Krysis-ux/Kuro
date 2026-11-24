@@ -1,13 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react'
 import { hubAvatarUrls, modelBrand, providerBrand, type Brand } from '../lib/brands'
 
-/**
- * The maker's mark beside a model or provider name.
- *
- * Every variant draws the same rounded tile, so a list mixing known brands,
- * Hub avatars and letters still lines up. `bare` drops the tile for places too
- * small to frame it, such as rows in the model picker.
- */
+/** The maker's mark beside a model or provider name. */
 
 interface TileProps {
   size?: number

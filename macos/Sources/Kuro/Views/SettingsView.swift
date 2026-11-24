@@ -2,9 +2,7 @@ import AppKit
 import SwiftUI
 import KuroKit
 
-/// The page beside the Settings sidebar. Chat and Coding are configured
-/// separately on purpose: a chat that ran commands would be alarming, a coding
-/// turn that could not is useless.
+/// The page beside the Settings sidebar.
 struct SettingsDetail: View {
     @Environment(AppModel.self) private var app
     let pane: SettingsPane
