@@ -5,7 +5,7 @@
     in white on a charcoal tile.
 
     The mark is drawn on a 100-unit grid, the same numbers as KuroGlyph in
-    macos/Sources/Kuro/Views/Theme.swift and web/src/components/Logo.tsx.
+    apps/macos/Sources/Kuro/Views/Theme.swift and apps/web/src/components/Logo.tsx.
     Change all three together.
 
     Sized in absolute units rather than left to scale, because the rasteriser

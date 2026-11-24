@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// The built assets are served by the Rust daemon from `web/dist`, so paths must be relative to the
+// The built assets are served by the Rust daemon from `apps/web/dist`, so paths must be relative to the
 // server root.
 export default defineConfig({
   plugins: [react()],

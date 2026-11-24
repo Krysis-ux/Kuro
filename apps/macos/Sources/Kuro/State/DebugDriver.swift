@@ -5,8 +5,8 @@ import KuroKit
 
 /// Debug builds only: drive the window from outside, for screenshots and smoke tests.
 ///
-///     swift macos/Scripts/poke.swift "route models"
-///     swift macos/Scripts/poke.swift "send Hello there"
+///     swift apps/macos/Scripts/poke.swift "route models"
+///     swift apps/macos/Scripts/poke.swift "send Hello there"
 @MainActor
 enum DebugDriver {
     static func install(_ app: AppModel) {
