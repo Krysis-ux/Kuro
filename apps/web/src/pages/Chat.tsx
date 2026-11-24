@@ -125,7 +125,7 @@ export function ChatPage() {
 
 function welcomeLine(data: { models: unknown[]; remote: unknown[] } | undefined): string {
   if (!data) return 'Loading…'
-  if (data.models.length > 0) return 'Ask anything. Everything runs on this machine.'
-  if (data.remote.length > 0) return 'No local models yet — a connected provider is standing in.'
+  if (data.models.length > 0) return 'What should we work on?'
+  if (data.remote.length > 0) return 'No local models yet. Using your provider.'
   return 'Install a model to get started, or connect a provider.'
 }
