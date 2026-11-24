@@ -74,9 +74,13 @@ done
 # The app (Swift)
 # ---------------------------------------------------------------------------
 
+SLICES="$ROOT/build/macos/slices"
+mkdir -p "$SLICES"
 for arch in "${ARCHES[@]}"; do
   bold "Compiling the app ($arch)"
   swift build -c release --package-path apps/macos --triple "$arch-apple-macosx14.0" --product Kuro
+  # Copy now: newer SwiftPM writes every architecture to the same path.
+  cp "$(swift build -c release --package-path apps/macos --triple "$arch-apple-macosx14.0" --show-bin-path)/Kuro" "$SLICES/Kuro-$arch"
 done
 
 # ---------------------------------------------------------------------------
@@ -122,9 +126,7 @@ lipo_into "$CONTENTS/Resources/bin/kuro-server" $(slices kuro-server)
 # shellcheck disable=SC2046
 lipo_into "$CONTENTS/Resources/bin/kuro" $(slices kuro)
 app_slices=()
-for arch in "${ARCHES[@]}"; do
-  app_slices+=("$(swift build -c release --package-path apps/macos --triple "$arch-apple-macosx14.0" --show-bin-path)/Kuro")
-done
+for arch in "${ARCHES[@]}"; do app_slices+=("$SLICES/Kuro-$arch"); done
 lipo_into "$CONTENTS/MacOS/Kuro" "${app_slices[@]}"
 
 [ "$WEB_BUILT" -eq 1 ] && cp -R apps/web/dist "$CONTENTS/Resources/web"
