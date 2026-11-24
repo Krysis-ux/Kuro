@@ -1,7 +1,4 @@
 //! `kuro` — the Kuro LLM command line.
-//!
-//! Every command except `serve` is a client of the local daemon's HTTP API, the
-//! same one the web interface uses.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -16,9 +13,7 @@ use client::KuroClient;
     name = "kuro",
     version,
     about = "Kuro LLM — run language models on your own machine",
-    // `kuro help` used to be turned off, so the most obvious thing anyone types
-    // first answered with an error telling them the subcommand did not exist.
-    // `--help` worked, which is not what a person reaches for.
+    // `kuro help` must work alongside `--help`.
     disable_help_subcommand = false
 )]
 struct Cli {
@@ -35,11 +30,8 @@ enum Command {
         port: Option<u16>,
     },
 
-    /// Download a model.
-    ///
-    /// Accepts a recommended name (`qwen3-4b`), a Hugging Face repository
-    /// (`owner/repo`), or a pasted Hugging Face URL. Add `:QUANT` to choose a
-    /// quantization, for example `qwen3-4b:Q5_K_M`.
+    /// Download a model. Accepts a recommended name (`qwen3-4b`), a Hugging Face repository
+    /// (`owner/repo`), or a pasted Hugging Face URL.
     Pull { model: String },
 
     /// Show what a pull would download, without downloading it.
@@ -102,8 +94,6 @@ enum Command {
     Free,
 
     /// Run another coding tool against a Kuro model.
-    ///
-    /// Start a supported coding client against the Kuro model you choose.
     Launch {
         /// Supported tool name. Omit to see the list.
         app: Option<String>,
@@ -133,14 +123,12 @@ async fn main() {
 async fn dispatch() -> Result<()> {
     let cli = Cli::parse();
 
-    // `serve` replaces this process with the daemon and never returns, so it
-    // must not construct a client first.
+    // `serve` replaces this process with the daemon, so it must not build a client first.
     if let Command::Serve { port } = cli.command {
         return commands::serve::serve(port);
     }
 
-    // Neither does `version` need a daemon. Asking what Kuro is should not
-    // require Kuro to be running.
+    // `version` needs no daemon: asking what Kuro is should not require it to be running.
     if matches!(cli.command, Command::Version) {
         println!("kuro {}", env!("CARGO_PKG_VERSION"));
         return Ok(());

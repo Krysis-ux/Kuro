@@ -18,11 +18,8 @@ pub struct SearchQuery {
     pub limit: Option<usize>,
 }
 
-/// Search Hugging Face for GGUF repositories.
-///
-/// With no query this returns the most-downloaded ones, which makes the same
-/// endpoint serve both "browse" and "search" — the distinction is not one a user
-/// thinks in.
+/// Search Hugging Face for GGUF repositories. With no query it returns the
+/// most-downloaded ones, so one endpoint serves both browse and search.
 pub async fn search_hub(
     State(state): State<SharedState>,
     Query(query): Query<SearchQuery>,
@@ -42,8 +39,7 @@ pub async fn search_hub(
         .into_iter()
         .map(|hit| {
             let fit = search::estimate_fit(&hit, &state.hardware);
-            // Any installed model from this repository counts as installed, since
-            // the quantization is chosen at download time.
+            // Any installed model from this repo counts, as the quantization is picked at download.
             let is_installed = installed
                 .iter()
                 .any(|model| model.hf_repo.as_deref() == Some(hit.repo.as_str()));
@@ -109,13 +105,8 @@ pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Val
                 .file_size_bytes
                 .map(|bytes| estimate_fit(bytes as u64, &state.hardware));
 
-            // The same classifier the provider catalogues go through. It was
-            // only ever applied to those, which left an embedding model sitting
-            // in the local list as an ordinary choice — and picking one does
-            // not fail, it answers. `qwen3-embedding-0.6b` asked "hi" replies
-            // with several hundred repetitions of the word "lines", because an
-            // embedding model handed a chat prompt produces whatever the
-            // decoder makes of a vector.
+            // Same classifier the provider catalogues use, so an embedding model is not
+            // offered as an ordinary chat choice (it answers with garbage rather than failing).
             let classified = kuro_core::classify::classify(&model.id);
 
             json!({
@@ -123,17 +114,14 @@ pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Val
                 "loaded": is_loaded,
                 "fit": fit,
                 "kind": classified.kind.as_str(),
-                // False for embedding models, rerankers and the rest. The
-                // picker greys these rather than hiding them: a model you
-                // downloaded and cannot find is a worse puzzle than one that
-                // says why it is not for this.
+                // False for embedding models, rerankers and the like. The picker greys these
+                // out instead of hiding them, so a downloaded model never just disappears.
                 "chat": classified.kind.is_chat(),
             })
         })
         .collect();
 
-    // Provider models ride along in the same response so the composer needs one
-    // request to render a picker containing everything the user can talk to.
+    // Provider models ride along so the composer needs one request to build its picker.
     let mut remote = state.providers.remote_models()?;
     remote.extend(free_models(&state));
 
@@ -144,27 +132,10 @@ pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Val
 }
 
 /// The free pool's entries for the model picker.
-///
-/// Only flavours that can actually be served appear. A picker offering
-/// "Kuro Free · coding" to somebody with nothing behind it is offering a model
-/// that answers every message with an error, and the place to explain that is
-/// the free-models screen rather than four dead rows in a dropdown.
-///
-/// "Can be served" is asked of the pool rather than of the key list, because
-/// those stopped being the same question when shared endpoints arrived: with
-/// them switched on there are no keys and the pool can still answer, and an
-/// early return on an empty key list would have made the whole tier invisible.
 fn free_models(state: &SharedState) -> Vec<kuro_core::cloud::RemoteModel> {
     let keys = crate::routes::free::stored_keys(state);
 
-    // Opening the picker is the natural moment to find out what these keys
-    // reach. Without this the provider sections are empty until something else
-    // happens to read the catalogues — a message sent, or a visit to the free
-    // screen — so the first look at a newly pasted key showed a provider with
-    // no models under it and no indication that was temporary.
-    //
-    // In the background, so the picker still opens instantly. The list arrives
-    // on the next poll, which is the right trade for a menu.
+    // Opening the picker is the moment to learn what these keys reach, so refresh the catalogues.
     crate::routes::free::refresh_catalogues_in_background(state, &keys);
 
     let mut out: Vec<kuro_core::cloud::RemoteModel> = free::FreeFlavour::ALL
@@ -173,22 +144,18 @@ fn free_models(state: &SharedState) -> Vec<kuro_core::cloud::RemoteModel> {
         .map(|flavour| kuro_core::cloud::RemoteModel {
             id: flavour.model_id(),
             name: flavour.label().to_string(),
-            // One group in the picker, whichever provider happens to answer.
-            // Grouping by the provider would make the same model appear to move
-            // between headings as allowances ran out.
+            // One group in the picker, whichever provider answers, so a model does not
+            // move between headings as allowances run out.
             connector_id: "kuro-free".to_string(),
             connector_label: "Kuro Free".to_string(),
             provider: "free".to_string(),
-            // Every one of these routes across providers, so marking one as
-            // pooled and the rest not would be a distinction without a
-            // difference. The group heading already says what they are.
+            // All rows route across providers, so none is marked pooled; the heading explains.
             pooled: false,
             pool_size: 0,
             free: true,
             specialities: flavour.speciality().map(|s| vec![s.label()]).unwrap_or_default(),
             params_b: None,
-            // A pooled row is only listed when something can serve it, so by
-            // construction it is available. That check is the `filter` above.
+            // Listed only when something can serve it (the `filter` above), so always available.
             unavailable: None,
             fix_url: None,
         })
@@ -198,12 +165,8 @@ fn free_models(state: &SharedState) -> Vec<kuro_core::cloud::RemoteModel> {
     out
 }
 
-/// Why a model cannot be picked, in words rather than a status code.
-///
-/// A picker row saying "429" is a row nobody can act on. Each of these names
-/// the thing that has to change and, where it is not obvious, who has to change
-/// it — an exhausted allowance is waiting, a rejected key is retyping, and an
-/// unprovisioned model is a page to visit.
+/// Why a model cannot be picked, in words rather than a status code, naming
+/// what has to change (wait for an allowance, retype a key, visit a page).
 fn explain(trouble: free::Trouble, provider: &str) -> String {
     match trouble {
         free::Trouble::RateLimited => {
@@ -212,9 +175,8 @@ fn explain(trouble: free::Trouble, provider: &str) -> String {
         free::Trouble::Rejected => {
             format!("{provider} rejected the key. Check it on the Free models screen")
         }
-        // Not "this model was retired". NVIDIA answers 404 for a model the key
-        // was never provisioned for, which is by far the commoner reason to see
-        // this, and the two are indistinguishable from the response.
+        // Not "retired": NVIDIA answers 404 for a model the key was never provisioned
+        // for, which is far commoner and indistinguishable from the response.
         free::Trouble::Gone => {
             format!("{provider} would not serve this model on your key")
         }
@@ -222,17 +184,6 @@ fn explain(trouble: free::Trouble, provider: &str) -> String {
 }
 
 /// Each free provider's own catalogue, named individually.
-///
-/// The four pooled rows above answer "just give me something that works". This
-/// answers the other question, which the picker could not previously ask at
-/// all: *which* models does the key I pasted actually reach? Somebody who adds
-/// an NVIDIA key gets a catalogue of sixty-odd models, and until now every one
-/// of them was invisible — the pool would silently pick one and the picker
-/// showed none.
-///
-/// Grouped under the provider rather than under Kuro Free, because these are a
-/// choice of endpoint rather than a preference handed to the pool: picking one
-/// here pins the request to that provider.
 fn named_free_models(
     state: &SharedState,
     keys: &std::collections::HashMap<String, String>,
@@ -250,8 +201,7 @@ fn named_free_models(
             provider: provider.slug,
         };
 
-        // Why the whole provider is out, if it is. Applies to every one of its
-        // models, so it is asked once.
+        // Why the whole provider is out, if it is; asked once since it applies to every model.
         let provider_trouble = state.free.trouble(provider.slug);
 
         for model in state.free.advertised_chat_models(provider) {
@@ -259,15 +209,12 @@ fn named_free_models(
                 format!("{}{}/{model}", free::MODEL_PREFIX, provider.slug),
                 group,
                 &model,
-                // Everything reachable here is inside the provider's free
-                // allowance by construction: `advertised_chat_models` has
-                // already applied the marker that separates the allowance from
-                // the bill.
+                // Inside the free allowance by construction: `advertised_chat_models` already
+                // applied the marker that separates the allowance from the bill.
                 true,
             );
 
-            // The model's own refusal wins over the provider's, because it is
-            // the more specific fact and the one with a remedy attached.
+            // The model's own refusal wins: it is more specific and has a remedy.
             let trouble = state
                 .free
                 .model_trouble(provider.slug, &model)
@@ -325,8 +272,7 @@ pub async fn recommended_models(State(state): State<SharedState>) -> AppResult<J
 
     Ok(Json(json!({
         "models": described,
-        // The headings travel with the list, so the screen does not keep its own
-        // copy of what the purposes are or what order they belong in.
+        // Headings travel with the list so the screen keeps no copy of the purposes or their order.
         "purposes": catalog::curated::Purpose::ALL
             .iter()
             .map(|purpose| json!({
@@ -432,8 +378,7 @@ pub async fn delete_model(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
-    // Stop it first; deleting weights out from under a running engine would
-    // leave a process serving a file that no longer exists.
+    // Stop it first: deleting weights under a running engine leaves it serving a missing file.
     state.engines.unload(&id).await?;
     catalog::remove_model(&state.db, &state.paths, &id)?;
 

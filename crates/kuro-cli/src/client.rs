@@ -1,7 +1,4 @@
 //! Thin HTTP client for the local Kuro daemon.
-//!
-//! The CLI holds no model or engine logic of its own — it is another consumer
-//! of the same API the web interface uses, so the two can never drift apart.
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
@@ -45,8 +42,8 @@ impl KuroClient {
         &self.http
     }
 
-    /// Fail with instructions rather than a connection error when the daemon is
-    /// not running, which is the most common first-run mistake.
+    /// Fail with start-up instructions rather than a connection error when the
+    /// daemon is not running (the commonest first-run mistake).
     pub async fn ensure_running(&self) -> Result<()> {
         match self.http.get(self.url("/api/health")).send().await {
             Ok(response) if response.status().is_success() => Ok(()),
@@ -106,7 +103,7 @@ async fn decode(response: reqwest::Response) -> Result<Value> {
         return serde_json::from_str(&body).context("the server sent a malformed response");
     }
 
-    // Errors follow OpenAI's shape; fall back to the raw body if that changes.
+    // Errors follow OpenAI's shape; fall back to the raw body otherwise.
     let message = serde_json::from_str::<Value>(&body)
         .ok()
         .and_then(|value| {

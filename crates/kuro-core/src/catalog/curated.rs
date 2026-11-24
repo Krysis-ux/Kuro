@@ -1,18 +1,6 @@
 //! Kuro's built-in "recommended models" list.
-//!
-//! This is static data rather than database rows so that a new release can
-//! refresh the recommendations without a migration. Only the repository and the
-//! preferred quantization are pinned — the exact `.gguf` filename is resolved
-//! against the Hugging Face API at pull time, so these entries keep working
-//! when a repository renames or re-uploads its files.
 
 /// What a model is worth choosing *for*.
-///
-/// The list without this was a ramp by size, which answers "what will run on my
-/// machine" and not "which one should I use". Those are different questions, and
-/// the second is the one somebody has when they open the models screen: a 7B
-/// coder and a 7B general model have the same fit estimate and are not remotely
-/// interchangeable for the thing being attempted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Purpose {
@@ -81,12 +69,12 @@ pub struct CuratedModel {
     pub param_count: &'static str,
     pub family: &'static str,
     pub capabilities: &'static [&'static str],
-    /// What this model is worth choosing for. Ordered best-first, so the primary
-    /// purpose is the one the recommendation screen groups it under.
+    /// What this model is worth choosing for, best-first; the first is the purpose
+    /// the recommendation screen groups it under.
     pub purposes: &'static [Purpose],
     pub context_length: u32,
-    /// Approximate download size of the default quantization. Used only to show
-    /// a fit estimate before the real size is known from the repository.
+    /// Approximate download size of the default quantization, for a fit estimate
+    /// before the real size is known.
     pub approx_size_bytes: u64,
     pub blurb: &'static str,
 }
@@ -247,9 +235,8 @@ pub const CURATED_MODELS: &[CuratedModel] = &[
         capabilities: &["tools", "reasoning"],
         purposes: &[Purpose::Coding],
         context_length: 262144,
-        // Mixture-of-experts: 30B of weights on disk, but only about 3B active
-        // per token, so it runs far faster than its size suggests. The fit
-        // estimate is still driven by the file, which has to be resident.
+        // Mixture-of-experts: 30B of weights on disk but about 3B active per token,
+        // so it is fast for its size. Fit is still driven by the resident file.
         approx_size_bytes: 18 * GB,
         blurb: "The best coding model here, if you have 32GB. Large on disk, fast to run.",
     },
@@ -341,11 +328,6 @@ pub const CURATED_MODELS: &[CuratedModel] = &[
 ];
 
 /// Models worth choosing for one purpose, smallest first.
-///
-/// A model appears under every purpose it lists, not only its first: Qwen3 8B is
-/// a genuine answer to both "what should I code with" and "what should I install
-/// if I install one thing", and hiding it from one of those lists to keep the
-/// grouping tidy would be tidiness at the user's expense.
 pub fn for_purpose(purpose: Purpose) -> Vec<&'static CuratedModel> {
     CURATED_MODELS
         .iter()
@@ -366,10 +348,8 @@ pub fn find_curated(slug: &str) -> Option<&'static CuratedModel> {
 }
 
 impl CuratedModel {
-    /// Canonical model id, e.g. `qwen3-4b:q4_k_m`.
-    ///
-    /// The quantization is part of the id so two quantizations of the same
-    /// model can coexist locally.
+    /// Canonical model id, e.g. `qwen3-4b:q4_k_m`. The quantization is part of the
+    /// id so two quantizations of one model can coexist.
     pub fn model_id(&self, quant: &str) -> String {
         format!("{}:{}", self.slug, quant.to_ascii_lowercase())
     }
@@ -420,9 +400,8 @@ mod tests {
 
     #[test]
     fn every_purpose_has_something_to_recommend() {
-        // A heading with nothing under it reads as a broken screen, and the
-        // Code page's "recommended for coding" list has to be non-empty or the
-        // suggestion is worse than no suggestion.
+        // An empty heading reads as a broken screen, and the Code page's coding
+        // recommendations must be non-empty.
         for purpose in Purpose::ALL {
             assert!(
                 !for_purpose(*purpose).is_empty(),
@@ -445,8 +424,7 @@ mod tests {
 
     #[test]
     fn a_purpose_matches_the_capability_that_makes_it_possible() {
-        // A model listed for images that cannot see one is a recommendation that
-        // fails the moment somebody attaches a photograph.
+        // A model listed for images that cannot see one fails as soon as a photo is attached.
         for model in for_purpose(Purpose::Vision) {
             assert!(
                 model.capabilities.contains(&"vision"),

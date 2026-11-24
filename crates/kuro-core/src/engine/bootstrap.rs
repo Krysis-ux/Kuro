@@ -1,16 +1,4 @@
 //! Obtaining the engine binary.
-//!
-//! Kuro does not build its inference engine. On first use it downloads the
-//! prebuilt release that matches this machine, extracts it into a per-tag
-//! directory and records it, so later launches reuse the cached copy. The
-//! extracted executable is renamed to `kuro-engine`, which is the name it runs
-//! under for the rest of its life — in the process list, in logs, and in
-//! anything the user is shown.
-//!
-//! The release tag is pinned to one that has been tested rather than tracking
-//! `latest`, because upstream asset naming changes from time to time and a
-//! silent rename would otherwise break model loading for everyone at once.
-//! Settings offers an explicit "check for engine updates" action.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -32,9 +20,7 @@ pub const ENGINE_BINARY_NAME: &str = "kuro-engine";
 /// The upstream name inside the release archive, before Kuro renames it.
 const UPSTREAM_BINARY_NAME: &str = "llama-server";
 
-/// Where the prebuilt engine releases come from. Load-bearing: this is the
-/// real upstream project whose builds Kuro fetches, so it cannot be renamed
-/// away without breaking model loading entirely.
+/// Upstream project whose prebuilt releases Kuro fetches; must stay as is.
 const GITHUB_RELEASES: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -61,10 +47,7 @@ pub struct ResolvedAsset {
     pub size: u64,
 }
 
-/// Substring identifying the release asset for the current platform.
-///
-/// V1 ships macOS only. Adding a platform means adding a branch here; nothing
-/// else in the bootstrap path is platform-specific.
+/// Suffix identifying the release asset for this platform (macOS only for now).
 pub fn asset_pattern() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Ok("bin-macos-arm64.tar.gz"),
@@ -75,10 +58,8 @@ pub fn asset_pattern() -> Result<&'static str> {
     }
 }
 
-/// Look up a release and pick the asset for this machine.
-///
-/// `tag` of `None` uses the pinned default; `Some("latest")` resolves whatever
-/// was published most recently.
+/// Look up a release and pick the asset for this machine. `None` uses the pinned
+/// default tag; `Some("latest")` the newest release.
 pub async fn resolve_asset(client: &reqwest::Client, tag: Option<&str>) -> Result<ResolvedAsset> {
     let tag = tag.unwrap_or(DEFAULT_ENGINE_TAG);
     let url = if tag == "latest" {
@@ -122,8 +103,7 @@ pub async fn resolve_asset(client: &reqwest::Client, tag: Option<&str>) -> Resul
     })
 }
 
-/// Return a ready-to-run engine, downloading it if this machine does not have
-/// it yet.
+/// Return a ready-to-run engine, downloading it if not already installed.
 pub async fn ensure_engine(
     client: &reqwest::Client,
     db: &Db,
@@ -133,8 +113,7 @@ pub async fn ensure_engine(
 ) -> Result<EngineRuntimeRecord> {
     let requested = tag.unwrap_or(DEFAULT_ENGINE_TAG);
 
-    // A cached runtime is only usable if its binary is still on disk; the user
-    // may have cleared Application Support.
+    // A cached runtime is only usable if its binary is still on disk.
     if let Some(existing) = db.get_engine_runtime(requested)? {
         if Path::new(&existing.path).exists() {
             return adopt_installed(db, existing);
@@ -178,7 +157,7 @@ pub async fn ensure_engine(
     make_executable(&binary)?;
     clear_quarantine(&binary);
 
-    // The archive is large and no longer needed once extracted.
+    // The archive is large and no longer needed.
     let _ = std::fs::remove_file(&archive_path);
 
     let runtime = EngineRuntimeRecord {
@@ -195,10 +174,8 @@ pub async fn ensure_engine(
     Ok(runtime)
 }
 
-/// Extract a `.tar.gz` release into `dest`.
-///
-/// Entries are inspected before extraction so a crafted archive cannot write
-/// outside the destination directory.
+/// Extract a `.tar.gz` release into `dest`. Entries are checked first so a
+/// crafted archive cannot write outside `dest`.
 fn extract_archive(archive: &Path, dest: &Path) -> Result<()> {
     let listing = std::process::Command::new("/usr/bin/tar")
         .arg("-tzf")
@@ -234,12 +211,8 @@ fn extract_archive(archive: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Locate the engine executable anywhere under `root`.
-///
-/// The archive puts it in a versioned subdirectory whose layout has changed
-/// before, so it is searched for rather than assumed. Both the upstream name
-/// and Kuro's own are accepted, so re-scanning a directory Kuro has already
-/// adopted still finds it.
+/// Locate the engine executable anywhere under `root` (the archive layout
+/// varies). Accepts both the upstream name and Kuro's own.
 pub fn find_engine_binary(root: &Path) -> Result<Option<PathBuf>> {
     let mut pending = vec![root.to_path_buf()];
 
@@ -265,16 +238,8 @@ pub fn find_engine_binary(root: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-/// Bring an already-cached engine up to the current naming.
-///
-/// An install made before Kuro renamed its engine still has a record pointing
-/// at the upstream filename. Renaming it here rather than only on download
-/// means an existing install does not have to re-fetch the engine to stop
-/// showing someone else's process name in the process list.
-///
-/// A failure is not fatal: the recorded binary is still perfectly runnable
-/// under its old name, and refusing to start a model over a cosmetic rename
-/// would be a poor trade.
+/// Rename an already-cached engine to Kuro's naming, updating its record, so older installs need no
+/// re-download.
 pub fn adopt_installed(db: &Db, existing: EngineRuntimeRecord) -> Result<EngineRuntimeRecord> {
     let path = Path::new(&existing.path);
     if is_adopted(path) {
@@ -297,8 +262,7 @@ pub fn adopt_installed(db: &Db, existing: EngineRuntimeRecord) -> Result<EngineR
     }
 }
 
-/// Directory the engine and its libraries are installed into, inside the
-/// per-tag directory Kuro owns.
+/// Directory name for the engine and its libraries inside the per-tag directory.
 const ENGINE_DIR_NAME: &str = "engine";
 
 /// Whether a recorded path already uses Kuro's own names throughout.
@@ -311,22 +275,13 @@ fn is_adopted(path: &Path) -> bool {
     named && housed
 }
 
-/// Give the extracted engine Kuro's own names.
-///
-/// Two renames, both in place: the directory the archive unpacked into, and the
-/// executable inside it. Neither moves anything across directories — the
-/// executable resolves its sibling libraries through `@loader_path`, so it has
-/// to keep them beside it — and nothing about the binary's behaviour depends on
-/// either name. What they do determine is what the user sees: the process name
-/// in Activity Monitor and `ps`, the path in a crash report, and the folder they
-/// find if they ever open Kuro's data directory.
+/// Rename the unpacked directory and the executable inside it to Kuro's names.
 fn adopt_binary(extracted: &Path) -> Result<PathBuf> {
     let home = extracted
         .parent()
         .ok_or_else(|| KuroError::engine("the engine executable has no containing directory"))?;
 
-    // Rename the directory first: doing it after would invalidate the path just
-    // computed for the executable.
+    // Rename the directory first; the executable path derives from it.
     let home = if home.file_name().is_some_and(|name| name == ENGINE_DIR_NAME) {
         home.to_path_buf()
     } else {
@@ -361,10 +316,8 @@ fn make_executable(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Best-effort removal of the quarantine flag.
-///
-/// Files fetched programmatically are not usually quarantined, so a failure
-/// here is not worth failing the install over — the launch would surface it.
+/// Best-effort removal of the quarantine flag; a launch failure would surface
+/// any real problem.
 fn clear_quarantine(path: &Path) {
     let _ = std::process::Command::new("/usr/bin/xattr")
         .arg("-d")
@@ -411,15 +364,13 @@ mod tests {
 
     #[test]
     fn the_installed_engine_runs_under_kuros_own_name() {
-        // The rename is what makes the process list say `kuro-engine`, so it is
-        // asserted rather than assumed.
+        // The rename is what makes the process list say `kuro-engine`.
         let root = std::env::temp_dir().join(format!("kuro-adopt-{}", uuid::Uuid::new_v4()));
         let unpacked = root.join("llama-b10182");
         std::fs::create_dir_all(&unpacked).expect("mkdir");
         let extracted = unpacked.join(UPSTREAM_BINARY_NAME);
         std::fs::write(&extracted, b"#!/bin/sh\n").expect("write");
-        // A sibling library, which must still sit beside the executable
-        // afterwards or the binary will not load.
+        // Must stay beside the executable or the binary will not load.
         std::fs::write(unpacked.join("libggml-base.dylib"), b"stub").expect("write");
 
         let adopted = adopt_binary(&extracted).expect("adopt");
@@ -443,8 +394,7 @@ mod tests {
 
     #[test]
     fn an_engine_installed_before_the_rename_is_brought_forward() {
-        // The upgrade path: a record written by an older build still points at
-        // the upstream filename, and must not require a re-download to fix.
+        // An older build's record points at the upstream filename.
         let db = Db::open_in_memory().expect("open");
         let root = std::env::temp_dir().join(format!("kuro-upgrade-{}", uuid::Uuid::new_v4()));
         let unpacked = root.join("llama-b10182");

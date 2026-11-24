@@ -3,21 +3,11 @@ use std::path::{Path, PathBuf};
 use crate::{KuroError, Result};
 
 /// Where Kuro keeps its database, models, engine binaries and logs.
-///
-/// V1 targets macOS, so the default root is the standard Application Support
-/// directory. `KURO_HOME` overrides it, which is what the test suite and any
-/// future portable/packaged build use. When another platform is added, only
-/// [`Paths::default_root`] needs a new branch.
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub root: PathBuf,
-    /// Where weights go, when that is not inside the root.
-    ///
-    /// Model files are the only thing Kuro stores that is measured in tens of
-    /// gigabytes, and a boot disk is often the wrong place for them. Everything
-    /// else — the database, logs, the engine binary — is small enough that
-    /// moving it would be fiddling rather than a decision, so only this one is
-    /// overridable.
+    /// Where weights go when not under the root. Weights are the only large
+    /// files Kuro stores, so this is the only overridable location.
     models_override: Option<PathBuf>,
 }
 
@@ -38,12 +28,7 @@ impl Paths {
         Ok(paths)
     }
 
-    /// A Paths rooted at a specific directory, with no overrides.
-    ///
-    /// For tests and for any caller that already knows where the root is.
-    /// Construction goes through here rather than through a public field so
-    /// that an override can only be set by [`Self::with_models_dir`], which is
-    /// also the thing that makes sure the directory exists.
+    /// A `Paths` rooted at `root`, with no overrides.
     pub fn for_root(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -52,12 +37,6 @@ impl Paths {
     }
 
     /// Point model downloads somewhere else.
-    ///
-    /// Applied once at startup rather than read per download, so a path that has
-    /// become unwritable fails immediately and visibly instead of failing three
-    /// gigabytes into a transfer. Existing weights are not moved, and are still
-    /// found: the database stores each model's full path, not a path relative to
-    /// this one.
     pub fn with_models_dir(mut self, dir: impl Into<PathBuf>) -> Result<Self> {
         let dir = dir.into();
         if dir.as_os_str().is_empty() {
@@ -157,10 +136,8 @@ impl Paths {
     }
 }
 
-/// Make an arbitrary identifier safe to use as a single path component.
-///
-/// Model ids come from user input (a pasted Hugging Face repo path), so they
-/// must never be able to escape the models directory or reach into a parent.
+/// Make an identifier safe as a single path component. Model ids are user
+/// input, so they must not be able to escape the models directory.
 fn sanitize_component(raw: &str) -> String {
     let mut cleaned = String::with_capacity(raw.len());
     let mut previous_was_separator = false;
@@ -171,9 +148,8 @@ fn sanitize_component(raw: &str) -> String {
                 cleaned.push(character);
                 previous_was_separator = false;
             }
-            // Everything else collapses to a single dash so that a path like
-            // `../../etc/passwd` reads as `etc-passwd` rather than keeping a
-            // run of punctuation.
+            // Runs of anything else collapse to one dash (`../../etc/passwd`
+            // becomes `etc-passwd`).
             _ => {
                 if !previous_was_separator {
                     cleaned.push('-');
@@ -183,8 +159,7 @@ fn sanitize_component(raw: &str) -> String {
         }
     }
 
-    // A component of "." or ".." would still be traversal even after the
-    // character filter above, and an empty component is not a valid name.
+    // Dots survive the filter above, so trim them: "." and ".." would be traversal.
     let trimmed = cleaned.trim_matches(|c| c == '-' || c == '.');
     if trimmed.is_empty() {
         "unnamed".to_string()
@@ -193,18 +168,15 @@ fn sanitize_component(raw: &str) -> String {
     }
 }
 
-/// True when `candidate` stays inside `base` after normalisation.
-///
-/// Used when extracting engine archives, where a malicious entry could
-/// otherwise write outside the destination directory.
+/// True when `candidate` stays inside `base`. Guards archive extraction against
+/// entries that write outside the destination.
 pub fn is_contained(base: &Path, candidate: &Path) -> bool {
     let mut normalized = base.to_path_buf();
     for part in candidate.components() {
         match part {
             std::path::Component::Normal(p) => normalized.push(p),
             std::path::Component::CurDir => {}
-            // Anything that walks upward or restarts from root is rejected
-            // outright rather than resolved.
+            // `..`, root and prefixes are rejected, not resolved.
             _ => return false,
         }
     }
@@ -265,8 +237,7 @@ mod tests {
 
     #[test]
     fn an_empty_override_leaves_the_default_alone() {
-        // A cleared setting is stored as an empty string, and reading that as
-        // "put the models at the filesystem root" would be memorable.
+        // A cleared setting is stored as an empty string.
         let paths = Paths::for_root("/tmp/kuro-test");
         let unchanged = paths.clone().with_models_dir("").expect("no-op");
         assert_eq!(unchanged.models_dir(), paths.models_dir());

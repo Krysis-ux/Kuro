@@ -1,22 +1,12 @@
-//! Finding things in a project.
-//!
-//! Two searches, because a model looking at an unfamiliar repository asks two
-//! different questions: "what is in here" and "where is this string".
-//!
-//! Both skip the directories that make a naive walk useless — a `node_modules`
-//! with forty thousand files under it will fill a context window with
-//! dependency source before reaching any of the user's own code, and a `.git`
-//! directory will fill it with compressed objects that are not text at all.
+//! Finding things in a project: a file tree/glob search ("what is in here") and a literal text
+//! search ("where is this string").
 
 use std::path::{Path, PathBuf};
 
 use crate::{KuroError, Result};
 
-/// Directories never walked into.
-///
-/// Named rather than pattern-matched: the list is short, every entry is here for
-/// a specific reason, and a rule broad enough to catch them all would also catch
-/// directories a user legitimately wants read.
+/// Directories never walked into. Matched by exact name, not pattern, so nothing
+/// a user legitimately wants read is caught.
 const SKIPPED_DIRS: &[&str] = &[
     ".git",
     "node_modules",
@@ -39,12 +29,10 @@ const SKIPPED_DIRS: &[&str] = &[
     ".DS_Store",
 ];
 
-/// Files larger than this are not searched. A minified bundle or a checked-in
-/// binary matches nothing useful and costs the whole read.
+/// Files larger than this (bytes) are not searched.
 const MAX_SEARCHABLE_BYTES: u64 = 2 * 1024 * 1024;
 
-/// Ceiling on entries returned by a tree walk, so a huge repository still
-/// answers rather than producing something no model can read.
+/// Ceiling on entries returned by a tree walk.
 const MAX_TREE_ENTRIES: usize = 600;
 
 /// Ceiling on matches returned by a search.
@@ -59,10 +47,8 @@ pub struct Match {
     pub line: String,
 }
 
-/// Walk a project and list its files, relative to `root`.
-///
-/// Directories are included so an empty one is still visible, and the result is
-/// sorted so repeated calls read the same way.
+/// Walk a project and list its files and directories (so empty ones show),
+/// relative to `root` and sorted.
 pub fn tree(root: &Path) -> Result<Vec<String>> {
     let mut found: Vec<String> = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -114,17 +100,7 @@ pub fn tree(root: &Path) -> Result<Vec<String>> {
     Ok(found)
 }
 
-/// Find files whose path matches a shell-style pattern.
-///
-/// `*.rs`, `src/**/*.ts`, `*test*`. Deliberately not a regular expression: a
-/// model writing an untested regex is the reliable way to get zero results and
-/// conclude the code does not exist, and the patterns people actually reach for
-/// when looking for files are glob-shaped anyway.
-///
-/// Matched against the path relative to the root, so `src/*.rs` means what it
-/// looks like. A pattern with no slash in it is matched against the file's name
-/// alone, because `*.rs` obviously means "any Rust file anywhere" and making
-/// somebody write `**/*.rs` for that is a trap.
+/// Find files whose path matches a glob (`*.rs`, `src/**/*.ts`, `*test*`), not a regex.
 pub fn find_files(root: &Path, pattern: &str) -> Result<Vec<String>> {
     let pattern = pattern.trim();
     if pattern.is_empty() {
@@ -150,37 +126,23 @@ pub fn find_files(root: &Path, pattern: &str) -> Result<Vec<String>> {
     Ok(found)
 }
 
-/// Whether a glob pattern matches, supporting `*`, `**` and `?`.
-///
-/// Hand-rolled rather than pulled in as a dependency: the crate that would
-/// replace it brings a `Pattern` type, an error enum and a compilation step for
-/// a job done once per call on a few hundred short strings.
-///
-/// Matched a path segment at a time rather than character by character. The
-/// first attempt here did the latter and got `**` wrong in a way worth
-/// recording: a single flag tracked whether the *most recent* star could cross
-/// a `/`, so in `src/**/*.rs` the inner `*` overwrote the outer `**`'s
-/// backtracking point, and `src/db/models.rs` — the exact case `**` exists for —
-/// failed to match. Splitting on `/` first makes that impossible to express: a
-/// `**` segment consumes whole segments and a `*` never sees a separator at all.
+/// Whether a glob matches, supporting `*`, `**` and `?`. Matched one path segment
+/// at a time: a `**` segment consumes whole segments and a `*` never sees a `/`.
 fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern: Vec<&str> = pattern.split('/').collect();
     let text: Vec<&str> = text.split('/').collect();
     match_segments(&pattern, &text)
 }
 
-/// Match a list of pattern segments against a list of path segments.
-///
-/// Recursive, and safely so: the depth is the number of `/` in a path, which is
-/// a handful even in a deeply nested project.
+/// Match pattern segments against path segments. Recursion depth is bounded by
+/// the number of `/` in the path.
 fn match_segments(pattern: &[&str], text: &[&str]) -> bool {
     let Some((head, rest)) = pattern.split_first() else {
         return text.is_empty();
     };
 
     if *head == "**" {
-        // Zero or more segments, zero included — otherwise `src/**/*.rs` is a
-        // pattern that mysteriously skips the files directly inside `src`.
+        // Zero or more segments: `src/**/*.rs` must match `src/main.rs`.
         return (0..=text.len()).any(|skip| match_segments(rest, &text[skip..]));
     }
 
@@ -190,14 +152,12 @@ fn match_segments(pattern: &[&str], text: &[&str]) -> bool {
     match_segment(head, first) && match_segments(rest, others)
 }
 
-/// Match one segment, where `*` means "any run of characters within this
-/// segment" and `?` means exactly one.
+/// Match one segment: `*` is any run of characters, `?` exactly one.
 fn match_segment(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
 
-    // Iterative with a single backtrack point, which is enough now that there
-    // are no separators to reason about.
+    // Iterative, with a single backtrack point.
     let (mut p, mut t) = (0usize, 0usize);
     let (mut star, mut star_t) = (None, 0usize);
 
@@ -247,12 +207,7 @@ pub fn format_paths(pattern: &str, found: &[String]) -> String {
     out
 }
 
-/// Find a literal string in the project's text files.
-///
-/// Literal rather than a regular expression on purpose. A model writing a regex
-/// it has not tested is a common way to get zero results and conclude the code
-/// is absent, and "find every place this function is called" is a substring
-/// question in practice.
+/// Find a literal string (not a regex) in the project's text files.
 pub fn find_text(root: &Path, needle: &str, case_sensitive: bool) -> Result<Vec<Match>> {
     let mut matches: Vec<Match> = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -278,6 +233,11 @@ pub fn find_text(root: &Path, needle: &str, case_sensitive: bool) -> Result<Vec<
             }
 
             let path = entry.path();
+            // Search shows lines, so it honours the same deny list as reading:
+            // otherwise a search for `API_KEY` would print `.env` a line at a time.
+            if crate::tools::files::is_denied(&path) {
+                continue;
+            }
             let Ok(file_type) = entry.file_type() else {
                 continue;
             };
@@ -293,8 +253,8 @@ pub fn find_text(root: &Path, needle: &str, case_sensitive: bool) -> Result<Vec<
                 continue;
             }
 
-            // A file that is not valid UTF-8 is binary for this purpose. Reading
-            // it lossily would produce matches inside replacement characters.
+            // Not valid UTF-8 counts as binary; a lossy read would match inside
+            // replacement characters.
             let Ok(contents) = std::fs::read_to_string(&path) else {
                 continue;
             };
@@ -326,7 +286,7 @@ pub fn find_text(root: &Path, needle: &str, case_sensitive: bool) -> Result<Vec<
     Ok(matches)
 }
 
-/// Render matches the way a model can act on: path, line number, the line.
+/// Render matches as `path:line: text`.
 pub fn format_matches(needle: &str, matches: &[Match]) -> String {
     if matches.is_empty() {
         return format!("No file in this project contains `{needle}`.");
@@ -383,9 +343,7 @@ mod tests {
     fn a_star_matches_within_a_segment_and_stops_at_a_slash() {
         assert!(glob_match("*.rs", "main.rs"));
         assert!(glob_match("src/*.rs", "src/main.rs"));
-        // The distinction that makes `**` worth having: a single star must not
-        // reach across a directory boundary, or `src/*.rs` silently matches
-        // everything under `src` however deep.
+        // A single star must not cross a directory boundary.
         assert!(!glob_match("src/*.rs", "src/db/models.rs"));
     }
 
@@ -393,8 +351,7 @@ mod tests {
     fn a_double_star_crosses_directories_including_none_at_all() {
         assert!(glob_match("src/**/*.rs", "src/db/models.rs"));
         assert!(glob_match("src/**/*.rs", "src/db/deep/nested/thing.rs"));
-        // Zero directories too, or `src/**/*.rs` is a pattern that mysteriously
-        // skips the files directly inside `src`.
+        // Zero directories too.
         assert!(glob_match("src/**/*.rs", "src/main.rs"));
     }
 
@@ -414,8 +371,6 @@ mod tests {
 
     #[test]
     fn a_pattern_without_a_slash_matches_the_name_at_any_depth() {
-        // `*.rs` obviously means "any Rust file"; making somebody write
-        // `**/*.rs` for that is a trap, and the one they will fall into first.
         let root = sample_project();
 
         let found = find_files(&root, "*.rs").expect("find");
@@ -428,8 +383,6 @@ mod tests {
 
     #[test]
     fn finding_files_skips_the_directories_a_walk_should_never_enter() {
-        // The same reason `tree` skips them: `node_modules` would fill the
-        // answer with dependency source before reaching the user's own code.
         let root = sample_project();
 
         let found = find_files(&root, "*").expect("find");
@@ -558,4 +511,22 @@ mod tests {
 
         std::fs::remove_dir_all(&root).ok();
     }
+
+    #[test]
+    fn text_search_never_returns_lines_from_credential_files() {
+        let root = std::env::temp_dir().join(format!("kuro-search-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".ssh")).expect("mkdir");
+        std::fs::write(root.join(".env"), "API_KEY=sk-secret\n").expect("write");
+        std::fs::write(root.join(".ssh/id_rsa"), "API_KEY in a key file\n").expect("write");
+        std::fs::write(root.join("app.rs"), "let key = env(\"API_KEY\");\n").expect("write");
+
+        let found = find_text(&root, "API_KEY", true).expect("search");
+        std::fs::remove_dir_all(&root).ok();
+        let names: Vec<String> = found
+            .iter()
+            .map(|m| m.path.file_name().unwrap_or_default().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["app.rs".to_string()], "{names:?}");
+    }
+
 }

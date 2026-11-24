@@ -1,0 +1,164 @@
+/* Kuro design tokens. The palette is deliberately monochrome: one neutral ramp, no accent hue. */
+
+:root {
+  color-scheme: dark light;
+
+  /* Neutral ramp, dark theme: charcoal, as in the macOS app's `Palette`.
+     0 is the page, 12 is the brightest text. */
+  --n-0: #181818;
+  --n-5: #383838;
+  --n-6: #444444;
+  --n-7: #5a5a5a;
+  --n-8: #737373;
+  --n-9: #949494;
+  --n-12: #f2f2f2;
+
+  /* Hairlines and washes are the text colour at low opacity, so they sit right
+     on every surface. */
+  --ink-rgb: 255 255 255;
+
+  /* canvas, raised (cards, inputs, the composer), sunken (a card on a card) */
+  --bg: #181818;
+  --bg-raised: #232323;
+  --bg-inset: #1c1c1c;
+  --bg-hover: rgb(var(--ink-rgb) / 0.05);
+  --bg-active: rgb(var(--ink-rgb) / 0.09);
+
+  --border: rgb(var(--ink-rgb) / 0.08);
+  --border-strong: rgb(var(--ink-rgb) / 0.16);
+
+  --text: var(--n-12);
+  --text-muted: var(--n-9);
+  --text-faint: var(--n-8);
+
+  /* The one inverted pair, for the main action: white on dark, black on light. */
+  --solid: #f2f2f2;
+  --solid-text: #111111;
+
+  --danger: #e5484d;
+  /* Not an error — a state that can change the user's files. */
+  --warning: #d97706;
+  /* Connected, ready, working. */
+  --ok: #30d158;
+
+  /*
+   * The only two hues in the interface, and both are load-bearing rather than decorative: they
+   * answer a question the monochrome ramp cannot, which is "did that register as a thing, or is it
+   * just words I typed".
+   */
+  --command: #74cfb0;
+  --command-bg: rgba(116, 207, 176, 0.13);
+  --link: #86b0ee;
+
+  /* Type. A single family, sized on a small scale — this is a tool, not a
+     landing page. */
+  --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter,
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+  --text-2xl: 32px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-sm: 7px;
+  --radius: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  --sidebar-width: 248px;
+  --content-max: 720px;
+
+  --duration: 140ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--border);
+
+  /* Surface depth: a sheen and top edge catching light, a shadow underneath. */
+  /* Cards are flat: a fill and a hairline, no sheen or shadow. */
+  --panel-edge: rgba(255, 255, 255, 0);
+  --panel-shadow: none;
+  --card-lift: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --hero-glow: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme='light'] {
+    color-scheme: light;
+
+    --n-0: #ffffff;
+    --n-5: #d0d0ce;
+    --n-6: #c0c0be;
+    --n-7: #a3a3a1;
+    --n-8: #82827f;
+    --n-9: #63635f;
+    --n-12: #111111;
+
+    --ink-rgb: 0 0 0;
+    --ok: #248a3d;
+    --bg: #ffffff;
+    --bg-raised: #f5f5f4;
+    --bg-inset: #ececeb;
+    --solid: #111111;
+    --solid-text: #ffffff;
+
+    /* Darkened for a light page: the dark-theme pair washes out on white,
+       which is the failure mode that makes accent colour look cheap. */
+    --command: #0f7a63;
+    --command-bg: rgba(15, 122, 99, 0.11);
+    --link: #1f5fb0;
+
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
+
+    --panel-edge: rgba(255, 255, 255, 0);
+    --panel-shadow: none;
+    --card-lift: 0 8px 24px rgba(0, 0, 0, 0.08);
+    --hero-glow: rgba(0, 0, 0, 0.035);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+
+    --n-0: #ffffff;
+    --n-5: #d0d0ce;
+    --n-6: #c0c0be;
+    --n-7: #a3a3a1;
+    --n-8: #82827f;
+    --n-9: #63635f;
+    --n-12: #111111;
+
+    --ink-rgb: 0 0 0;
+    --ok: #248a3d;
+    --bg: #ffffff;
+    --bg-raised: #f5f5f4;
+    --bg-inset: #ececeb;
+    --solid: #111111;
+    --solid-text: #ffffff;
+
+    /* Darkened for a light page: the dark-theme pair washes out on white,
+       which is the failure mode that makes accent colour look cheap. */
+    --command: #0f7a63;
+    --command-bg: rgba(15, 122, 99, 0.11);
+    --link: #1f5fb0;
+
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
+
+    --panel-edge: rgba(255, 255, 255, 0);
+    --panel-shadow: none;
+    --card-lift: 0 8px 24px rgba(0, 0, 0, 0.08);
+    --hero-glow: rgba(0, 0, 0, 0.035);
+  }
+}

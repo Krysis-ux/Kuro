@@ -1,9 +1,4 @@
 //! Launching and stopping a single engine process.
-//!
-//! Each loaded model gets its own process. Running the engine out-of-process
-//! means a model that crashes the engine — a malformed GGUF, an unsupported
-//! architecture, an out-of-memory kill — takes down only that engine, never
-//! Kuro itself.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -13,8 +8,8 @@ use tokio::process::{Child, Command};
 
 use crate::{KuroError, Result};
 
-/// How long to wait for an engine to report healthy before giving up.
-/// Large models on a cold page cache genuinely take tens of seconds.
+/// How long to wait for an engine to report healthy. Large models on a cold
+/// page cache can take tens of seconds.
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(180);
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -25,8 +20,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 pub struct EngineLaunchSpec {
     pub binary: PathBuf,
     pub model_path: PathBuf,
-    /// Reported by the engine's own `/v1/models`, which keeps its responses
-    /// consistent with Kuro's model ids.
+    /// Model name the engine reports in `/v1/models`; matches Kuro's model id.
     pub model_alias: String,
     pub port: u16,
     pub context_size: u32,
@@ -53,13 +47,10 @@ impl EngineLaunchSpec {
             self.gpu_layers.to_string(),
             "--threads".to_string(),
             self.threads.to_string(),
-            // Kuro serves its own interface; the engine's bundled one would
-            // only be reachable on an internal port nobody is told about.
+            // Kuro serves its own UI; the engine's would sit on an internal port.
             "--no-webui".to_string(),
-            // Use the chat template baked into the GGUF. Without this the engine
-            // falls back to a generic template and ignores the `tools` field
-            // entirely, so every tool call silently becomes prose describing a
-            // tool call. Tool support is not optional enough to leave off.
+            // Use the GGUF's own chat template. Without it the engine ignores the
+            // `tools` field and tool calls silently become prose.
             "--jinja".to_string(),
         ]
     }
@@ -91,8 +82,7 @@ pub fn spawn_engine(spec: &EngineLaunchSpec) -> Result<Child> {
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_file_for_stderr))
         .stdin(Stdio::null())
-        // Reap the process ourselves so a crash is observed rather than
-        // leaving a zombie.
+        // The supervisor reaps the child, so a crash is observed (no zombie).
         .kill_on_drop(false)
         .spawn()
         .map_err(|error| {
@@ -102,12 +92,11 @@ pub fn spawn_engine(spec: &EngineLaunchSpec) -> Result<Child> {
     Ok(child)
 }
 
-/// Poll the engine's health endpoint until it is ready to serve.
-///
-/// The engine answers 503 while it is still loading weights and 200 once it
-/// can accept requests.
+/// Poll `/health` until the engine is ready (503 while loading weights, 200 once
+/// it can serve).
 pub async fn wait_until_healthy(
     client: &reqwest::Client,
+    child: &mut Child,
     port: u16,
     log_path: &std::path::Path,
 ) -> Result<()> {
@@ -119,6 +108,15 @@ pub async fn wait_until_healthy(
             if response.status().is_success() {
                 return Ok(());
             }
+        }
+
+        // An engine that exits at once (a bad GGUF, too little memory) will never
+        // answer; say so now rather than after the full timeout.
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(KuroError::engine(format!(
+                "the engine exited before it was ready ({status}). Last log lines:\n{}",
+                tail_log(log_path, 15)
+            )));
         }
 
         if Instant::now() >= deadline {
@@ -152,10 +150,7 @@ pub async fn terminate(child: &mut Child) {
     }
 }
 
-/// Last `lines` lines of a log file, for error messages.
-///
-/// Engine failures are almost always explained in its own output, so surfacing
-/// the tail turns "it did not start" into something actionable.
+/// Last `lines` lines of a log file, so startup errors show the engine's own output.
 pub fn tail_log(path: &std::path::Path, lines: usize) -> String {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return "(no engine log available)".to_string();

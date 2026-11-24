@@ -1,28 +1,4 @@
 //! Skills: expertise you switch on.
-//!
-//! A skill is a short, specific instruction block appended to the system prompt.
-//! That is all. There is no execution, no sandbox, no plugin runtime — and that
-//! restraint is the point, because it is what makes a skill safe to install with
-//! one click and impossible to break the application with.
-//!
-//! The reason this is worth having at all is that prompt guidance is the highest
-//! leverage available on a small local model. A 4B model asked for Rust will
-//! cheerfully write code that does not compile; the same model told "every snippet
-//! must include its `use` statements, prefer `?` over `unwrap`, and say which
-//! edition you assume" produces materially better output. That is a real gain for
-//! zero inference cost, and it is exactly the gain a hosted frontier model gets
-//! from a system prompt somebody spent a month on.
-//!
-//! Skills are deliberately not auto-selected *per message*. Guessing which
-//! expertise a given question needs is a classification problem that would be
-//! wrong often enough to be annoying, and being wrong here means silently
-//! changing how the model answers.
-//!
-//! A fresh install does start with the coding category switched on — see
-//! [`default_slugs`]. That is a starting position, not a guess about any
-//! particular message: it is visible in the store, costed in the same token
-//! count as everything else, and overwritten the moment the user touches a
-//! switch.
 
 use serde::Serialize;
 
@@ -39,9 +15,8 @@ pub const KEY_ENABLED: &str = "skills.enabled";
 #[serde(rename_all = "snake_case")]
 pub enum SkillCategory {
     Language,
-    /// Working in a real codebase with tools: navigating it, changing it safely,
-    /// and checking the change. These matter most on the Code page, where the
-    /// model can actually act on what it reads.
+    /// Working in a real codebase with tools: navigating, changing safely,
+    /// checking. Matters most on the Code page.
     Coding,
     Practice,
     Design,
@@ -49,7 +24,7 @@ pub enum SkillCategory {
 }
 
 impl SkillCategory {
-    /// The stored spelling, which is what a user skill's row holds.
+    /// The stored spelling (what a user skill's row holds).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Language => "language",
@@ -87,28 +62,17 @@ pub struct Skill {
     /// One line, for the card.
     pub blurb: &'static str,
     pub category: SkillCategory,
-    /// What gets appended to the system prompt. Written as imperatives, because
-    /// that is what a small model follows most reliably.
+    /// Appended to the system prompt. Written as imperatives, which small models
+    /// follow most reliably.
     pub instructions: &'static str,
-    /// Roughly how much context this costs, so the UI can warn when several are on.
+    /// Rough context cost in tokens, for the UI's warning.
     pub approx_tokens: usize,
-    /// Always on inside a coding workspace, and not shown in the store.
-    ///
-    /// A short list, and each entry earns it by describing something that is not
-    /// a preference. "Read a file before you edit it" is not a style anybody
-    /// might reasonably switch off; it is the difference between an assistant
-    /// that edits code and one that destroys it. Putting such a rule on a toggle
-    /// implies there is a sensible reason to turn it off, and there is not — so
-    /// they are hidden rather than merely defaulted on, because a default-on
-    /// switch is a switch somebody eventually flips while tidying.
+    /// Always on inside a coding workspace and hidden from the store.
     pub essential: bool,
 }
 
-/// The catalogue.
-///
-/// Every entry is guidance a competent reviewer of that language would actually
-/// give. Nothing here is filler: a skill that says "write good code" would cost
-/// context and change nothing.
+/// The catalogue. Every entry must be concrete guidance, not filler like "write
+/// good code".
 pub const SKILLS: &[Skill] = &[
     Skill {
         slug: "rust",
@@ -418,9 +382,8 @@ After making a change:
         blurb: "Run the build and the tests. Do not describe running them.",
         category: SkillCategory::Coding,
         approx_tokens: 150,
-        // The single most expensive failure a coding assistant has: a model that
-        // could have run `npm test` in two seconds writing "you should now run
-        // `npm test`" instead, and being wrong.
+        // Targets the costliest failure: telling the user to run `npm test`
+        // instead of running it.
         essential: true,
         instructions: "\
 When you can run commands:
@@ -638,22 +601,8 @@ When debugging:
 - Once the cause is known, say why it produced this symptom before giving the patch.",
     },
     Skill {
-        // The one skill here about the *shape* of an attempt rather than about
-        // a language or a practice.
-        //
-        // Small models fail in a characteristic way: the first approach does not
-        // work, and the second attempt is the first attempt again. Nothing in
-        // the transcript stops that — the failed attempt is right there in the
-        // context and gets pattern-matched as "what we do here". So the rule
-        // that matters is not "try harder", it is "say what the last attempt
-        // ruled out before starting the next one", which turns the context from
-        // an echo into evidence.
-        //
-        // The memory tools are named explicitly because a rule that says
-        // "remember this for next time" with no mechanism is a rule the model
-        // performs rather than follows. `remember` and `recall` are real, they
-        // ship switched on, and a fact written to one is genuinely there in a
-        // conversation next week.
+        // About the shape of an attempt: small models repeat a failed approach, so the rule is to
+        // say what the last attempt ruled out before the next.
         slug: "recursive-learning",
         name: "Learning as you go",
         blurb: "Never repeat a failed attempt. Carry forward what each one ruled out.",
@@ -952,19 +901,10 @@ When explaining something:
 - Match the depth to the question: a one-line question gets a one-line answer.
 - Say what you are simplifying when the simplification would mislead if taken literally.",
     },
-    // ---- Working as an agent -------------------------------------------
+    // ---- Working as an agent ----
     //
-    // Seven skills about *how a turn is spent* rather than about a language or
-    // a practice, and the reason they are worth their tokens is that a coding
-    // turn is a budget: a fixed number of tool rounds and a context window that
-    // fills whether or not anything useful went into it.
-    //
-    // Every one of these is a rule that the coding agents worth studying state
-    // explicitly in their own briefs, and each earns its place by naming a
-    // failure that costs a whole turn — reading a 2,000-line file to find
-    // twenty relevant lines, calling four tools in four rounds that could have
-    // been one, rewriting a file to change a line, or reporting work as done
-    // without running it.
+    // How a turn is spent: a coding turn has a fixed number of tool rounds and a
+    // context window. Each skill names a failure that wastes a whole turn.
     Skill {
         slug: "tool-batching",
         name: "Using tools in parallel",
@@ -1093,11 +1033,8 @@ For any question involving arithmetic, logic, dates, counting, or several constr
     },
 ];
 
-/// Find a skill by slug, built-in or added by the user.
-///
-/// Built-ins win a collision. A downloaded file should not be able to quietly
-/// replace `/rust` with something else — the slug is what the user types, and
-/// what it resolves to should not depend on what was imported last.
+/// Find a skill by slug, built-in or user-added. Built-ins win a collision, so an
+/// imported file cannot quietly replace `/rust`.
 pub fn find(slug: &str) -> Option<&'static Skill> {
     SKILLS
         .iter()
@@ -1105,58 +1042,33 @@ pub fn find(slug: &str) -> Option<&'static Skill> {
         .or_else(|| custom::find(slug))
 }
 
-/// Whether a slug belongs to the built-in catalogue.
-///
-/// The one thing the two kinds differ on outside this module: a built-in cannot
-/// be deleted, so the interface must not offer to.
+/// Whether a slug is in the built-in catalogue (built-ins cannot be deleted).
 pub fn is_builtin(slug: &str) -> bool {
     SKILLS.iter().any(|skill| skill.slug == slug)
 }
 
-/// The skills a coding workspace always gets, whatever the user has switched on.
-///
-/// Not shown in the store and not stored in settings, so there is nothing to
-/// accidentally turn off and nothing to migrate when the list changes.
+/// The skills a coding workspace always gets. Not stored in settings, so nothing
+/// can be turned off or needs migrating.
 pub fn essentials() -> Vec<&'static Skill> {
     SKILLS.iter().filter(|skill| skill.essential).collect()
 }
 
-/// The skills the store offers, which is everything that is a real choice.
-///
-/// The user's own come first. They were added on purpose and there are a few of
-/// them; the built-in catalogue is long and was not chosen by anybody.
+/// The skills the store offers (everything that is a real choice), the user's
+/// own first.
 pub fn selectable() -> Vec<&'static Skill> {
     let mut all = custom::loaded();
     all.extend(SKILLS.iter().filter(|skill| !skill.essential));
     all
 }
 
-/// Slugs the user has switched on.
-/// What a fresh install starts with switched on.
-///
-/// Everything. That used to be the coding category only, and the reason for the
-/// restraint was sound at the time: skills were concatenated into every system
-/// prompt, so switching on all forty-odd meant carrying all forty-odd into every
-/// question, and a default that spent the context window before the first
-/// message would have been a worse first day than a short list.
-///
-/// [`crate::orchestrate`] removed that constraint. An enabled skill is now a
-/// candidate rather than a guarantee: each turn ranks the enabled set against
-/// what was actually asked and sends what fits a token budget. Leaving Ruby on
-/// therefore costs nothing on a Rust question — it simply never wins a place —
-/// and the switch means "Kuro may use this" rather than "put this in front of
-/// every message".
-///
-/// With that true, a short default is no longer protecting anything. It is just
-/// expertise the user has to go and find.
+/// What a fresh install starts with switched on: every selectable skill.
 pub fn default_slugs() -> Vec<String> {
     selectable().iter().map(|skill| skill.slug.to_string()).collect()
 }
 
+/// Slugs the user has switched on.
 pub fn enabled_slugs(db: &Db) -> Result<Vec<String>> {
-    // Absent means never chosen, which is not the same as chosen-to-be-empty:
-    // storing the selection happens the moment a switch is touched, so an empty
-    // array is a real answer and `None` is a first run.
+    // `None` is a first run; an empty array is a deliberate "nothing on".
     let Some(stored) = db.get_setting(KEY_ENABLED)? else {
         return Ok(default_slugs());
     };
@@ -1167,8 +1079,7 @@ pub fn enabled_slugs(db: &Db) -> Result<Vec<String>> {
             values
                 .iter()
                 .filter_map(|value| value.as_str())
-                // A slug from a newer build that this one does not have is dropped
-                // rather than failing the request.
+                // Drop slugs this build does not know (e.g. from a newer build).
                 .filter(|slug| find(slug).is_some())
                 .map(str::to_string)
                 .collect()
@@ -1187,8 +1098,8 @@ pub fn enabled(db: &Db) -> Result<Vec<&'static Skill>> {
 pub fn set_enabled(db: &Db, slugs: &[String]) -> Result<Vec<String>> {
     let kept: Vec<&str> = slugs
         .iter()
-        // An essential skill is not a stored preference — it is added at the
-        // point of use. Storing one would make it look removable.
+        // Essentials are added at the point of use; storing one would make it
+        // look removable.
         .filter(|slug| find(slug).is_some_and(|skill| !skill.essential))
         .map(String::as_str)
         .collect();
@@ -1237,9 +1148,8 @@ mod tests {
 
     #[test]
     fn turning_everything_off_is_remembered_rather_than_reset_to_the_defaults() {
-        // The bug a naive default would cause: an empty stored list reads as
-        // "never chosen", so the next request quietly turns the defaults back on
-        // and the user's deliberate choice is undone on every message.
+        // An empty stored list must not read as "never chosen" and re-enable
+        // the defaults.
         let db = Db::open_in_memory().expect("open");
         set_enabled(&db, &[]).expect("store an empty selection");
 
@@ -1260,17 +1170,7 @@ mod tests {
 
     #[test]
     fn a_fresh_install_starts_with_everything_switched_on() {
-        // Twice revised, and each revision followed a change in what "switched
-        // on" costs. It began as nothing on, which meant opening the Code page
-        // and finding forty-four switches with no idea which mattered. It became
-        // the coding category, because concatenating every enabled skill into
-        // every prompt made "everything" ruinously expensive.
-        //
-        // Neither constraint holds now. `crate::orchestrate` ranks the enabled
-        // set per turn and sends what fits a budget, so an enabled skill costs
-        // nothing on a question it is irrelevant to. A short default is no
-        // longer protecting anything — it is expertise the user has to go and
-        // find.
+        // Safe because `crate::orchestrate` sends only what fits a budget.
         let db = Db::open_in_memory().expect("open");
         let slugs = enabled_slugs(&db).expect("slugs");
 
@@ -1343,8 +1243,7 @@ mod tests {
                 "`{expected}` describes something that is not a preference"
             );
         }
-        // The list has to stay short, or "essential" becomes "everything" and the
-        // store becomes a lie about what is actually in the prompt.
+        // Must stay short, or "essential" becomes "everything".
         assert!(essential.len() <= 6, "got {} essential skills", essential.len());
 
         for skill in &essential {
@@ -1365,8 +1264,7 @@ mod tests {
 
     #[test]
     fn an_essential_skill_cannot_be_stored_as_a_preference() {
-        // Otherwise it appears in the enabled list, the store renders it with a
-        // switch, and somebody turns off "read the file before editing it".
+        // Otherwise the store would render it with a switch.
         let db = Db::open_in_memory().expect("open");
 
         let kept = set_enabled(
@@ -1380,8 +1278,8 @@ mod tests {
 
     #[test]
     fn the_agentic_coding_skills_cover_running_looking_and_recovering() {
-        // The four things that separate an assistant which edits text from one
-        // that works in a project.
+        // What separates an assistant that edits text from one that works in a
+        // project.
         for expected in [
             "running-code",
             "using-the-terminal",
@@ -1404,7 +1302,7 @@ mod tests {
 
     #[test]
     fn every_category_has_at_least_one_skill_in_it() {
-        // An empty section in the store is a heading with nothing under it.
+        // No empty store sections.
         for category in SkillCategory::ALL {
             assert!(
                 SKILLS.iter().any(|skill| skill.category == *category),

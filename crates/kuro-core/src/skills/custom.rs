@@ -1,20 +1,4 @@
 //! Skills the user added: uploaded, or pulled out of a repository.
-//!
-//! ## Why these become `&'static`
-//!
-//! The built-in catalogue is a `const` array of `Skill`, whose fields are
-//! `&'static str`, and thirty-three call sites across the orchestrator and the
-//! routes take `&'static Skill`. Making the type owned to accommodate a handful
-//! of user skills would touch every one of them — including the orchestrator's
-//! ranking, which is the last code in this project worth disturbing for a
-//! storage detail.
-//!
-//! So a user skill is leaked into `'static` when it is loaded. That is a real
-//! cost and a bounded one: a skill is a few kilobytes, they are loaded once at
-//! startup and again only when the user adds or removes one, and the process
-//! that holds them is a desktop daemon rather than a server handling untrusted
-//! input. Leaking on every request would be a bug; leaking on every edit is a
-//! rounding error against the alternative.
 
 use std::sync::RwLock;
 
@@ -26,12 +10,8 @@ use super::{Skill, SkillCategory};
 /// The loaded user skills, in the shape everything downstream already reads.
 static CUSTOM: RwLock<Vec<&'static Skill>> = RwLock::new(Vec::new());
 
-/// Roughly how many tokens a piece of text costs.
-///
-/// Four characters per token is the usual English approximation, and the number
-/// is only used to warn that several skills at once are expensive. Being exact
-/// would mean running a tokeniser per model, which is a great deal of work for a
-/// figure nobody acts on to the nearest hundred.
+/// Rough token count (4 characters per token), only used to warn that several
+/// skills at once are expensive.
 pub fn estimate_tokens(text: &str) -> usize {
     text.len().div_ceil(4)
 }
@@ -67,17 +47,7 @@ pub fn slugify(raw: &str) -> String {
     out
 }
 
-/// Read a `SKILL.md`.
-///
-/// The format everybody writing these has converged on is YAML front matter
-/// with `name` and `description`, then the instructions as markdown. Parsed by
-/// hand rather than with a YAML crate: the whole grammar in use here is
-/// `key: value` on its own line, and a real YAML parser would accept anchors,
-/// nested maps and multi-line scalars that the rest of this cannot represent.
-///
-/// A file with no front matter is still a skill. Its first heading becomes the
-/// name and its first paragraph the description, because a document that says
-/// what it is in prose is more common than one that refuses to load.
+/// Read a `SKILL.md`: YAML front matter (`name`, `description`) then markdown instructions.
 pub fn parse_skill_md(content: &str, fallback_name: &str) -> Result<ParsedSkill> {
     let (front, body) = split_front_matter(content);
 
@@ -142,8 +112,8 @@ fn split_front_matter(content: &str) -> (String, String) {
     };
     let rest = rest.trim_start_matches(['\r', '\n']);
 
-    // The closing fence has to be its own line, or a `---` used as a horizontal
-    // rule in the instructions would truncate them.
+    // The closing fence must be on its own line so a `---` rule in the body does
+    // not truncate it.
     match rest.split_once("\n---") {
         Some((front, body)) => (
             front.to_string(),
@@ -191,11 +161,7 @@ pub fn find(slug: &str) -> Option<&'static Skill> {
         .find(|skill| skill.slug == slug)
 }
 
-/// Read the user's skills out of storage and make them usable.
-///
-/// Called at startup and after anything that changes the table. Replacing the
-/// whole list rather than patching it keeps this the only path by which a user
-/// skill becomes visible, so there is one answer to "why is that skill there".
+/// Load the user's skills from storage, replacing the whole list.
 pub fn reload(db: &Db) -> Result<usize> {
     let records = db.list_user_skills()?;
     let loaded: Vec<&'static Skill> = records.iter().map(leak).collect();
@@ -212,9 +178,8 @@ fn leak(record: &UserSkillRecord) -> &'static Skill {
         category: category_from(&record.category).unwrap_or(SkillCategory::Practice),
         instructions: Box::leak(record.instructions.clone().into_boxed_str()),
         approx_tokens: record.approx_tokens,
-        // Never essential. An essential skill is on in every coding workspace
-        // with no way to switch it off, which is not a property a file somebody
-        // downloaded should be able to claim for itself.
+        // Never essential: that would let a downloaded file force itself on in
+        // every coding workspace.
         essential: false,
     }))
 }
@@ -240,8 +205,7 @@ mod tests {
 
     #[test]
     fn a_file_without_front_matter_is_still_a_skill() {
-        // Refusing these would reject a good half of what is on GitHub, and the
-        // heading says what the front matter would have said.
+        // The heading stands in for the front matter.
         let parsed = parse_skill_md("# Impeccable\n\nShip nothing half-done.\n", "impeccable.md")
             .expect("parsed");
 
@@ -253,9 +217,7 @@ mod tests {
 
     #[test]
     fn a_rule_in_the_body_does_not_truncate_the_instructions() {
-        // `---` is also a horizontal rule, and an earlier version cut the file
-        // at the first one — which silently threw away most of every skill that
-        // used them as section breaks.
+        // `---` is also a horizontal rule and must not end the body.
         let parsed = parse_skill_md(
             "---\nname: Sections\n---\n\nFirst part.\n\n---\n\nSecond part.\n",
             "sections.md",

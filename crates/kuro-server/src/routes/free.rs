@@ -1,3 +1,4 @@
+//! The free-tier pool's API.
 
 use std::collections::HashMap;
 
@@ -14,6 +15,7 @@ use serde_json::{json, Value};
 use crate::error::AppResult;
 use crate::state::SharedState;
 
+/// Everything the free-models screen needs in one call.
 pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     let keys = stored_keys(&state);
     let allow_keyless = state.free.allows_keyless();
@@ -32,9 +34,11 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
                 "allowance": provider.allowance,
                 "keyHint": provider.key_hint,
                 "models": provider.models.iter().map(|model| model.id).collect::<Vec<_>>(),
+                // Whether a key is stored, never the key.
                 "hasKey": keys.contains_key(provider.slug),
                 "trouble": trouble.map(|kind| kind.as_str()),
                 "tier": provider.tier.as_str(),
+                // A shared endpoint needs no account or key, which changes what the row offers.
                 "keyless": provider.quirks.auth.keyless(),
                 "privacy": {
                     "logged": provider.privacy.logged,
@@ -58,6 +62,7 @@ pub async fn overview(State(state): State<SharedState>) -> AppResult<Json<Value>
                 "flavour": flavour.as_str(),
                 "label": flavour.label(),
                 "blurb": flavour.blurb(),
+                // Shown as unavailable rather than hidden, so the screen explains itself.
                 "available": state.free.choose(*flavour, &keys).is_some(),
             }))
             .collect::<Vec<_>>(),
@@ -72,6 +77,8 @@ pub struct SetKeyRequest {
     pub api_key: String,
 }
 
+/// Store one provider's key, clearing any trouble that provider was in (the
+/// commonest reason to be here is a wrong previous key).
 pub async fn set_key(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -80,6 +87,8 @@ pub async fn set_key(
     let provider = free::find(&slug)
         .ok_or_else(|| KuroError::not_found(format!("free provider `{slug}`")))?;
 
+    // A keyless endpoint should say so rather than store a string it will never
+    // send, which would leave a key "saved" and changing nothing.
     if provider.quirks.auth == Auth::None {
         return Err(KuroError::bad_request(format!(
             "{} takes no key — it is a shared endpoint that anyone can reach, \
@@ -107,6 +116,8 @@ pub struct KeylessRequest {
     pub enabled: bool,
 }
 
+/// Allow or forbid the shared, unauthenticated endpoints. Written to settings
+/// and mirrored into the pool, which is read on a path that must not touch the database.
 pub async fn set_keyless(
     State(state): State<SharedState>,
     Json(request): Json<KeylessRequest>,
@@ -127,6 +138,7 @@ pub struct AllowanceRequest {
     pub tokens_per_month: Option<i64>,
 }
 
+/// Record what the user says this provider's allowance is.
 pub async fn set_allowance(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -144,7 +156,10 @@ pub async fn set_allowance(
     Ok(Json(json!({ "slug": provider.slug, "limit": allowance })))
 }
 
+/// What each provider's allowance has actually been spent on.
 pub async fn usage(State(state): State<SharedState>) -> AppResult<Json<Value>> {
+    // Windows use the *local* clock: a UTC-midnight day would file an evening's work
+    // under tomorrow for anyone west of Greenwich.
     let now = chrono::Local::now();
     let day_start = now
         .date_naive()
@@ -156,10 +171,13 @@ pub async fn usage(State(state): State<SharedState>) -> AppResult<Json<Value>> {
         .and_then(|first| first.and_hms_opt(0, 0, 0))
         .expect("the first of the month exists");
 
+    // Both bounds in UTC: `created_at` is UTC and compared as a string, so a bound
+    // with a local offset would compare by its printed digits, not the instant it names.
     let to = chrono::Utc::now().to_rfc3339();
     let day = window(&state, &local_rfc3339(day_start), &to)?;
     let month = window(&state, &local_rfc3339(month_start), &to)?;
 
+    // Averaged here, not in SQL, so no turns gives `null` (no honest average over no samples).
     let reported_turns: i64 = month.1.turns - month.1.unreported;
     let tokens_per_turn = (reported_turns > 0).then(|| month.1.total / reported_turns);
     let days_elapsed = now.date_naive().day() as i64;
@@ -171,6 +189,39 @@ pub async fn usage(State(state): State<SharedState>) -> AppResult<Json<Value>> {
         "averages": {
             "tokensPerTurn": tokens_per_turn,
             "tokensPerDayThisMonth": (days_elapsed > 0).then(|| month.1.total / days_elapsed),
+        },
+    })))
+}
+
+/// One window's per-provider rows, plus the totals across them.
+#[derive(Debug, Deserialize)]
+pub struct ModelUsageQuery {
+    /// How many days back, counting today. Defaults to 30.
+    #[serde(default)]
+    days: Option<u32>,
+}
+
+/// Tokens by model over the last `days` local days, for Settings → Usage. Covers
+/// every model, local and remote, not only the free pool.
+pub async fn usage_by_model(
+    State(state): State<SharedState>,
+    axum::extract::Query(query): axum::extract::Query<ModelUsageQuery>,
+) -> AppResult<Json<Value>> {
+    let days = query.days.unwrap_or(30).clamp(1, 366);
+    let start = chrono::Local::now().date_naive() - chrono::Days::new(u64::from(days - 1));
+    let from = local_rfc3339(start.and_hms_opt(0, 0, 0).expect("midnight exists"));
+    let to = chrono::Utc::now().to_rfc3339();
+
+    let models = state.db.usage_by_model(&from, &to)?;
+    let sum = |pick: fn(&kuro_core::db::ModelUsage) -> i64| models.iter().map(pick).sum::<i64>();
+    Ok(Json(json!({
+        "days": days,
+        "models": models,
+        "total": {
+            "turns": sum(|row| row.turns),
+            "promptTokens": sum(|row| row.prompt_tokens),
+            "completionTokens": sum(|row| row.completion_tokens),
+            "unreportedTurns": sum(|row| row.unreported_turns),
         },
     })))
 }
@@ -191,6 +242,8 @@ fn window(state: &SharedState, from: &str, to: &str) -> AppResult<(Value, Totals
             let name = free::find(&row.provider_slug).map(|held| held.name);
             json!({
                 "providerSlug": row.provider_slug,
+                // A slug with no provider is a key removed since the turn ran; show the slug rather
+                // than hide the tokens.
                 "name": name.unwrap_or(row.provider_slug.as_str()),
                 "turns": row.turns,
                 "promptTokens": row.prompt_tokens,
@@ -215,6 +268,7 @@ fn window(state: &SharedState, from: &str, to: &str) -> AppResult<(Value, Totals
     ))
 }
 
+/// The sums across one window, kept separately so averages can use them.
 #[derive(Debug, Clone, Copy, Serialize)]
 struct Totals {
     turns: i64,
@@ -222,15 +276,19 @@ struct Totals {
     total: i64,
 }
 
+/// A local date-time as the UTC RFC 3339 string `created_at` is compared against.
 fn local_rfc3339(naive: chrono::NaiveDateTime) -> String {
     use chrono::TimeZone;
     chrono::Local
         .from_local_datetime(&naive)
         .single()
+        // A local time skipped by the spring DST gap has no instant; an hour of
+        // imprecision once a year beats failing the screen.
         .map(|local| local.with_timezone(&chrono::Utc).to_rfc3339())
         .unwrap_or_else(|| chrono::Utc.from_utc_datetime(&naive).to_rfc3339())
 }
 
+/// Forget what the user said this provider's allowance is.
 pub async fn delete_allowance(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -256,6 +314,7 @@ pub async fn delete_key(
     Ok(Json(json!({ "slug": provider.slug, "hasKey": false })))
 }
 
+/// Ask a provider for its model list, to find out whether the key works.
 pub async fn test_key(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
@@ -265,6 +324,7 @@ pub async fn test_key(
 
     let stored = state.secrets.get(&free::secret_reference(provider.slug))?;
 
+    // A shared endpoint has no key to test, so the button becomes a reachability check.
     if stored.is_none() && !provider.quirks.auth.keyless() {
         return Ok(Json(json!({
             "ok": false,
@@ -309,6 +369,7 @@ pub async fn test_key(
     }
 }
 
+/// Every free key Kuro can find, keyed by provider slug.
 pub fn stored_keys(state: &SharedState) -> HashMap<String, String> {
     let connectors: Vec<(String, String)> = state
         .db
@@ -324,10 +385,13 @@ pub fn stored_keys(state: &SharedState) -> HashMap<String, String> {
     })
 }
 
+/// Today, as the ISO date the tier dates are written in.
 fn today() -> String {
     chrono::Utc::now().date_naive().to_string()
 }
 
+/// The key-picking half of [`stored_keys`], with the clock and credential store passed in so the
+/// precedence rule is testable.
 fn gather_keys(
     connectors: &[(String, String)],
     today: &str,
@@ -335,8 +399,11 @@ fn gather_keys(
 ) -> HashMap<String, String> {
     let mut keys: HashMap<String, String> = HashMap::new();
 
+    // A lapsed trial is dropped here, not when choosing: "stop using this key"
+    // differs from "out of allowance for a few minutes", and this keeps the pool free of a clock.
     let usable = |slug: &str| free::find(slug).is_some_and(|held| !held.tier.expired_on(today));
 
+    // The connectors first, so a key added on the free screen overwrites them.
     for (provider, reference) in connectors {
         if !usable(provider) {
             continue;
@@ -360,10 +427,12 @@ fn gather_keys(
     keys
 }
 
+/// Start a catalogue read in the background and return at once.
 pub fn refresh_catalogues_in_background(state: &SharedState, keys: &HashMap<String, String>) {
     if !state.free.needs_any_catalogue(keys) {
         return;
     }
+    // One read at a time, so a burst of messages does not each sweep the same endpoints.
     if !state.free.begin_refresh() {
         return;
     }
@@ -376,12 +445,14 @@ pub fn refresh_catalogues_in_background(state: &SharedState, keys: &HashMap<Stri
     });
 }
 
+/// Read the model lists of every provider whose catalogue is missing or stale.
 pub async fn refresh_catalogues(state: &SharedState, keys: &HashMap<String, String>) {
     let allow_keyless = state.free.allows_keyless();
 
     let stale: Vec<(&'static str, String, Option<String>, Quirks)> = FREE_PROVIDERS
         .iter()
         .filter(|provider| state.free.needs_catalogue(provider.slug))
+        // Only reachable providers, so a shared endpoint the user switched off is never read.
         .filter(|provider| provider.is_reachable(keys, allow_keyless))
         .map(|provider| {
             (
@@ -424,10 +495,14 @@ pub async fn refresh_catalogues(state: &SharedState, keys: &HashMap<String, Stri
     }
 }
 
+/// Settings key holding the last catalogue read of every free provider.
 pub const KEY_CATALOGUES: &str = "free.catalogues";
 
+/// Settings key holding which providers and models are currently set aside.
 pub const KEY_TROUBLES: &str = "free.troubles";
 
+/// Write the current refusals to storage, so a restart does not erase a
+/// cooldown and offer a rejected key as available.
 pub fn save_troubles(state: &SharedState) {
     let stored = state.free.troubles();
     if let Err(error) = state.db.set_setting(KEY_TROUBLES, &serde_json::json!(stored)) {
@@ -435,6 +510,7 @@ pub fn save_troubles(state: &SharedState) {
     }
 }
 
+/// Read back the refusals from the last run, dropping any that have expired.
 pub fn stored_troubles(db: &kuro_core::db::Db) -> Vec<(String, String, u64)> {
     db.get_setting(KEY_TROUBLES)
         .ok()
@@ -443,16 +519,19 @@ pub fn stored_troubles(db: &kuro_core::db::Db) -> Vec<(String, String, u64)> {
         .unwrap_or_default()
 }
 
+/// Write the catalogues to storage so the next start already has them.
 fn save_catalogues(state: &SharedState) {
     let stored = state.free.catalogues();
     if let Err(error) = state
         .db
         .set_setting(KEY_CATALOGUES, &serde_json::json!(stored))
     {
+        // A cache: losing it costs one slow start, not a wrong answer, so don't fail the request.
         tracing::warn!(%error, "could not store free catalogues");
     }
 }
 
+/// Read back what the last run learned.
 pub fn stored_catalogues(db: &kuro_core::db::Db) -> HashMap<String, Vec<String>> {
     db.get_setting(KEY_CATALOGUES)
         .ok()
@@ -461,6 +540,7 @@ pub fn stored_catalogues(db: &kuro_core::db::Db) -> HashMap<String, Vec<String>>
         .unwrap_or_default()
 }
 
+/// One provider's advertised model ids.
 async fn list_models(
     state: &SharedState,
     base_url: &str,
@@ -495,6 +575,7 @@ async fn list_models(
     )
 }
 
+/// A provider's error body is often a page of JSON; one line of it is enough.
 fn first_line(text: &str) -> String {
     const LIMIT: usize = 200;
     let trimmed = text.trim();
@@ -519,8 +600,10 @@ mod tests {
         assert!(long.ends_with('…'));
     }
 
+    /// A day inside every provider's tier, so these tests exercise only key precedence.
     const TODAY: &str = "2026-07-31";
 
+    /// A credential store as a list of pairs.
     fn store<'a>(entries: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |wanted| {
             entries
@@ -532,6 +615,7 @@ mod tests {
 
     #[test]
     fn a_key_added_under_providers_is_enough_for_the_free_pool() {
+        // An OpenRouter key added under Providers should be enough, with no second paste.
         let connectors = vec![("openrouter".to_string(), "provider:abc".to_string())];
 
         let keys = gather_keys(&connectors, TODAY, store(&[("provider:abc", "sk-or-from-providers")]));
@@ -541,6 +625,7 @@ mod tests {
 
     #[test]
     fn a_key_pasted_into_the_free_screen_wins_over_the_provider_one() {
+        // The more specific statement: it may be a deliberately separate throwaway account.
         let connectors = vec![("openrouter".to_string(), "provider:abc".to_string())];
 
         let keys = gather_keys(
@@ -554,6 +639,7 @@ mod tests {
 
     #[test]
     fn a_connector_for_something_the_free_pool_does_not_know_is_ignored() {
+        // Anthropic has no free tier, so an Anthropic key must not become one.
         let connectors = vec![
             ("anthropic".to_string(), "provider:one".to_string()),
             ("custom".to_string(), "provider:two".to_string()),
@@ -581,6 +667,8 @@ mod tests {
 
     #[test]
     fn a_key_for_a_provider_kuro_has_dropped_is_ignored() {
+        // GitHub Models, Together and Chutes were dropped from the table, but a key
+        // pasted earlier may remain in the store; it must not resurrect them.
         let keys = gather_keys(&[], TODAY, store(&[("free:github", "ghp_stale")]));
 
         assert!(keys.is_empty(), "got {keys:?}");
@@ -588,6 +676,7 @@ mod tests {
 
     #[test]
     fn every_provider_in_the_table_has_a_reachable_looking_endpoint() {
+        // Guards against a base-URL typo: HTTPS, and no chat path (`Quirks::chat_url` appends it).
         for provider in FREE_PROVIDERS {
             assert!(provider.base_url.starts_with("https://"), "{}", provider.slug);
             assert!(
@@ -603,6 +692,15 @@ mod tests {
         }
     }
 
+    /// Asks every provider what it offers and reports curated ids that have gone.
+    ///
+    /// Ignored because it talks to a dozen third parties and would fail CI whenever
+    /// one has a bad afternoon. Run it by hand before a release; the hand-written
+    /// table rots quietly:
+    ///
+    /// ```text
+    /// cargo test -p kuro-server curated_ids_still_exist -- --ignored --nocapture
+    /// ```
     #[tokio::test]
     #[ignore = "talks to every provider; run by hand before a release"]
     async fn curated_ids_still_exist() {
@@ -610,6 +708,7 @@ mod tests {
         let mut stale: Vec<String> = Vec::new();
 
         for provider in FREE_PROVIDERS {
+            // Only keyless endpoints can be checked without a credential store.
             if !provider.quirks.auth.keyless() {
                 continue;
             }

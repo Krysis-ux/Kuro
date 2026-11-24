@@ -1,11 +1,4 @@
 //! The providers Kuro knows the shape of.
-//!
-//! A preset saves the user finding a base URL, and nothing else — there is no
-//! per-provider code path. Anything not listed here still works through
-//! `custom`, which is the point: the list is a convenience, not a gate.
-//!
-//! Each entry says what it is for, because "add a provider" is only a useful
-//! screen if it also answers "which one".
 
 use serde::Serialize;
 
@@ -23,14 +16,6 @@ pub enum PresetKind {
 }
 
 /// Which screen an entry belongs on.
-///
-/// The two are the same mechanism — an OpenAI-compatible URL and a key — and
-/// completely different decisions. Adding OpenAI means paying a company per token
-/// to run their model. Adding a RunPod endpoint means running *your* model on
-/// hardware you rented, where the choice of model, the quantisation and the
-/// context length are all still yours. Putting both behind one "Providers" screen
-/// made the second look like a variant of the first, when it is closer to running
-/// locally with someone else's GPU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Surface {
@@ -59,9 +44,6 @@ impl Surface {
 }
 
 /// Which screen a connector belongs on, given the preset slug it was created from.
-///
-/// An unrecognised slug is treated as cloud: the only way to get one is to have
-/// added a custom endpoint, which is what the cloud screen is for.
 pub fn surface_for(provider_slug: &str) -> Surface {
     find(provider_slug)
         .map(|preset| preset.kind.surface())
@@ -294,8 +276,7 @@ mod tests {
 
     #[test]
     fn blurbs_carry_no_markup() {
-        // The interface renders a blurb as plain text, so a backtick meant as code
-        // formatting is shown as a backtick.
+        // The interface renders blurbs as plain text, so a backtick is shown literally.
         for preset in PRESETS {
             assert!(
                 !preset.blurb.contains('`'),
@@ -316,8 +297,7 @@ mod tests {
 
     #[test]
     fn an_unknown_slug_is_treated_as_a_custom_endpoint() {
-        // The only way to hold one is to have added a custom endpoint, which is
-        // exactly what the cloud screen covers.
+        // The only way to hold one is to have added a custom endpoint.
         assert_eq!(surface_for("something-from-a-newer-build"), Surface::Cloud);
     }
 
@@ -334,7 +314,6 @@ mod tests {
 
     #[test]
     fn every_bring_your_own_cloud_entry_asks_for_its_url() {
-        // The whole point of this screen is that the endpoint is the user's.
         for preset in PRESETS
             .iter()
             .filter(|preset| preset.kind.surface() == Surface::Cloud)

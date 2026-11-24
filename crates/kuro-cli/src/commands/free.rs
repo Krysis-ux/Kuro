@@ -1,9 +1,5 @@
-//! `kuro free` — the free-tier pool, from a terminal.
-//!
-//! The same two questions the Free models screen answers: which providers can
-//! serve a request right now, and what they have cost so far. Reading it here
-//! rather than opening a browser matters most in the case it is for — a machine
-//! being set up over SSH, where the browser is somewhere else entirely.
+//! `kuro free` — the free-tier pool from a terminal: which providers can serve a request now, and
+//! what they have cost.
 
 use anyhow::Result;
 use serde_json::Value;
@@ -29,8 +25,7 @@ pub async fn free(client: &KuroClient) -> Result<()> {
         if shared_allowed { "on" } else { "off" }
     );
 
-    // Only the rows that mean something. A list of seventeen providers the user
-    // has no key for is the web page's job, where it is scannable.
+    // Only rows that mean something; the full provider list is the web page's job.
     let interesting: Vec<&Value> = providers
         .iter()
         .filter(|entry| {
@@ -67,10 +62,8 @@ pub async fn free(client: &KuroClient) -> Result<()> {
     report_usage(client).await
 }
 
-/// What the keys have actually cost, this month.
-///
-/// A separate request because it is a separate question, and the one whose cost
-/// grows with the size of the message history.
+/// What the keys have cost this month. A separate request because it is a
+/// separate question, and the one whose cost grows with message history.
 async fn report_usage(client: &KuroClient) -> Result<()> {
     let usage = client.get("/api/free/usage").await?;
     let month = &usage["month"];
@@ -90,8 +83,7 @@ async fn report_usage(client: &KuroClient) -> Result<()> {
         );
     }
 
-    // Said rather than hidden: several free tiers return no counts, so the
-    // totals above are a floor and the reader should know by how much.
+    // Several free tiers return no counts, so the totals are a floor; say by how much.
     let unreported = month["unreportedTurns"].as_i64().unwrap_or(0);
     if unreported > 0 {
         println!(

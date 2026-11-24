@@ -1,9 +1,4 @@
 //! Resumable file download with integrity checking.
-//!
-//! Model weights are multi-gigabyte files, so a transfer interrupted by a quit,
-//! a sleep or a dropped connection must continue rather than start over. Bytes
-//! go to a `.part` file which is only renamed into place once the whole file is
-//! present and, when the source publishes a checksum, verified.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,8 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{KuroError, Result};
 
-/// Report progress at most this often, so a large download does not generate a
-/// database write per network packet.
+/// Report progress at most this often (avoids a database write per packet).
 const PROGRESS_INTERVAL_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Chunk size used when hashing a completed file.
@@ -29,9 +23,6 @@ pub struct DownloadOutcome {
 }
 
 /// Download `url` to `dest`, resuming a previous attempt when possible.
-///
-/// `on_progress` receives `(downloaded_bytes, total_bytes)`. Setting `cancel`
-/// stops the transfer and leaves the `.part` file in place for a later resume.
 pub async fn download_to_file(
     client: &reqwest::Client,
     url: &str,
@@ -59,8 +50,8 @@ pub async fn download_to_file(
     let status = response.status();
 
     if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
-        // The part file is already at or past the full length; discard it and
-        // let the caller retry from a clean slate rather than guessing.
+        // The part file is at or past the full length; discard it and let the
+        // caller retry from scratch.
         let _ = tokio::fs::remove_file(&part_path).await;
         return Err(KuroError::model(
             "the partial download was inconsistent with the server and has been discarded; try again",
@@ -72,8 +63,8 @@ pub async fn download_to_file(
         )));
     }
 
-    // A 206 means the server honoured our range; anything else means we are
-    // receiving the whole file again and must not append to the old bytes.
+    // 206 means the server honoured our range; anything else is the whole file
+    // again and must not be appended to the old bytes.
     let resumed = existing_bytes > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
     let start_at = if resumed { existing_bytes } else { 0 };
 
@@ -116,8 +107,8 @@ pub async fn download_to_file(
     drop(file);
     on_progress(downloaded, total_bytes);
 
-    // A truncated transfer that ended without an error would otherwise be
-    // renamed into place and fail much later, when the model refuses to load.
+    // A truncated transfer with no error would be renamed into place and only
+    // fail later, when the model won't load.
     if let Some(expected_total) = total_bytes {
         if downloaded != expected_total {
             return Err(KuroError::model(format!(
@@ -201,8 +192,8 @@ mod tests {
         let path = dir.join("empty.bin");
         tokio::fs::write(&path, b"").await.expect("write");
 
-        // The SHA-256 of zero bytes is a well-known constant, which makes this a
-        // real check of the hashing path rather than a self-referential one.
+        // The SHA-256 of zero bytes is a known constant, so this checks the hashing
+        // path independently.
         assert_eq!(
             sha256_file(&path).await.expect("hash"),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

@@ -1,9 +1,4 @@
-//! Storage for remote model providers.
-//!
-//! One row per endpoint the user has connected — OpenRouter, OpenAI, Anthropic,
-//! a rented GPU box, any OpenAI-compatible URL. The API key is not here; only
-//! the reference into the credential store is, so this table can be read,
-//! copied or attached to a bug report without leaking anything.
+//! Storage for remote model providers (OpenRouter, OpenAI, Anthropic, any OpenAI-compatible URL).
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -95,7 +90,7 @@ impl Db {
     }
 
     /// Insert a provider. The caller has already written the key to the
-    /// credential store and passes the reference it used.
+    /// credential store and passes its reference.
     pub fn insert_cloud_connector(
         &self,
         provider: &str,
@@ -142,8 +137,8 @@ impl Db {
         })
     }
 
-    /// Record a failed probe. The previously known model list is kept: a
-    /// transient outage should not empty the picker.
+    /// Record a failed probe. The known model list is kept so a transient outage
+    /// doesn't empty the picker.
     pub fn set_cloud_error(&self, id: &str, error: &str) -> Result<()> {
         self.with(|conn| {
             conn.execute(

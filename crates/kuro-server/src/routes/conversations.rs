@@ -12,13 +12,20 @@ pub struct ListQuery {
     /// Free-text search across titles and message bodies.
     #[serde(default)]
     pub q: Option<String>,
+    /// Only the archived ones, for Settings → Archived Chats.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 pub async fn list_conversations(
     State(state): State<SharedState>,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Json<Value>> {
-    let conversations = state.db.list_conversations(query.q.as_deref())?;
+    let conversations = if query.archived {
+        state.db.list_archived_conversations()?
+    } else {
+        state.db.list_conversations(query.q.as_deref())?
+    };
     Ok(Json(json!({ "conversations": conversations })))
 }
 
@@ -70,8 +77,7 @@ pub async fn update_conversation(
         .ok_or_else(|| KuroError::not_found(format!("conversation `{id}`")))?;
 
     if let Some(title) = &request.title {
-        // A title set through the API is the user's choice, so mark it manual
-        // and stop automatic titling from overwriting it.
+        // A title set via the API is the user's choice: mark it manual so auto-titling skips it.
         state.db.set_conversation_title(&id, title, true)?;
     }
     if let Some(model_id) = &request.model_id {
@@ -105,10 +111,7 @@ pub struct ForkRequest {
     pub up_to_message_id: Option<String>,
 }
 
-/// Branch a conversation into a new one.
-///
-/// The original is never modified: forking is how you try a different direction
-/// without losing the one you already have.
+/// Branch a conversation into a new one; the original is never modified.
 pub async fn fork_conversation(
     State(state): State<SharedState>,
     Path(id): Path<String>,

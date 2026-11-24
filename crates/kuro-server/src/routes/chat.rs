@@ -1,3 +1,4 @@
+//! The native chat endpoint.
 
 use std::convert::Infallible;
 use std::time::Instant;
@@ -18,6 +19,7 @@ use kuro_core::KuroError;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::error::AppResult;
@@ -30,37 +32,49 @@ pub struct SendMessageRequest {
     pub content: String,
     #[serde(default)]
     pub model: Option<String>,
+    /// `low` | `balanced` | `high` | `max`.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Tool groups on for this message: `web`, `memory`. Absent means the
+    /// configured default.
     #[serde(default)]
     pub tools: Option<Vec<String>>,
+    /// Search before answering, regardless of whether the model would have asked.
     #[serde(default)]
     pub web_search: Option<bool>,
+    /// Skills the user named for this message by slug (what `/rust` in the composer does).
     #[serde(default)]
     pub skills: Option<Vec<String>>,
 }
 
+/// Send a message and stream the reply.
 pub async fn send_message(
     State(state): State<SharedState>,
     Path(conversation_id): Path<String>,
     Json(request): Json<SendMessageRequest>,
 ) -> AppResult<Response> {
-    if request.content.trim().is_empty() {
-        return Err(KuroError::bad_request("message content is empty").into());
-    }
+    let (events, _turn) = start_turn(&state, &conversation_id, request).await?;
+    Ok(Sse::new(ReceiverStream::new(events))
+        .keep_alive(KeepAlive::default())
+        .into_response())
+}
 
-    let conversation = state
-        .db
-        .get_conversation(&conversation_id)?
-        .ok_or_else(|| KuroError::not_found(format!("conversation `{conversation_id}`")))?;
+/// A turn's streamed events.
+pub type TurnEvents = mpsc::Receiver<Result<Event, Infallible>>;
 
-    let requested_model = request.model.as_deref().or(conversation.model_id.as_deref());
-    let target = resolve_target(&state, requested_model).await?;
+/// Persist the user's message and start the reply: everything `send_message` does short of
+/// answering over HTTP.
+pub async fn start_turn(
+    state: &SharedState,
+    conversation_id: &str,
+    request: SendMessageRequest,
+) -> Result<(TurnEvents, JoinHandle<Result<(), String>>), KuroError> {
+    let state = state.clone();
+    let conversation_id = conversation_id.to_string();
+    let (conversation, target, effort, groups) = prepare_turn(&state, &conversation_id, &request).await?;
     let model_id = target.recorded_id();
-
-    let effort = resolve_effort(&state, request.effort.as_deref(), &conversation)?;
-
-    let groups = resolve_groups(&state, &request)?;
+    // The switch being on is what makes a search happen up front; a model may
+    // still call the tool itself if the group is enabled.
     let search_first = request.web_search.unwrap_or(false) && groups.contains(&ToolGroup::Web);
 
     let is_first_message = state.db.list_messages(&conversation_id)?.is_empty();
@@ -81,9 +95,11 @@ pub async fn send_message(
 
     let mut messages = Vec::new();
 
+    // Memory goes in as a system turn ahead of the history so the model starts out knowing it.
     let memory_count = state.db.count_memories()?;
     if groups.contains(&ToolGroup::Memory) && memory_preload_enabled(&state.db)? {
         let saved = state.db.list_memories(memory::MAX_PRELOADED)?;
+        // What the user wrote about themselves goes in even when nothing has been saved.
         let about_you = settings::about_you(&state.db).unwrap_or(None);
         if let Some(preamble) = memory::preamble_with(about_you.as_deref(), &saved) {
             messages.push(json!({ "role": "system", "content": preamble }));
@@ -92,12 +108,16 @@ pub async fn send_message(
 
     messages.extend(history_to_messages(&state.db.list_messages(&conversation_id)?));
 
+    // The assistant row exists before generation so the client has an id to attach
+    // streamed text to and an interrupted reply is still visible.
     let assistant = state.db.insert_message(
         &conversation_id,
         &NewMessage {
             role: "assistant".to_string(),
             content: String::new(),
             model_id: Some(model_id.clone()),
+            // The provider whose allowance this turn spends, chosen by `resolve_target` and
+            // fixed for the turn: a provider that refuses is set aside for the next message.
             provider_slug: target.upstream().map(str::to_string),
             ..Default::default()
         },
@@ -111,7 +131,7 @@ pub async fn send_message(
     let assistant_id = assistant.id.clone();
     let task_conversation_id = conversation_id.clone();
 
-    tokio::spawn(async move {
+    let turn = tokio::spawn(async move {
         let outcome = run_turn(
             &task_state,
             Turn {
@@ -131,7 +151,7 @@ pub async fn send_message(
         )
         .await;
 
-        if let Err(error) = outcome {
+        if let Err(error) = &outcome {
             tracing::warn!(%error, "generation failed");
             let _ = task_state.db.complete_message(
                 &assistant_id,
@@ -143,27 +163,49 @@ pub async fn send_message(
             );
             let _ = send_event(&sender, "error", json!({ "message": error.to_string() })).await;
         }
+        outcome.map_err(|error| error.to_string())
     });
 
-    Ok(Sse::new(ReceiverStream::new(receiver))
-        .keep_alive(KeepAlive::default())
-        .into_response())
+    Ok((receiver, turn))
 }
 
+/// Rewrite a message and answer again from that point.
 pub async fn edit_message(
     State(state): State<SharedState>,
     Path((conversation_id, message_id)): Path<(String, String)>,
     Json(request): Json<SendMessageRequest>,
 ) -> AppResult<Response> {
-    if request.content.trim().is_empty() {
-        return Err(KuroError::bad_request("message content is empty").into());
-    }
-
+    prepare_turn(&state, &conversation_id, &request).await?;
     state.db.delete_from(&conversation_id, &message_id)?;
 
+    // The rest (persistence, titling, tools, streaming) is identical to sending a
+    // new message, so reuse that path rather than a parallel one that can drift.
     send_message(State(state), Path(conversation_id), Json(request)).await
 }
 
+/// The checks that can refuse a turn, done before anything is written.
+async fn prepare_turn(
+    state: &SharedState,
+    conversation_id: &str,
+    request: &SendMessageRequest,
+) -> Result<(kuro_core::db::Conversation, ChatTarget, Effort, Vec<ToolGroup>), KuroError> {
+    if request.content.trim().is_empty() {
+        return Err(KuroError::bad_request("message content is empty"));
+    }
+
+    let conversation = state
+        .db
+        .get_conversation(conversation_id)?
+        .ok_or_else(|| KuroError::not_found(format!("conversation `{conversation_id}`")))?;
+
+    let requested_model = request.model.as_deref().or(conversation.model_id.as_deref());
+    let target = resolve_target(state, requested_model).await?;
+    let effort = resolve_effort(state, request.effort.as_deref(), &conversation)?;
+    let groups = resolve_groups(state, request)?;
+    Ok((conversation, target, effort, groups))
+}
+
+/// Everything about one turn that does not change between tool rounds.
 struct Turn<'a> {
     conversation_id: &'a str,
     assistant_id: &'a str,
@@ -171,18 +213,26 @@ struct Turn<'a> {
     effort: Effort,
     groups: Vec<ToolGroup>,
     search_first: bool,
+    /// Saved memories, so the prompt can say whether there are any.
     memory_count: i64,
+    /// The user's message, used as the up-front search query.
     query: &'a str,
+    /// Skills named on this message with `/`, which the brief must carry.
     pinned_skills: &'a [String],
+    /// The conversation's coding workspace; `None` for an ordinary chat, which cannot reach a file.
     workspace: Option<TurnWorkspace>,
 }
 
+/// A workspace as one turn needs it: the enforcement object, plus the two
+/// strings the model's brief names it by.
 struct TurnWorkspace {
     workspace: Workspace,
     name: String,
     root_display: String,
 }
 
+/// How hard to think this turn: the request's choice, else the starting effort configured in
+/// Settings for this surface.
 fn resolve_effort(
     state: &SharedState,
     requested: Option<&str>,
@@ -200,6 +250,7 @@ fn resolve_effort(
     Ok(settings::default_effort(&state.db, surface).unwrap_or_default())
 }
 
+/// Look up the workspace a conversation belongs to.
 fn resolve_workspace(state: &SharedState, conversation: &kuro_core::db::Conversation) -> Option<TurnWorkspace> {
     let workspace_id = conversation.workspace_id.as_deref()?;
     let record = state.db.get_workspace(workspace_id).ok().flatten()?;
@@ -215,6 +266,7 @@ fn resolve_workspace(state: &SharedState, conversation: &kuro_core::db::Conversa
     })
 }
 
+/// Run one turn to completion, including any tool rounds.
 async fn run_turn(
     state: &SharedState,
     turn: Turn<'_>,
@@ -231,6 +283,7 @@ async fn run_turn(
     let base_url = base_url_for(state, &turn.target).await?;
 
     if !tool_set.is_empty() {
+        // Logged because "why did it not use the tool" usually has the answer "it was not offered".
         tracing::debug!(
             count = tool_set.len(),
             tools = ?tool_set.names(),
@@ -242,10 +295,12 @@ async fn run_turn(
     let mut tool_trail: Vec<Value> = Vec::new();
     let mut used_web_search = false;
 
+    // The deterministic search, for models that would not have asked.
     let mut search_ran = false;
     if turn.search_first {
         match intent::decide(turn.query) {
             intent::SearchDecision::Skip(reason) => {
+                // Deliberately not a notice: nothing went wrong.
                 tracing::debug!(reason = reason.explain(), "no up-front search for this message");
             }
             intent::SearchDecision::Search(query) => {
@@ -260,6 +315,8 @@ async fn run_turn(
                         );
                     }
                     Err(error) => {
+                        // Report the failure and continue without the search; the prompt must not
+                        // then claim results are present.
                         let _ =
                             send_event(sender, "notice", json!({ "message": error.to_string() }))
                                 .await;
@@ -269,9 +326,11 @@ async fn run_turn(
         }
     }
 
+    // The brief goes in last so it can describe what happened, and at index 0 so it is read first.
     let tool_names: Vec<String> = tool_set.names().into_iter().map(str::to_string).collect();
     let mcp_servers = tool_set.mcp_server_names();
 
+    // What the effort dial buys this turn: a tool budget and the expertise this project justifies.
     let chosen_skills = skills::enabled(&state.db).unwrap_or_default();
     let surface = match &turn.workspace {
         Some(_) => orchestrate::Surface::Code,
@@ -286,25 +345,36 @@ async fn run_turn(
                 .as_ref()
                 .map(|held| (held.workspace.root.as_path(), held.workspace.mode)),
             auto: settings::auto_orchestrate(&state.db, surface).unwrap_or(true),
+            // What was asked, so a skill about the subject outranks one merely switched on
+            // when the brief runs out of room.
             message: turn.query,
+            // Skills named explicitly, which outrank everything.
             pinned: turn.pinned_skills,
         },
         &chosen_skills,
     );
     tracing::debug!(plan = %orchestration.summary, "effort resolved");
 
+    // The plan's list, not the user's selection plus additions: the plan ranks the enabled set
+    // against the message and sends what fits, so a switch means "Kuro may use this", not "put this
+    // in every message".
     let active_skills = orchestration.skills.clone();
 
+    // Describe the workspace to the model exactly as it is enforced, so the brief
+    // never claims access the tools would refuse or withholds access they allow.
     let workspace_brief = turn.workspace.as_ref().map(|held| prompt::WorkspaceBrief {
         name: &held.name,
         root: &held.root_display,
         mode: held.workspace.mode,
     });
+    // A project's standing instructions apply to every conversation in it.
     let project = state
         .db
         .project_for_conversation(turn.conversation_id)
         .unwrap_or(None);
     let brief = prompt::build(&prompt::PromptContext {
+        // The name the model is known by, not Kuro's internal id: a provider model's
+        // recorded id carries a connector UUID that tells it nothing and wastes tokens.
         model_id: turn.target.wire_model(),
         is_remote: turn.target.is_remote(),
         web_enabled: turn.groups.contains(&ToolGroup::Web),
@@ -314,6 +384,8 @@ async fn run_turn(
         tool_names: &tool_names,
         mcp_servers: &mcp_servers,
         workspace: workspace_brief,
+        // Only new information in an ordinary chat; inside a workspace the file line already
+        // describes access to that folder.
         projects_readable: workspace_brief.is_none()
             && turn.groups.contains(&ToolGroup::Projects),
         skills: &active_skills,
@@ -330,6 +402,7 @@ async fn run_turn(
 
     let max_rounds = orchestration.max_tool_rounds;
     for round in 0..=max_rounds {
+        // The last round withholds tools to force an answer rather than a call with no room to run.
         let offer_tools = round < max_rounds;
 
         let step = stream_once(
@@ -386,6 +459,7 @@ async fn run_turn(
                 "name": call.name,
                 "arguments": call.arguments,
                 "ok": !outcome.is_error,
+                // Enough for the inspector without storing whole pages in every conversation row.
                 "preview": preview(&outcome.content),
             }));
 
@@ -404,6 +478,8 @@ async fn run_turn(
         }
     }
 
+    // Measured from the turn's start, so it includes time in tools before the first
+    // token: the wait the person experienced.
     let ttft_ms = aggregate
         .first_token_at
         .map(|at| at.duration_since(started).as_millis() as i64);
@@ -426,9 +502,13 @@ async fn run_turn(
     .await
 }
 
+/// How many top results are opened and read in full.
 const PAGES_TO_READ: usize = 3;
+/// Characters kept from each page that is read.
 const CHARS_PER_PAGE: usize = 4_000;
 
+/// Search before the model has said anything, read the best results, and describe
+/// what happened to the client.
 async fn upfront_search(
     state: &SharedState,
     query: &str,
@@ -446,7 +526,7 @@ async fn upfront_search(
     let results =
         web_search::search(&state.outbound, &config, query, web_search::DEFAULT_MAX_RESULTS).await?;
 
-    let pages = read_top_pages(state, &results).await;
+    let pages = read_top_pages(&results).await;
 
     let _ = send_event(
         sender,
@@ -489,14 +569,14 @@ async fn upfront_search(
     Ok((context, results.iter().map(WebSource::from).collect()))
 }
 
+/// Open the top few results and extract their text.
 async fn read_top_pages(
-    state: &SharedState,
     results: &[web_search::SearchResult],
 ) -> Vec<fetch::FetchedPage> {
     let reads = results
         .iter()
         .take(PAGES_TO_READ)
-        .map(|result| fetch::fetch_url(&state.outbound, &result.url));
+        .map(|result| fetch::fetch_url(&result.url));
 
     futures::future::join_all(reads)
         .await
@@ -512,6 +592,7 @@ async fn read_top_pages(
         .collect()
 }
 
+/// One request to the engine or provider, streamed.
 #[derive(Default)]
 struct Step {
     content: String,
@@ -521,11 +602,13 @@ struct Step {
     prompt_tokens: Option<i64>,
     completion_tokens: Option<i64>,
     first_token_at: Option<Instant>,
+    /// When the last token arrived, to separate output time from time waiting on tools.
     last_token_at: Option<Instant>,
     client_listening: bool,
 }
 
 impl Step {
+    /// Milliseconds this round spent streaming output.
     fn generation_ms(&self) -> i64 {
         match (self.first_token_at, self.last_token_at) {
             (Some(first), Some(last)) => last.duration_since(first).as_millis() as i64,
@@ -534,13 +617,16 @@ impl Step {
     }
 }
 
+/// Numbers accumulated across every round of a turn.
 #[derive(Default)]
 struct Aggregate {
     finish_reason: Option<String>,
     prompt_tokens: Option<i64>,
+    /// Every round's prompt, summed. What the allowance paid for.
     prompt_tokens_total: Option<i64>,
     completion_tokens: Option<i64>,
     first_token_at: Option<Instant>,
+    /// Summed across rounds, excluding the gaps in which tools were running.
     generation_ms: i64,
     client_listening: bool,
     rounds: usize,
@@ -550,7 +636,11 @@ impl Aggregate {
     fn absorb(&mut self, step: &Step) {
         self.rounds += 1;
         self.finish_reason = step.finish_reason.clone().or(self.finish_reason.take());
+        // The prompt grows each round as tool results are appended, so the last
+        // round's count describes what was processed.
         self.prompt_tokens = step.prompt_tokens.or(self.prompt_tokens);
+        // Every round's prompt was sent and charged, so sum them too: that is what an
+        // allowance paid, and the last round alone understates an agentic turn.
         self.prompt_tokens_total = match (self.prompt_tokens_total, step.prompt_tokens) {
             (Some(held), Some(new)) => Some(held + new),
             (held, new) => new.or(held),
@@ -582,12 +672,14 @@ async fn stream_once(
         "temperature": params.temperature,
         "top_p": params.top_p,
         "max_tokens": params.max_tokens,
+        // Ask for the final usage block so token counts are the engine's own.
         "stream_options": { "include_usage": true },
     });
 
     let quirks = turn.target.quirks();
 
     if let Some(mut tools) = tools {
+        // Some providers reject the whole request over a schema keyword every Kuro built-in emits.
         if quirks.strip_schema_keywords {
             kuro_core::wire::strip_schema_keywords(&mut tools);
         }
@@ -607,8 +699,10 @@ async fn stream_once(
             let mut request = state
                 .outbound
                 .post(quirks.chat_url(base_url))
+                // Anthropic's compatibility endpoint wants its version header even in OpenAI shape.
                 .header("anthropic-version", "2023-06-01");
 
+            // Absent rather than empty: a keyless shared endpoint reads `Bearer ` as malformed.
             if let Some(value) = authorization {
                 request = request.header(reqwest::header::AUTHORIZATION, value);
             }
@@ -633,7 +727,10 @@ async fn stream_once(
                 detail.trim()
             )),
             ChatTarget::Remote { label, connector_id, model, .. } => {
+                // A free provider that refuses is set aside so the next message goes elsewhere.
                 note_free_trouble(state, turn.target.upstream(), model, status.as_u16());
+                // Likewise one free model on a provider that has run out of allowance, so later
+                // messages skip a model that already said no.
                 state.providers.note_trouble(connector_id, model, status.as_u16());
 
                 KuroError::other(format!(
@@ -717,6 +814,7 @@ async fn stream_once(
     Ok(step)
 }
 
+/// Remember that a free provider (or one of its models) refused, when the target was one.
 fn note_free_trouble(
     state: &SharedState,
     upstream: Option<&str>,
@@ -726,16 +824,20 @@ fn note_free_trouble(
     let Some(trouble) = kuro_core::free::Trouble::from_status(status) else {
         return;
     };
+    // The provider the request actually went to, carried on the target.
     let Some(slug) = upstream.filter(|slug| kuro_core::free::find(slug).is_some()) else {
         return;
     };
 
+    // A 404 is about the model, not the provider: NVIDIA NIM provisions several models per key and
+    // answers 404 for one the key lacks.
     if trouble.stale_catalogue() {
         state.free.note_model_trouble(slug, model, trouble);
     } else {
         state.free.note_trouble(slug, trouble);
     }
 
+    // Written through, so the picker still greys this row after a restart.
     crate::routes::free::save_troubles(state);
 }
 
@@ -777,6 +879,7 @@ async fn persist_and_finish(
         }
     });
 
+    // Persist even a reply cut short: discarding partial output would lose work the user watched.
     let completion = MessageCompletion {
         content: content.clone(),
         reasoning_content: (!reasoning.is_empty()).then_some(reasoning),
@@ -832,6 +935,8 @@ async fn persist_and_finish(
     Ok(())
 }
 
+/// Where to send the request. A local model needs its engine started first (the
+/// slow, fallible part); a provider needs only its URL.
 async fn base_url_for(state: &SharedState, target: &ChatTarget) -> Result<String, KuroError> {
     match target {
         ChatTarget::Local { model_id } => state.engines.ensure_base_url(model_id).await,
@@ -839,6 +944,7 @@ async fn base_url_for(state: &SharedState, target: &ChatTarget) -> Result<String
     }
 }
 
+/// Tool groups for this message: what was asked for, else the configured default.
 fn resolve_groups(
     state: &SharedState,
     request: &SendMessageRequest,
@@ -852,6 +958,7 @@ fn resolve_groups(
     }
 }
 
+/// A short excerpt, for the inspector and for error messages.
 fn preview(text: &str) -> String {
     const LIMIT: usize = 300;
     let trimmed = text.trim();
@@ -872,6 +979,7 @@ async fn send_event(
         .await
 }
 
+/// Generation speed over the time actually spent producing output.
 fn tokens_per_second(completion_tokens: Option<i64>, generation_ms: i64) -> Option<f64> {
     let tokens = completion_tokens? as f64;
     if tokens <= 0.0 || generation_ms <= 0 {
@@ -886,6 +994,7 @@ mod tests {
 
     #[test]
     fn speed_is_measured_over_time_spent_producing_output() {
+        // 100 tokens streamed across one second.
         let rate = tokens_per_second(Some(100), 1000).expect("rate");
         assert!((rate - 100.0).abs() < 0.1, "got {rate}");
     }
@@ -898,6 +1007,7 @@ mod tests {
 
     #[test]
     fn speed_is_absent_rather_than_absurd_when_there_is_nothing_to_measure() {
+        // A tool round can leave first and last token in the same instant: no rate from that.
         assert!(
             tokens_per_second(Some(20), 0).is_none(),
             "one sample is not a rate"
@@ -909,11 +1019,13 @@ mod tests {
         let mut aggregate = Aggregate::default();
         let start = Instant::now();
 
+        // A round that asked for a tool and streamed no text at all.
         aggregate.absorb(&Step {
             completion_tokens: Some(12),
             client_listening: true,
             ..Default::default()
         });
+        // The answering round, streamed over a measurable span.
         aggregate.absorb(&Step {
             completion_tokens: Some(8),
             first_token_at: Some(start),

@@ -1,9 +1,4 @@
 //! Resolving what to download from a Hugging Face repository.
-//!
-//! Kuro never hardcodes `.gguf` filenames. The user (or the curated list) names
-//! a repository and a preferred quantization, and the exact file is looked up
-//! against the repository tree at pull time. That keeps the catalog working
-//! when a repository re-uploads or renames its files.
 
 use serde::Deserialize;
 
@@ -46,8 +41,8 @@ pub fn parse_model_ref(raw: &str) -> Result<ModelRef> {
         None => without_host,
     };
 
-    // A quantization suffix is the part after the last colon, and never
-    // contains a slash — that distinguishes it from anything URL-shaped.
+    // A quantization suffix is the part after the last colon and never contains
+    // a slash, which distinguishes it from a URL.
     let (name, quant) = match without_host.rsplit_once(':') {
         Some((head, tail)) if !tail.contains('/') && !tail.is_empty() && !head.is_empty() => {
             (head, Some(tail.to_string()))
@@ -102,8 +97,8 @@ struct LfsInfo {
 pub struct GgufFile {
     pub filename: String,
     pub size: u64,
-    /// Present for LFS-tracked files, which is how large weights are stored.
-    /// When present it is used to verify the download.
+    /// Present for LFS-tracked files (how large weights are stored); used to
+    /// verify the download.
     pub sha256: Option<String>,
 }
 
@@ -160,9 +155,8 @@ pub fn choose_gguf(files: &[GgufFile], preferred_quant: Option<&str>) -> Result<
         ));
     }
 
-    // Weights above ~50 GB are published as numbered shards. Loading those needs
-    // multi-part handling Kuro does not have yet, so say so plainly instead of
-    // downloading one shard and producing a model that cannot load.
+    // Weights above ~50 GB are published as numbered shards, which Kuro cannot
+    // load yet; say so rather than download one shard of an unloadable model.
     let single_part: Vec<&GgufFile> = files.iter().filter(|f| !is_split_part(&f.filename)).collect();
     if single_part.is_empty() {
         return Err(KuroError::model(
@@ -192,8 +186,7 @@ pub fn choose_gguf(files: &[GgufFile], preferred_quant: Option<&str>) -> Result<
         }
     }
 
-    // Nothing recognisable: take the smallest file, which is the safest default
-    // on a machine whose memory we do not want to overrun.
+    // Nothing recognisable: take the smallest file, the safest default for memory.
     let smallest = single_part
         .iter()
         .min_by_key(|file| file.size)

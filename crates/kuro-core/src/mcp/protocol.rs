@@ -1,20 +1,14 @@
-//! The wire format of the Model Context Protocol.
-//!
-//! MCP is JSON-RPC 2.0 with a fixed opening exchange: the client sends
-//! `initialize`, the server answers with what it supports, the client confirms
-//! with an `initialized` notification, and only then are `tools/list` and
-//! `tools/call` allowed. Getting that order wrong is the most common reason a
-//! server refuses to talk, so the handshake is expressed here rather than being
-//! open-coded in each transport.
+//! The wire format of the Model Context Protocol: JSON-RPC 2.0 with a fixed opening exchange
+//! (`initialize`, the server's reply, an `initialized` notification), after which `tools/list` and
+//! `tools/call` are allowed.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{KuroError, Result};
 
-/// Protocol revision Kuro speaks. A server that only supports an older one
-/// answers with that version, which is accepted — the surface Kuro uses (tools)
-/// has not changed across these revisions.
+/// Protocol revision Kuro speaks. A server answering with an older one is
+/// accepted; the tools surface is unchanged across revisions.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
 pub const METHOD_INITIALIZE: &str = "initialize";
@@ -22,8 +16,7 @@ pub const METHOD_INITIALIZED: &str = "notifications/initialized";
 pub const METHOD_TOOLS_LIST: &str = "tools/list";
 pub const METHOD_TOOLS_CALL: &str = "tools/call";
 
-/// A JSON-RPC request. `id` is absent for a notification, which is how the
-/// protocol distinguishes "answer me" from "just so you know".
+/// A JSON-RPC request. `id` is absent for a notification (no reply expected).
 pub fn request(id: Option<u64>, method: &str, params: Value) -> Value {
     match id {
         Some(id) => json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
@@ -35,8 +28,7 @@ pub fn request(id: Option<u64>, method: &str, params: Value) -> Value {
 pub fn initialize_params(client_name: &str, client_version: &str) -> Value {
     json!({
         "protocolVersion": PROTOCOL_VERSION,
-        // Kuro consumes tools; it does not offer sampling or roots back to the
-        // server, and says so rather than claiming capabilities it lacks.
+        // Kuro only consumes tools; no sampling or roots.
         "capabilities": { "tools": {} },
         "clientInfo": { "name": client_name, "version": client_version },
     })
@@ -48,8 +40,7 @@ pub struct ServerInfo {
     pub name: Option<String>,
     pub version: Option<String>,
     pub protocol_version: Option<String>,
-    /// Whether the server declared a `tools` capability. A server without one has
-    /// nothing Kuro can use, which is worth saying plainly.
+    /// Whether the server declared a `tools` capability.
     pub supports_tools: bool,
 }
 
@@ -80,17 +71,15 @@ pub struct RemoteTool {
     /// JSON Schema. Absent on servers that take no arguments.
     #[serde(default, rename = "inputSchema")]
     pub input_schema: Option<Value>,
-    /// Optional human-facing name, newer than `name` and not always present.
+    /// Optional human-facing name.
     #[serde(default)]
     pub title: Option<String>,
 }
 
 impl RemoteTool {
-    /// A schema an engine will accept.
-    ///
-    /// Engines reject a `parameters` value that is not an object schema, and
-    /// servers do sometimes omit `inputSchema` entirely, so a valid empty schema
-    /// is substituted rather than passing `null` through.
+    /// A schema an engine will accept: engines reject a non-object `parameters`, and servers
+    /// sometimes omit `inputSchema`, so an empty object schema is substituted (and a missing `type`
+    /// added).
     pub fn schema(&self) -> Value {
         match &self.input_schema {
             Some(Value::Object(map)) if map.contains_key("type") => Value::Object(map.clone()),
@@ -119,8 +108,7 @@ pub fn parse_tools(result: &Value) -> Vec<RemoteTool> {
         .map(|tools| {
             tools
                 .iter()
-                // A single malformed entry should cost that one tool, not the
-                // whole server.
+                // A malformed entry costs only that tool.
                 .filter_map(|tool| serde_json::from_value::<RemoteTool>(tool.clone()).ok())
                 .filter(|tool| !tool.name.trim().is_empty())
                 .collect()
@@ -128,26 +116,22 @@ pub fn parse_tools(result: &Value) -> Vec<RemoteTool> {
         .unwrap_or_default()
 }
 
-/// Flatten a `tools/call` result into text.
-///
-/// The result is a list of content blocks which may be text, images, or embedded
-/// resources. Only text is usable by a text model, so the rest is described
-/// rather than dropped silently — a model told "[image]" can at least say so.
+/// Flatten a `tools/call` result into text. Non-text blocks (images, audio,
+/// resources) are described rather than dropped, so the model can say they exist.
 pub fn parse_tool_result(result: &Value) -> (String, bool) {
     let is_error = result
         .get("isError")
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    // Newer servers may return a structured payload instead of content blocks.
+    // Newer servers may return structured content instead of blocks.
     if let Some(structured) = result.get("structuredContent").filter(|v| !v.is_null()) {
         let rendered = serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string());
         return (rendered, is_error);
     }
 
     let Some(blocks) = result.get("content").and_then(Value::as_array) else {
-        // No content at all is a valid answer for a tool whose whole job is a
-        // side effect.
+        // Valid for a tool that exists only for its side effect.
         return ("(the tool returned no content)".to_string(), is_error);
     };
 
@@ -206,10 +190,8 @@ pub fn read_response(envelope: &Value) -> Result<Value> {
         .ok_or_else(|| KuroError::other("the server's reply had neither a result nor an error"))
 }
 
-/// Whether an envelope is the answer to the request that carried `id`.
-///
-/// Servers interleave notifications and requests of their own with their replies,
-/// so a reader has to skip anything that is not the response it is waiting for.
+/// Whether an envelope answers request `id`. Servers interleave their own
+/// notifications and requests with replies, which a reader must skip.
 pub fn is_response_to(envelope: &Value, id: u64) -> bool {
     envelope.get("id").and_then(Value::as_u64) == Some(id)
 }

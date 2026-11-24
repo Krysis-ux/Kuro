@@ -1,10 +1,5 @@
-//! Storage for skills the user added themselves.
-//!
-//! Separate from the built-in catalogue, which is part of the build and lives in
-//! [`crate::skills::SKILLS`]. The difference is not where the text sits, it is
-//! what may be done to it: a built-in cannot be deleted and does not need to be,
-//! and one of these can turn out to be nonsense on import and has to be
-//! removable in one click.
+//! Storage for skills the user added themselves. Separate from the built-in
+//! catalogue ([`crate::skills::SKILLS`]) because these must be removable.
 
 use rusqlite::{params, Row};
 use serde::Serialize;
@@ -13,11 +8,6 @@ use super::{now, Db};
 use crate::Result;
 
 /// Upper bound on one skill's instructions.
-///
-/// A skill is appended to the system prompt, so its size is paid on every turn
-/// it is on. Some repositories keep a whole reference manual in a `SKILL.md`;
-/// that is a document, not a skill, and pasting one into every prompt is how a
-/// context window disappears without anybody choosing to spend it.
 pub const MAX_INSTRUCTION_CHARS: usize = 12_000;
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,23 +38,8 @@ impl Db {
         })
     }
 
-    pub fn get_user_skill(&self, slug: &str) -> Result<Option<UserSkillRecord>> {
-        self.with(|conn| {
-            let mut statement = conn.prepare(
-                "SELECT slug, name, blurb, category, instructions, approx_tokens, source,
-                        created_at, updated_at
-                 FROM user_skills WHERE slug = ?1",
-            )?;
-            let mut rows = statement.query_map(params![slug], read)?;
-            Ok(rows.next().transpose()?)
-        })
-    }
-
-    /// Store a skill, replacing one of the same slug.
-    ///
-    /// Replacing rather than refusing, because re-importing a repository is how
-    /// somebody updates a skill they got from it, and the alternative is asking
-    /// them to delete twenty rows by hand first.
+    /// Store a skill, replacing one of the same slug (re-importing a repository
+    /// updates its skills).
     pub fn put_user_skill(&self, skill: &UserSkillRecord) -> Result<()> {
         let stamp = now();
         self.with(|conn| {
@@ -154,8 +129,7 @@ mod tests {
 
     #[test]
     fn re_importing_replaces_rather_than_duplicating() {
-        // Pulling the same repository again is how a skill gets updated. Twenty
-        // duplicate rows would be the alternative.
+        // Pulling the same repository again updates a skill; don't duplicate rows.
         let db = Db::open_in_memory().expect("db");
 
         db.put_user_skill(&record("taste", "Taste")).expect("put");

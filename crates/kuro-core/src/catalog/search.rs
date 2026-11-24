@@ -1,13 +1,5 @@
-//! Finding GGUF models on Hugging Face.
-//!
-//! The Models page previously offered one input that accepted a repository path,
-//! which is only useful if you already know what you want. This searches the Hub
-//! from inside Kuro instead, filtered to GGUF so nothing in the results is a model
-//! that cannot run here.
-//!
-//! Results carry a size and a fit verdict, because "will this run on my machine"
-//! is the only question that matters at the point of choosing, and the Hub cannot
-//! answer it.
+//! Finding GGUF models on Hugging Face from inside Kuro, filtered to GGUF so every result can run
+//! here.
 
 use serde::{Deserialize, Serialize};
 
@@ -59,11 +51,11 @@ pub struct SearchHit {
     pub quants: Vec<String>,
     /// Params inferred from the name, when the name says so.
     pub param_count: Option<String>,
-    /// True when the repository needs a licence accepted before it can be
-    /// downloaded, which Kuro cannot do on the user's behalf.
+    /// True when the repository needs a licence accepted first, which Kuro cannot
+    /// do on the user's behalf.
     pub gated: bool,
-    /// Set when the repository publishes only multi-part weights, which cannot be
-    /// loaded yet. Shown rather than hidden so the absence is explained.
+    /// Set when only multi-part weights are published (not loadable yet); shown
+    /// rather than hidden so the absence is explained.
     pub split_only: bool,
 }
 
@@ -87,9 +79,8 @@ pub async fn search_gguf(
             ("limit", &limit.to_string()),
             ("sort", "downloads"),
             ("direction", "-1"),
-            // The file list is what makes a result useful — it is where the
-            // quantizations come from — so it is requested up front rather than
-            // with a follow-up call per repository.
+            // Request the file list up front (it is where quantizations come from)
+            // rather than one follow-up call per repository.
             ("full", "true"),
         ])
         .send()
@@ -223,12 +214,7 @@ fn param_count_from_name(name: &str) -> Option<String> {
         .map(|token| token.to_ascii_uppercase())
 }
 
-/// Estimate whether a hit will run here, using the size of its smallest
-/// single-file quantization.
-///
-/// Search results carry no file sizes without a request per repository, so the
-/// estimate is derived from the parameter count and quantization instead. It is
-/// approximate, and the UI says so.
+/// Estimate whether a hit will run here from its smallest single-file quantization.
 pub fn estimate_fit(hit: &SearchHit, hardware: &HardwareInfo) -> Option<fit::FitEstimate> {
     let params = parse_billions(hit.param_count.as_deref()?)?;
     let quant = hit.quants.first().map(String::as_str).unwrap_or("Q4_K_M");

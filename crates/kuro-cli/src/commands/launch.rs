@@ -1,3 +1,4 @@
+//! `kuro launch` — run another coding tool against a Kuro model.
 
 use std::process::Command;
 
@@ -9,19 +10,28 @@ const DIM: &str = "\x1b[2m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
+/// A tool Kuro knows how to point at itself.
 struct Launchable {
+    /// What the user types after `kuro launch`.
     name: &'static str,
+    /// The executable to look for on the PATH.
     binary: &'static str,
+    /// Which API shape it speaks, which decides the variables set for it.
     wire: Wire,
+    /// Where to get it, for when it is not installed.
     install: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Wire {
+    /// Anthropic Messages, read from `ANTHROPIC_BASE_URL`.
     Anthropic,
+    /// OpenAI, read from `OPENAI_BASE_URL`.
     OpenAi,
 }
 
+/// What can be launched today. Short on purpose: every entry has had its
+/// environment variables checked against the tool's own documentation.
 const LAUNCHABLE: &[Launchable] = &[
     Launchable {
         name: "claude",
@@ -60,6 +70,7 @@ pub async fn launch(
         bail!("unknown application");
     };
 
+    // The daemon must be up first, or the tool fails on its first message with no mention of Kuro.
     client.ensure_running().await?;
 
     let Some(path) = which(target.binary) else {
@@ -68,6 +79,8 @@ pub async fn launch(
         bail!("`{}` not found", target.binary);
     };
 
+    // Checked before launching: a bad model name would otherwise fail inside the
+    // other tool's UI, where it looks like that tool is broken.
     let model = match model {
         Some(name) => {
             verify_model(client, &name).await?;
@@ -91,6 +104,8 @@ pub async fn launch(
     match target.wire {
         Wire::Anthropic => {
             command.env("ANTHROPIC_BASE_URL", &base);
+            // Kuro listens on loopback with no authentication, so this is a placeholder,
+            // not a secret; the client refuses to start without one.
             command.env("ANTHROPIC_AUTH_TOKEN", "kuro-local");
             command.env("ANTHROPIC_API_KEY", "kuro-local");
             if let Some(model) = &model {
@@ -106,6 +121,8 @@ pub async fn launch(
         }
     }
 
+    // Replaces this process so the launched tool owns the terminal completely
+    // (key handling, resize, exit code).
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -120,6 +137,7 @@ pub async fn launch(
     }
 }
 
+/// Fail early on a model name Kuro cannot resolve.
 async fn verify_model(client: &KuroClient, model: &str) -> Result<()> {
     let listing = client.get("/api/models").await?;
 
@@ -165,6 +183,7 @@ fn printly_list() {
     }
 }
 
+/// Where a program is on the PATH, if it is.
 fn which(binary: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
@@ -198,6 +217,7 @@ mod tests {
 
     #[test]
     fn every_launchable_says_where_to_get_it() {
+        // Without an install URL, a missing tool is a dead end.
         for entry in LAUNCHABLE {
             assert!(entry.install.starts_with("https://"), "{}", entry.name);
             assert!(!entry.binary.is_empty());
@@ -216,6 +236,7 @@ mod tests {
     #[test]
     fn a_program_that_is_not_on_the_path_is_not_found() {
         assert!(which("kuro-definitely-not-a-real-program").is_none());
+        // And something every system has, is.
         assert!(which("sh").is_some());
     }
 }

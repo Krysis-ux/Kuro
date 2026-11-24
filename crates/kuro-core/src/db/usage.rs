@@ -1,23 +1,14 @@
-//! What each provider's allowance has actually been spent on.
+//! What each provider's allowance has been spent on.
 //!
-//! Kuro records tokens per message and never added them up, so the free-models
-//! screen could say which keys were stored and nothing at all about what they
-//! had cost. This is the first aggregation in the database.
+//! The numbers are a floor:
 //!
-//! ## What these numbers are, and are not
+//! * A provider that sends no `usage` block (several free tiers) leaves both
+//!   columns NULL: the turn is counted but its tokens are not, which is why
+//!   [`ProviderUsage`] carries `unreported_turns`.
+//! * Subagent turns are never written as messages, so they are not seen at all.
 //!
-//! They are a floor. Two things spend an allowance without appearing here:
-//!
-//! * A provider that sends no `usage` block at all — several free tiers do not
-//!   — leaves both columns NULL, so the turn is counted but its tokens are not.
-//!   That is why [`ProviderUsage`] carries `unreported_turns`: a number the user
-//!   can see and judge beats a sentence hedging one they cannot.
-//! * Subagent turns are never written as messages, so they are invisible here
-//!   entirely.
-//!
-//! Forked conversations are excluded by construction rather than by a filter:
-//! the fork copies a message's token counts, for the request inspector, but not
-//! its `provider_slug` — and everything below keys on the slug being present.
+//! Forked conversations are excluded because a fork copies token counts but not
+//! `provider_slug`, and every query here keys on the slug.
 
 use rusqlite::params;
 use serde::Serialize;
@@ -47,15 +38,57 @@ impl ProviderUsage {
     }
 }
 
+/// One model's spend inside a window, local or remote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsage {
+    /// What the turn asked for: a local model, `provider/model`, or a pool such as `free:auto`.
+    pub model_id: String,
+    pub turns: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    /// Turns whose model sent no counts, so the totals are a floor.
+    pub unreported_turns: i64,
+}
+
 impl Db {
+    /// Tokens recorded against each model in `[from, to)`, biggest first.
+    pub fn usage_by_model(&self, from: &str, to: &str) -> Result<Vec<ModelUsage>> {
+        self.with(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT m.model_id,
+                        COUNT(*) AS turns,
+                        COALESCE(SUM(COALESCE(m.usage_prompt_tokens_total,
+                                              m.usage_prompt_tokens)), 0) AS prompt_tokens,
+                        COALESCE(SUM(m.usage_completion_tokens), 0)       AS completion_tokens,
+                        SUM(CASE WHEN m.usage_completion_tokens IS NULL
+                                 THEN 1 ELSE 0 END)                       AS unreported
+                   FROM messages m
+                   JOIN conversations c ON c.id = m.conversation_id
+                  WHERE m.role = 'assistant'
+                    AND m.model_id IS NOT NULL
+                    AND c.forked_from_id IS NULL
+                    AND m.created_at >= ?1
+                    AND m.created_at <  ?2
+                  GROUP BY m.model_id
+                  ORDER BY prompt_tokens + completion_tokens DESC",
+            )?;
+
+            let rows = statement.query_map(params![from, to], |row| {
+                Ok(ModelUsage {
+                    model_id: row.get("model_id")?,
+                    turns: row.get("turns")?,
+                    prompt_tokens: row.get("prompt_tokens")?,
+                    completion_tokens: row.get("completion_tokens")?,
+                    unreported_turns: row.get("unreported")?,
+                })
+            })?;
+
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+    }
+
     /// Tokens recorded against each provider in `[from, to)`.
-    ///
-    /// The bounds are RFC 3339 strings in the same shape `created_at` is
-    /// written in, so this is a range scan over `idx_messages_usage` rather
-    /// than a table scan. They are computed by the caller from the *user's* own
-    /// clock: a day that rolled over at UTC midnight is somebody else's day, and
-    /// for anyone west of Greenwich it would move an evening's work into
-    /// tomorrow.
     pub fn usage_by_provider(&self, from: &str, to: &str) -> Result<Vec<ProviderUsage>> {
         self.with(|conn| {
             let mut statement = conn.prepare(
@@ -78,8 +111,7 @@ impl Db {
                 Ok(ProviderUsage {
                     provider_slug: row.get("provider_slug")?,
                     turns: row.get("turns")?,
-                    // `COALESCE` on the sum keeps these non-null even when
-                    // every row in the group reported nothing.
+                    // `COALESCE` keeps these non-null when every row reported nothing.
                     prompt_tokens: row.get("prompt_tokens")?,
                     completion_tokens: row.get("completion_tokens")?,
                     unreported_turns: row.get("unreported")?,
@@ -132,6 +164,44 @@ mod tests {
     const ALWAYS: (&str, &str) = ("2000-01-01T00:00:00Z", "2999-01-01T00:00:00Z");
 
     #[test]
+    fn tokens_are_summed_per_model_across_local_and_remote() {
+        let db = Db::open_in_memory().expect("open");
+        let chat = conversation(&db);
+        let answer = |model: &str, prompt: Option<i64>, completion: Option<i64>| {
+            let message = db
+                .insert_message(
+                    &chat,
+                    &NewMessage {
+                        role: "assistant".to_string(),
+                        model_id: Some(model.to_string()),
+                        ..Default::default()
+                    },
+                )
+                .expect("insert");
+            db.complete_message(
+                &message.id,
+                &MessageCompletion {
+                    content: "hi".to_string(),
+                    usage_prompt_tokens: prompt,
+                    usage_completion_tokens: completion,
+                    ..Default::default()
+                },
+            )
+            .expect("complete");
+        };
+
+        answer("qwen3-4b", Some(100), Some(40));
+        answer("qwen3-4b", Some(10), Some(5));
+        answer("openrouter/gpt-x", None, None);
+
+        let usage = db.usage_by_model(ALWAYS.0, ALWAYS.1).expect("usage");
+        assert_eq!(usage[0].model_id, "qwen3-4b");
+        assert_eq!((usage[0].turns, usage[0].prompt_tokens, usage[0].completion_tokens), (2, 110, 45));
+        let remote = usage.iter().find(|row| row.model_id == "openrouter/gpt-x").expect("remote");
+        assert_eq!((remote.turns, remote.unreported_turns), (1, 1));
+    }
+
+    #[test]
     fn tokens_are_summed_per_provider() {
         let db = Db::open_in_memory().expect("open");
         let chat = conversation(&db);
@@ -164,9 +234,8 @@ mod tests {
 
     #[test]
     fn a_provider_that_reports_nothing_is_counted_as_a_turn_and_flagged() {
-        // The honest gap: several free tiers send no usage block, so the tokens
-        // are unknowable and the screen has to say how many turns that covers
-        // rather than quietly reporting a smaller number.
+        // Several free tiers send no usage block; the screen must report how many
+        // turns that covers rather than a quietly smaller number.
         let db = Db::open_in_memory().expect("open");
         let chat = conversation(&db);
 
@@ -199,7 +268,7 @@ mod tests {
 
     #[test]
     fn the_summed_prompt_count_wins_over_the_last_rounds() {
-        // A five-round agentic turn sent five prompts and was charged for five.
+        // A five-round agentic turn sent, and was charged for, five prompts.
         let db = Db::open_in_memory().expect("open");
         let chat = conversation(&db);
 
@@ -232,9 +301,8 @@ mod tests {
 
     #[test]
     fn a_row_written_before_the_upgrade_still_contributes_what_it_knows() {
-        // `usage_prompt_tokens_total` is NULL on every row that existed before
-        // this column did. Those turns should count their last-round figure
-        // rather than nothing at all.
+        // `usage_prompt_tokens_total` is NULL on rows predating the column; they
+        // should count their last-round figure.
         let db = Db::open_in_memory().expect("open");
         let chat = conversation(&db);
 
@@ -265,11 +333,9 @@ mod tests {
 
     #[test]
     fn a_window_bound_must_be_utc_to_compare_correctly() {
-        // Caught in testing. `created_at` is written in UTC and the comparison
-        // is a string one, so a bound printed with a local offset compares by
-        // its digits rather than by the instant it names. On a machine four
-        // hours behind UTC, an evening turn is written as tomorrow's date and
-        // fell outside a "today" whose upper bound still read as today.
+        // `created_at` is UTC and compared as a string, so a bound printed with a local offset
+        // compares by its digits, not the instant: four hours behind UTC, an evening turn is
+        // tomorrow's date and fell outside a "today" bound.
         let db = Db::open_in_memory().expect("open");
         let chat = conversation(&db);
         turn(&db, &chat, "groq", 100, 20);
@@ -280,8 +346,7 @@ mod tests {
             .expect("usage");
         assert_eq!(wide.len(), 1, "a UTC upper bound must include a turn just written");
 
-        // The same instant, printed with a western offset, sorts earlier as a
-        // string even though it is the same moment.
+        // The same instant with a western offset sorts earlier as a string.
         let local_shaped = now_utc
             .with_timezone(&chrono::FixedOffset::west_opt(4 * 3600).expect("offset"))
             .to_rfc3339();
@@ -308,9 +373,8 @@ mod tests {
 
     #[test]
     fn forking_a_conversation_does_not_spend_the_allowance_again() {
-        // The double-count this guards against: a fork copies the token numbers
-        // so the inspector still shows them, but not the attribution, because
-        // nothing was sent to a provider.
+        // A fork copies token numbers (for the inspector) but not attribution,
+        // because nothing was sent to a provider.
         let db = Db::open_in_memory().expect("open");
         let chat = conversation(&db);
         let message = turn(&db, &chat, "groq", 100, 20);

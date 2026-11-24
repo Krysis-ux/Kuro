@@ -1,13 +1,9 @@
-//! Rendering saved memories for a model.
-//!
-//! Storage and retrieval live in `db::memories`; this is only the presentation
-//! side, kept next to the other tools so the whole `remember`/`recall` pair reads
-//! in one place.
+//! Rendering saved memories for a model. Storage and retrieval live in
+//! `db::memories`.
 
 use crate::db::MemoryRecord;
 
-/// How many memories are worth injecting into a prompt unasked. Past this, the
-/// model should call `recall` with something specific instead.
+/// Memories injected into a prompt unasked; past this the model should `recall`.
 pub const MAX_PRELOADED: usize = 12;
 
 /// Render recall results as the text the model reads.
@@ -31,23 +27,13 @@ pub fn format_for_model(query: &str, memories: &[MemoryRecord]) -> String {
     out
 }
 
-/// The block prepended to a conversation so the model starts out aware of what it
-/// already knows.
-///
-/// Without this, memory only works when the model thinks to call `recall` — which
-/// small models frequently do not. Preloading a short list makes the feature
-/// behave the way a user expects it to.
+/// The block prepended to a conversation so the model starts aware of its
+/// memories (small models often never call `recall`).
 pub fn preamble(memories: &[MemoryRecord]) -> Option<String> {
     preamble_with(None, memories)
 }
 
 /// The memory preamble, including anything the user wrote about themselves.
-///
-/// The two are kept visibly apart in the text. What somebody typed on purpose is
-/// a standing instruction and should win; what a model saved during a
-/// conversation is a recollection and might be stale or half-right. Merging them
-/// into one list would give a note the model wrote itself the same weight as one
-/// the user did.
 pub fn preamble_with(about_you: Option<&str>, memories: &[MemoryRecord]) -> Option<String> {
     let about_you = about_you.map(str::trim).filter(|text| !text.is_empty());
     if about_you.is_none() && memories.is_empty() {

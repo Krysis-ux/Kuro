@@ -5,11 +5,8 @@ use serde_json::{json, Value};
 
 use crate::client::{format_bytes, KuroClient};
 
-/// Every installed model's id, in the order `kuro list` numbers them.
-///
-/// One place, because the numbers are only useful if `rm 2` means the second
-/// row of the list somebody is looking at. Two functions with their own idea of
-/// the order would be a command that deletes the wrong model.
+/// Every installed model's id, in the order `kuro list` numbers them. One place,
+/// so `rm 2` always means the second row of the list the user is looking at.
 pub async fn installed_ids(client: &KuroClient) -> Result<Vec<String>> {
     let response = client.get("/api/models").await?;
     Ok(response["models"]
@@ -32,16 +29,8 @@ pub async fn list_ids(client: &KuroClient) -> Result<()> {
     Ok(())
 }
 
-/// Turn what somebody typed into a model id.
-///
-/// Three things are accepted, because three things get typed: the number from
-/// the last `kuro list`, the whole id, or enough of the id to be unambiguous.
-/// Typing `qwen3-embedding-0.6b:q8_0` in full is a lot of keystrokes to delete
-/// something, and `kuro rm 1` is the command people reach for once they have
-/// seen a numbered list.
-///
-/// An ambiguous prefix is refused with the candidates listed, rather than
-/// resolved to the first match — a wrong guess here deletes a file.
+/// Turn what somebody typed into a model id: the number from the last `kuro list`, the whole id, or
+/// an unambiguous prefix.
 pub async fn resolve_installed(client: &KuroClient, input: &str) -> Result<String> {
     let ids = installed_ids(client).await?;
 
@@ -49,7 +38,7 @@ pub async fn resolve_installed(client: &KuroClient, input: &str) -> Result<Strin
         bail!("no models are installed");
     }
 
-    // A number is a position in the list, one-based to match what was printed.
+    // A number is a one-based position in the list, matching what was printed.
     if let Ok(index) = input.trim().parse::<usize>() {
         return match index.checked_sub(1).and_then(|at| ids.get(at)) {
             Some(id) => Ok(id.clone()),
@@ -125,9 +114,7 @@ pub async fn recommended(client: &KuroClient) -> Result<()> {
     let response = client.get("/api/models/recommended").await?;
     let models = response["models"].as_array().cloned().unwrap_or_default();
 
-    // Grouped by purpose, like the Models screen. A flat list answers "what will
-    // run here" and leaves "which one should I use" unanswered, and the second
-    // is the question somebody typing this command actually has.
+    // Grouped by purpose like the Models screen: a flat list shows what runs here, not what to use.
     let purposes = response["purposes"].as_array().cloned().unwrap_or_default();
 
     for purpose in &purposes {
@@ -193,8 +180,7 @@ pub async fn remove(client: &KuroClient, model_id: &str) -> Result<()> {
     client.ensure_running().await?;
     let resolved = resolve_installed(client, model_id).await?;
     client.delete(&format!("/api/models/{resolved}")).await?;
-    // Said explicitly. `rm 2` is a number going in and a file leaving the disk,
-    // and the only way to know the right one went is to be told which.
+    // Said explicitly: `rm 2` is a number in and a file out, so tell the user which one went.
     println!("Removed {resolved} and deleted its weights.");
     Ok(())
 }
@@ -239,13 +225,8 @@ pub async fn stop(client: &KuroClient, model_id: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Everything known about one model.
-///
-/// The details `list` has no room for: where the weights actually are, what the
-/// context window is, what it can do, and whether this machine can run it
-/// comfortably. Kuro already computes that fit for the Models page; printing it
-/// here means the answer to "will this be painfully slow" is the same in both
-/// places rather than a guess made twice.
+/// Everything known about one model: the details `list` has no room for (weights location, context
+/// window, capabilities, fit).
 pub async fn show(client: &KuroClient, requested: Option<String>) -> Result<()> {
     client.ensure_running().await?;
 
@@ -317,11 +298,8 @@ pub async fn show(client: &KuroClient, requested: Option<String>) -> Result<()> 
     Ok(())
 }
 
-/// Resolve which model to talk to when the user did not name one.
-///
-/// A name that *was* given goes through [`resolve_installed`], so every command
-/// taking a model takes a number or a prefix as well. `kuro run 2` should not
-/// mean something different from `kuro rm 2`.
+/// Resolve which model to talk to when none was named. A name that was given
+/// goes through [`resolve_installed`], so `kuro run 2` means the same as `kuro rm 2`.
 pub async fn resolve_model(client: &KuroClient, requested: Option<String>) -> Result<String> {
     if let Some(requested) = requested {
         return resolve_installed(client, &requested).await;
@@ -350,15 +328,6 @@ pub async fn resolve_model(client: &KuroClient, requested: Option<String>) -> Re
 }
 
 /// A shell script that completes model names.
-///
-/// Written out rather than generated by a completions crate, because the part
-/// that matters here is not the subcommand list — it is that the *values* are
-/// the models on this machine right now, which a static script cannot know. The
-/// script asks `kuro list --ids` for them, so it is correct the moment something
-/// is pulled or removed rather than the next time it is regenerated.
-///
-/// Tab cycling is the shell's, not ours: zsh's `menu complete` walks the
-/// candidates on repeated Tab, and bash lists them on the second press.
 pub fn completions(shell: &str) -> Result<()> {
     let script = match shell {
         "zsh" => ZSH_COMPLETIONS,

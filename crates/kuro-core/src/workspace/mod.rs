@@ -1,35 +1,20 @@
 //! Coding workspaces: a folder, a mode, and the tools that mode allows.
 //!
-//! Kuro's chat surface deliberately cannot touch the filesystem. Everything that
-//! reads or changes a file lives here instead, behind a workspace: a folder the
-//! user chose, and a mode saying how much the model may do inside it.
+//! The chat surface cannot touch the filesystem; everything that reads or changes
+//! a file lives here, behind a workspace (a folder the user chose) and a mode.
 //!
-//! ## Why the mode is the permission
+//! The mode is the permission: it is picked before the turn, instead of
+//! prompting mid-generation, and every change is recorded so it can be undone.
 //!
-//! A model asking to write a file is not a question that can be answered well
-//! mid-generation. The user is watching a reply arrive; interrupting it with a
-//! dialog they did not expect, about a path they have not seen, is how people
-//! learn to click Allow without reading. So the decision is moved earlier and
-//! made once, in a place where the whole answer is "what may this do":
+//! * [`WorkspaceMode::Ask`]: no tools; the model cannot see the project.
+//! * [`WorkspaceMode::Plan`]: read-only; it can look, search and propose.
+//! * [`WorkspaceMode::Agent`]: read, write, and run ordinary development
+//!   commands inside the workspace root.
+//! * [`WorkspaceMode::Bypass`]: Agent with no command allowlist.
 //!
-//! * [`WorkspaceMode::Ask`] — no tools. The model discusses code and cannot see
-//!   the project at all.
-//! * [`WorkspaceMode::Plan`] — reading only. It can look at the project, search
-//!   it, and propose changes it is not able to make.
-//! * [`WorkspaceMode::Agent`] — reading, writing, and running the ordinary
-//!   development commands, inside the workspace root.
-//! * [`WorkspaceMode::Bypass`] — the same, with no command allowlist. The mode
-//!   for someone who has decided to stop being asked.
-//!
-//! The mode is chosen before the turn, shown while it runs, and every change it
-//! makes is recorded with the previous contents so it can be undone. That is a
-//! weaker guarantee than a per-call prompt and a much stronger one than a switch
-//! called "files" that grants a model the whole home directory.
-//!
-//! Containment is separate from permission and is not negotiable: a path is
-//! resolved, symlinks followed and `..` collapsed, before it is checked against
-//! the root, and credentials are refused wherever they appear inside it. See
-//! [`crate::tools::files`].
+//! Containment is separate from permission and not negotiable: paths are
+//! resolved (symlinks followed, `..` collapsed) before the root check, and
+//! credentials are refused anywhere inside it. See [`crate::tools::files`].
 
 pub mod exec;
 pub mod process;
@@ -92,8 +77,7 @@ impl WorkspaceMode {
         }
     }
 
-    /// One line, shown next to the switch. Written so the difference between the
-    /// modes is legible without reading documentation.
+    /// One line shown next to the mode switch.
     pub fn blurb(self) -> &'static str {
         match self {
             Self::Ask => "Discuss code. The model cannot see your project.",
@@ -118,11 +102,7 @@ impl WorkspaceMode {
         }
     }
 
-    /// Whether a command has to be on the allowlist before it will run.
-    ///
-    /// The one thing Bypass actually changes. Everything else — the working
-    /// directory, the containment of file paths, the always-refused commands —
-    /// is identical, because those are not permissions the user is turning off.
+    /// Whether a command must be on the allowlist before it runs.
     pub fn restricts_commands(self) -> bool {
         self != Self::Bypass
     }
@@ -143,12 +123,11 @@ impl WorkspaceMode {
 pub enum ToolRisk {
     /// Looks at the project and changes nothing.
     Read,
-    /// Creates or modifies a file inside the workspace root. Recorded, and
-    /// reversible from the changes panel.
+    /// Creates or modifies a file inside the workspace root. Recorded and
+    /// reversible.
     Write,
-    /// Runs a program. The working directory is the workspace root, but a
-    /// command is not confined the way a path is: anything it does afterwards is
-    /// the program's own business. This is the one tier that cannot be undone.
+    /// Runs a program. The working directory is the workspace root, but a command
+    /// is not confined like a path is, and cannot be undone.
     Execute,
 }
 
@@ -171,11 +150,8 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// Containment rules for this workspace.
-    ///
-    /// Built from the root and the mode rather than from a stored setting, so
-    /// there is no way for a workspace to reach a folder that is not its own,
-    /// and no way for the tier to disagree with the mode the user can see.
+    /// Containment rules, derived from the root and mode (never a stored setting)
+    /// so a workspace cannot reach outside its root or disagree with its mode.
     pub fn permissions(&self) -> FilePermissions {
         FilePermissions {
             access: self.mode.file_access(),
@@ -183,9 +159,8 @@ impl Workspace {
         }
     }
 
-    /// Whether the root still exists. A folder that was moved or deleted leaves
-    /// the workspace in the list — the record is still the user's — but nothing
-    /// in it can run.
+    /// Whether the root still exists. A moved or deleted folder keeps its
+    /// workspace record, but nothing in it can run.
     pub fn root_exists(&self) -> bool {
         self.root.is_dir()
     }
@@ -270,8 +245,7 @@ mod tests {
         let permissions = workspace.permissions();
 
         assert!(permissions.resolve_path("src/main.rs", false).is_ok());
-        // The classic escape, and the reason paths are canonicalised before the
-        // root check rather than string-matched.
+        // Paths are canonicalised before the root check, not string-matched.
         assert!(permissions.resolve_path("../../../etc/hosts", false).is_err());
         assert!(permissions.resolve_path("/etc/hosts", false).is_err());
 

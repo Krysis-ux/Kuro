@@ -1,12 +1,4 @@
 //! OpenAI-compatible endpoints.
-//!
-//! These are a thin proxy in front of the engine rather than a reimplementation:
-//! whatever the engine supports — tool calls, JSON schemas, vision content
-//! blocks, sampling parameters Kuro has never heard of — passes through
-//! untouched. Kuro's contribution is resolving the model name and making sure
-//! an engine is running before the request arrives.
-//!
-//! Existing OpenAI SDK code works by pointing `base_url` at Kuro.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -43,10 +35,7 @@ pub async fn embeddings(
     proxy(state, body, "/v1/embeddings").await
 }
 
-/// Forward a request to the engine that serves the requested model.
-///
-/// The response body is streamed rather than buffered, so token-by-token
-/// streaming reaches the caller with no added latency.
+/// Forward a request to the engine serving the requested model, streaming the response unbuffered.
 async fn proxy(state: SharedState, mut body: Value, path: &str) -> AppResult<Response> {
     let requested = body
         .get("model")
@@ -54,8 +43,7 @@ async fn proxy(state: SharedState, mut body: Value, path: &str) -> AppResult<Res
         .map(str::to_string);
     let model_id = resolve_model_id(&state, requested.as_deref()).await?;
 
-    // Rewrite the model field to the resolved id so that clients which passed
-    // `auto`, or nothing at all, get a response naming a real model.
+    // Rewrite `model` to the resolved id so clients that sent `auto` or nothing see a real name.
     if let Value::Object(fields) = &mut body {
         fields.insert("model".to_string(), json!(model_id));
     }
@@ -86,10 +74,8 @@ async fn proxy(state: SharedState, mut body: Value, path: &str) -> AppResult<Res
         .map_err(|error| AppError(KuroError::other(error)))
 }
 
-/// Installed models in OpenAI's list shape.
-///
-/// Only ready models are listed: advertising one that is still downloading
-/// would make an SDK fail at request time instead of at selection time.
+/// Installed models in OpenAI's list shape. Only ready models are listed, so an
+/// SDK fails at selection time rather than at request time.
 pub async fn list_models(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     let models: Vec<Value> = state
         .db

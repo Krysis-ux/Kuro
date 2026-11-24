@@ -1,10 +1,4 @@
-//! Turning HTML into something a model can read.
-//!
-//! Not a parser. It strips markup, drops the contents of elements that only
-//! exist for the browser, and decodes the handful of entities that actually turn
-//! up in prose. A real DOM parser would be more correct, but the job here is to
-//! recover readable text and the failure mode of this approach — an occasional
-//! stray character — costs a token, not a wrong answer.
+//! HTML to readable text.
 
 /// Elements whose contents are never prose.
 const SKIPPED_ELEMENTS: &[&str] = &["script", "style", "noscript", "svg", "head", "template"];
@@ -37,7 +31,7 @@ pub fn to_text(html: &str) -> String {
             continue;
         }
 
-        // Block-level markup is the only structure worth keeping, as a break.
+        // Block-level tags become line breaks; nothing else is kept.
         if is_block(&name) {
             push_break(&mut out);
         }
@@ -75,12 +69,8 @@ pub fn links(html: &str) -> Vec<String> {
     found
 }
 
-/// Every anchor in the document as `(href, inner text)`, in order.
-///
-/// One pass rather than searching for a known `href`, because an href in the
-/// source may be entity-encoded while the value a caller holds has already been
-/// decoded — matching the two up by string is a bug waiting to happen. Walking the
-/// document instead means the pairing is always correct.
+/// Every anchor as `(href, inner text)`, in order. One pass, because matching a
+/// decoded href back to entity-encoded source by string is unreliable.
 pub fn anchors(html: &str) -> Vec<(String, String)> {
     let mut found = Vec::new();
     let lower = html.to_ascii_lowercase();
@@ -121,8 +111,7 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
     let lower = tag.to_ascii_lowercase();
     let mut cursor = 0;
 
-    // Looped rather than taking the first hit, because `data-href` contains
-    // `href` and would otherwise match.
+    // Loop past hits like `data-href` that merely contain the name.
     while let Some(offset) = lower[cursor..].find(name) {
         let at = cursor + offset;
         cursor = at + name.len();
@@ -168,8 +157,7 @@ fn skip_element(html: &str, from: usize, element: &str) -> usize {
                 None => html.len(),
             }
         }
-        // No closing tag: treat the rest of the document as part of the element,
-        // which is what a browser does too.
+        // No closing tag: the element runs to the end, as in a browser.
         None => html.len(),
     }
 }
@@ -218,8 +206,7 @@ fn push_text(out: &mut String, raw: &str) {
         }
         out.push_str(part);
     }
-    // Preserve the fact that the source had trailing whitespace, so words either
-    // side of an inline tag do not run together.
+    // Keep trailing whitespace so words around an inline tag do not run together.
     if decoded.ends_with(char::is_whitespace) && !out.is_empty() && !out.ends_with(char::is_whitespace) {
         out.push(' ');
     }
@@ -248,7 +235,8 @@ fn decode_entities(raw: &str) -> String {
         let after = &rest[start..];
 
         // Entities are short; anything longer is a literal ampersand.
-        let Some(end) = after[..after.len().min(12)].find(';') else {
+        // Searched by byte: slicing the str at 12 could split a multi-byte character.
+        let Some(end) = after.bytes().take(12).position(|byte| byte == b';') else {
             out.push('&');
             rest = &after[1..];
             continue;
@@ -300,7 +288,7 @@ fn numeric_entity(entity: &str) -> Option<char> {
     char::from_u32(code)
 }
 
-/// Collapse runs of blank lines, which markup-heavy pages produce in quantity.
+/// Collapse runs of blank lines.
 fn collapse_blank_lines(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut blank_run = 0;
@@ -322,8 +310,8 @@ fn collapse_blank_lines(text: &str) -> String {
     out.trim_end().to_string()
 }
 
-/// Percent-decode a URL, which DuckDuckGo needs because it wraps every result
-/// link in a redirect carrying the real target as a query parameter.
+/// Percent-decode a URL (DuckDuckGo wraps result links in a redirect carrying
+/// the real target as a query parameter).
 pub fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -503,5 +491,12 @@ mod tests {
     #[test]
     fn encoding_escapes_everything_a_query_string_cares_about() {
         assert_eq!(percent_encode("a b&c=d?e/f"), "a%20b%26c%3Dd%3Fe%2Ff");
+    }
+
+    #[test]
+    fn an_ampersand_before_multibyte_text_does_not_panic() {
+        // Byte 12 falls inside a character here; slicing there used to panic.
+        assert_eq!(to_text("<p>&日本語日本語</p>"), "&日本語日本語");
+        assert_eq!(to_text("<p>&amp;日本</p>"), "&日本");
     }
 }

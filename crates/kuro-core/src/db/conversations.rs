@@ -17,10 +17,11 @@ pub struct Conversation {
     pub updated_at: String,
     /// The conversation this one was branched from, when it was.
     pub forked_from_id: Option<String>,
-    /// The coding workspace this conversation belongs to, when it is one of the
-    /// Code page's rather than an ordinary chat. This is the only thing that
-    /// gives a turn access to files.
+    /// Coding workspace this conversation belongs to; the only thing that gives
+    /// a turn file access.
     pub workspace_id: Option<String>,
+    /// The project it was filed under, for grouping in the sidebar.
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,8 +46,8 @@ pub struct Message {
     pub created_at: String,
 }
 
-/// A message to append. Only `role` and `content` are normally set; the rest
-/// describe assistant turns that used tools or web search.
+/// A message to append. Normally only `role` and `content` are set; the rest
+/// describe tool or web-search turns.
 #[derive(Debug, Clone, Default)]
 pub struct NewMessage {
     pub role: String,
@@ -58,13 +59,7 @@ pub struct NewMessage {
     pub used_web_search: bool,
     pub web_sources: Option<Value>,
     pub model_id: Option<String>,
-    /// Which provider's allowance this turn spends.
-    ///
-    /// Set at insert time, because the provider is chosen before the row is
-    /// created and a turn cannot change provider once it has started — a
-    /// provider that refuses is set aside for the *next* message rather than
-    /// swapped mid-reply. One row is therefore always exactly one provider,
-    /// which is the invariant the usage totals rest on.
+    /// Provider whose allowance this turn spends.
     pub provider_slug: Option<String>,
 }
 
@@ -92,14 +87,8 @@ pub struct MessageCompletion {
     pub content: String,
     pub reasoning_content: Option<String>,
     pub usage_prompt_tokens: Option<i64>,
-    /// Prompt tokens across every round, where the field above holds the last
-    /// round's only.
-    ///
-    /// Both are wanted, by different readers. The inspector shows what was
-    /// processed to produce the answer, which is the last round. An allowance
-    /// paid for all of them: a five-round agentic turn sent five prompts and
-    /// was charged for five, and recording one understated the spend by most of
-    /// it.
+    /// Prompt tokens across every tool round; the field above is the last round
+    /// only. The inspector wants the last round, allowance spend needs the sum.
     pub usage_prompt_tokens_total: Option<i64>,
     pub usage_completion_tokens: Option<i64>,
     pub timing_ttft_ms: Option<i64>,
@@ -107,8 +96,7 @@ pub struct MessageCompletion {
     pub timing_tokens_per_sec: Option<f64>,
     pub finish_reason: Option<String>,
     /// Tool calls the turn made, in order, as a JSON array. Stored on the
-    /// assistant row rather than as separate messages so that reloading a
-    /// conversation shows the same tool trail the user watched appear.
+    /// assistant row so a reload shows the same tool trail.
     pub tool_calls: Option<Value>,
     pub used_web_search: bool,
     /// Pages the turn drew on, as a JSON array of `{title, url}`.
@@ -127,6 +115,7 @@ pub(super) fn conversation_from_row(row: &Row<'_>) -> rusqlite::Result<Conversat
         updated_at: row.get("updated_at")?,
         forked_from_id: row.get("forked_from_id")?,
         workspace_id: row.get("workspace_id")?,
+        project_id: row.get("project_id")?,
     })
 }
 
@@ -195,10 +184,21 @@ impl Db {
         })
     }
 
+    /// Archived conversations, most recently archived first: what the sidebar hides.
+    pub fn list_archived_conversations(&self) -> Result<Vec<Conversation>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM conversations WHERE archived = 1 ORDER BY updated_at DESC",
+            )?;
+            let found = stmt
+                .query_map([], conversation_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(found)
+        })
+    }
+
     /// Conversations for the sidebar, newest activity first, pinned on top.
-    ///
-    /// `query` filters on title and message content so the sidebar search finds
-    /// a chat by something that was said in it, not just its title.
+    /// `query` matches title and message content.
     pub fn list_conversations(&self, query: Option<&str>) -> Result<Vec<Conversation>> {
         self.with(|conn| {
             let rows = match query.map(str::trim).filter(|q| !q.is_empty()) {
@@ -230,8 +230,8 @@ impl Db {
         })
     }
 
-    /// Set the title. `manual` records that the user chose it, so automatic
-    /// titling never overwrites it later.
+    /// Set the title. `manual` marks a user choice so automatic titling never
+    /// overwrites it.
     pub fn set_conversation_title(&self, id: &str, title: &str, manual: bool) -> Result<()> {
         let mode = if manual { "manual" } else { "first_line" };
         self.with(|conn| {
@@ -351,8 +351,8 @@ impl Db {
         })
     }
 
-    /// Write the final text plus the usage and timing numbers that the request
-    /// inspector shows.
+    /// Write the final text plus usage and timing numbers (shown in the request
+    /// inspector).
     pub fn complete_message(&self, id: &str, completion: &MessageCompletion) -> Result<()> {
         let tool_calls = encode(&completion.tool_calls)?;
         let web_sources = encode(&completion.web_sources)?;
@@ -387,27 +387,12 @@ impl Db {
         })
     }
 
-    pub fn delete_message(&self, id: &str) -> Result<()> {
-        self.with(|conn| {
-            conn.execute("DELETE FROM messages WHERE id = ?1", params![id])?;
-            Ok(())
-        })
-    }
-
-    /// Delete `message_id` and everything after it in the conversation.
-    ///
-    /// This is what editing a message does: the turns that followed were answers
-    /// to the old wording, so keeping them would leave a transcript in which the
-    /// replies do not match what was asked. The cut-off is compared on
-    /// `(created_at, rowid)`, the same ordering [`Db::list_messages`] reads back,
-    /// so a message inserted in the same clock tick as its neighbour still cuts
-    /// in the position the user actually saw it in.
-    ///
-    /// Returns how many messages were removed.
+    /// Delete `message_id` and everything after it (editing a message: later turns answered the old
+    /// wording).
     pub fn delete_from(&self, conversation_id: &str, message_id: &str) -> Result<usize> {
         self.with(|conn| {
-            // Checked rather than assumed: a message id from another conversation
-            // would otherwise silently delete nothing and report success.
+            // A message id from another conversation would otherwise delete nothing
+            // and report success.
             let belongs: Option<String> = conn
                 .query_row(
                     "SELECT conversation_id FROM messages WHERE id = ?1",
@@ -453,12 +438,8 @@ impl Db {
         })
     }
 
-    /// Copy a conversation into a new one, up to and including `up_to_message_id`.
-    ///
-    /// `None` copies the whole thing. The copy carries the completed usage and
-    /// tool trail of every assistant turn, not just its text, so the request
-    /// inspector in a fork shows the same numbers the original does rather than
-    /// an empty panel.
+    /// Copy a conversation up to and including `up_to_message_id` (`None` copies all), carrying
+    /// each assistant turn's usage and tool trail so a fork's request inspector isn't empty.
     pub fn fork_conversation(
         &self,
         source_id: &str,
@@ -506,16 +487,7 @@ impl Db {
             )?;
 
             for message in &keep {
-                // Original timestamps are kept so the copy reads back in exactly
-                // the order it was said in, independent of how fast the rows are
-                // written here.
-                // `provider_slug` is deliberately not copied, which leaves it
-                // NULL on every forked row. The usage totals sum over rows that
-                // carry a slug, and a fork spent no allowance — copying it
-                // would bill the user twice for one answer, and again for every
-                // fork of the fork. The usage numbers below *are* copied,
-                // because the request inspector shows them per message and a
-                // fork should not look emptier than what it came from.
+                // Original timestamps are kept so the copy reads back in order.
                 conn.execute(
                     "INSERT INTO messages (
                          id, conversation_id, role, content, reasoning_content, tool_calls,
@@ -633,6 +605,14 @@ mod tests {
         db.set_conversation_flags(&convo.id, None, Some(true)).expect("archive");
 
         assert!(db.list_conversations(None).expect("list").is_empty());
+        let archived = db.list_archived_conversations().expect("archived");
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].id, convo.id);
+
+        // Restoring it puts it back in the sidebar and out of the archive.
+        db.set_conversation_flags(&convo.id, None, Some(false)).expect("restore");
+        assert_eq!(db.list_conversations(None).expect("list").len(), 1);
+        assert!(db.list_archived_conversations().expect("archived").is_empty());
     }
 
     /// A conversation with four alternating turns, returned with its messages.
@@ -668,9 +648,7 @@ mod tests {
 
     #[test]
     fn truncating_is_ordered_by_position_not_just_timestamp() {
-        // Every row here is written inside the same clock tick, so `created_at`
-        // alone cannot separate them. The cut must still land where the user saw
-        // the message, which is what the rowid tie-break is for.
+        // All rows share one clock tick, so the cut relies on the rowid tie-break.
         let db = Db::open_in_memory().expect("open");
         let convo = db.create_conversation(None).expect("create");
         let stamp = now();
@@ -701,7 +679,7 @@ mod tests {
         db.insert_message(&second.id, &NewMessage::user("unrelated"))
             .expect("insert");
 
-        // Silently deleting nothing would look like success to the caller.
+        // Deleting nothing must not look like success.
         assert!(db.delete_from(&second.id, &history[0].id).is_err());
         assert!(db.delete_from(&first.id, "no-such-message").is_err());
         assert_eq!(db.list_messages(&second.id).expect("list").len(), 1);

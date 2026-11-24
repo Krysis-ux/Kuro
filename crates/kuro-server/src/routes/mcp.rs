@@ -1,9 +1,4 @@
 //! MCP server management.
-//!
-//! Adding a server and *knowing whether it works* are the same action here: a
-//! successful insert is immediately followed by a connection attempt, and the
-//! result comes back in the same response. A form that saves silently and fails
-//! later is the main reason MCP configuration is unpleasant elsewhere.
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
@@ -18,8 +13,7 @@ use crate::state::SharedState;
 
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
-    /// Dial every enabled server before answering. Off by default so opening the
-    /// page is instant.
+    /// Dial every enabled server before answering. Off by default so the page opens instantly.
     #[serde(default)]
     pub connect: bool,
 }
@@ -73,8 +67,7 @@ pub struct AddRequest {
     pub env: Option<serde_json::Map<String, Value>>,
     #[serde(default)]
     pub headers: Option<serde_json::Map<String, Value>>,
-    /// Bearer token. Moved straight into the credential store and never echoed
-    /// back.
+    /// Bearer token. Moved straight into the credential store and never echoed back.
     #[serde(default, rename = "authToken")]
     pub auth_token: Option<String>,
 }
@@ -94,8 +87,7 @@ pub async fn add_server(
             transport: request
                 .transport
                 .clone()
-                // A URL without a stated transport is HTTP; that is the only thing
-                // a URL can mean here.
+                // A URL without a stated transport means HTTP.
                 .unwrap_or_else(|| {
                     if request.url.is_some() {
                         "http".to_string()
@@ -109,8 +101,7 @@ pub async fn add_server(
         },
     };
 
-    // Arguments are overridable even for a recommended entry, because the
-    // filesystem server is only useful once it has been told which folder.
+    // Args stay overridable for recommended entries: the filesystem server needs a folder.
     if let Some(args) = request.args {
         input.args = args;
     }
@@ -134,9 +125,8 @@ pub async fn add_server(
         state.db.set_mcp_auth_ref(&server.id, Some(&reference))?;
     }
 
-    // Connect now, so the response says whether it worked. A failure is reported
-    // as part of the server's own record rather than as an HTTP error: the server
-    // *was* added, and the user can fix its configuration.
+    // Connect now so the response says whether it worked. A failure goes in the
+    // server's record, not an HTTP error: the server was added and can be fixed.
     let connection = match state.mcp.refresh(&server.id).await {
         Ok(tools) => json!({ "ok": true, "toolCount": tools.len() }),
         Err(error) => json!({ "ok": false, "error": error.to_string() }),
@@ -211,8 +201,7 @@ pub async fn delete_server(
         return Err(KuroError::not_found(format!("MCP server `{id}`")).into());
     };
 
-    // The token goes with it. A secret outliving the thing it authenticated is a
-    // liability nobody would think to clean up.
+    // The token goes with it, so no secret outlives what it authenticated.
     state.mcp.forget_auth(&server)?;
     state.mcp.invalidate(&id).await;
     let removed = state.db.delete_mcp_server(&id)?;

@@ -1,15 +1,5 @@
-//! Deciding which engines are running.
-//!
-//! One engine process per loaded model, started on demand and stopped when it
-//! has been idle. Loads are serialised behind a single lock: two large models
-//! loading at once would compete for the same memory, so making that impossible
-//! is intentional rather than a limitation.
-//!
-//! Crash handling is deliberately simple. A supervisor task watches each child;
-//! if it exits unexpectedly the entry is removed from the running set and the
-//! failure is logged. The next request then starts a fresh engine through the
-//! normal path. That gives transparent recovery with no possibility of a
-//! restart loop.
+//! Tracks which engines are running: one process per loaded model, started on demand and stopped
+//! when idle.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -58,6 +48,8 @@ pub struct EngineManager {
     outbound: reqwest::Client,
     loopback: reqwest::Client,
     engines: Arc<Mutex<HashMap<String, EngineHandle>>>,
+    /// Held for the whole of a load, so two loads cannot take the same port.
+    loading: Mutex<()>,
 }
 
 impl EngineManager {
@@ -69,6 +61,7 @@ impl EngineManager {
             outbound: http::client()?,
             loopback: http::loopback_client()?,
             engines: Arc::new(Mutex::new(HashMap::new())),
+            loading: Mutex::new(()),
         })
     }
 
@@ -85,11 +78,13 @@ impl EngineManager {
 
     /// Guarantee that `model_id` is loaded, and return its internal port.
     pub async fn ensure_loaded(&self, model_id: &str) -> Result<u16> {
-        let mut engines = self.engines.lock().await;
-
-        if let Some(handle) = engines.get(model_id) {
-            handle.last_used.store(unix_now(), Ordering::Relaxed);
-            return Ok(handle.port);
+        if let Some(port) = self.loaded_port(model_id).await {
+            return Ok(port);
+        }
+        let _loading = self.loading.lock().await;
+        // Another request may have loaded it while this one waited its turn.
+        if let Some(port) = self.loaded_port(model_id).await {
+            return Ok(port);
         }
 
         let model = self
@@ -111,7 +106,7 @@ impl EngineManager {
         let runtime = self.ensure_engine_binary().await?;
         let settings = EngineSettings::resolve(&self.db, &self.hardware)?;
 
-        let taken: Vec<u16> = engines.values().map(|handle| handle.port).collect();
+        let taken: Vec<u16> = self.engines.lock().await.values().map(|handle| handle.port).collect();
         let port = allocate_port(&taken)?;
 
         let log_path = self.paths.engine_log_file(model_id);
@@ -130,15 +125,15 @@ impl EngineManager {
         let mut child = spawn_engine(&spec)?;
         let pid = child.id().unwrap_or_default();
 
-        if let Err(error) = wait_until_healthy(&self.loopback, port, &log_path).await {
-            // Do not leave a half-started process behind holding memory.
+        if let Err(error) = wait_until_healthy(&self.loopback, &mut child, port, &log_path).await {
+            // Don't leave a half-started process holding memory.
             terminate(&mut child).await;
             self.db.set_model_error(model_id, &error.to_string())?;
             return Err(error);
         }
 
         let last_used = Arc::new(AtomicI64::new(unix_now()));
-        engines.insert(
+        self.engines.lock().await.insert(
             model_id.to_string(),
             EngineHandle {
                 port,
@@ -155,6 +150,14 @@ impl EngineManager {
         Ok(port)
     }
 
+    /// The port of a model already running, marking it used.
+    async fn loaded_port(&self, model_id: &str) -> Option<u16> {
+        let engines = self.engines.lock().await;
+        let handle = engines.get(model_id)?;
+        handle.last_used.store(unix_now(), Ordering::Relaxed);
+        Some(handle.port)
+    }
+
     /// Watch a child process and clean up when it exits.
     fn supervise(
         &self,
@@ -169,8 +172,7 @@ impl EngineManager {
             let status = child.wait().await;
             let mut guard = engines.lock().await;
 
-            // Only forget this engine if it is still the one we started; a
-            // replacement may already have taken its place.
+            // Skip if a replacement engine has already taken this entry.
             let is_current = guard
                 .get(&model_id)
                 .map(|handle| handle.pid == pid)
@@ -206,11 +208,8 @@ impl EngineManager {
             .get_setting(KEY_ENGINE_RELEASE_TAG)?
             .and_then(|value| value.as_str().map(str::to_string));
 
-        // Fast path: already installed, no download record needed. It still goes
-        // through `adopt_installed`, which is what brings an engine installed by
-        // an older build up to the current name — this path is the one every
-        // existing install takes, so skipping it would mean the rename only ever
-        // reached people who reinstalled.
+        // Fast path: already installed. Still goes through `adopt_installed`,
+        // which migrates engines installed by older builds to the current name.
         let requested = tag.as_deref().unwrap_or(crate::engine::bootstrap::DEFAULT_ENGINE_TAG);
         if let Some(existing) = self.db.get_engine_runtime(requested)? {
             if std::path::Path::new(&existing.path).exists() {
@@ -307,8 +306,7 @@ impl EngineManager {
         };
 
         tracing::info!(model_id, pid = handle.pid, "stopping engine");
-        // The supervisor owns the Child, so signal the process directly. It
-        // observes the exit and completes the cleanup.
+        // The supervisor owns the Child; signal by pid and let it finish cleanup.
         signal_terminate(handle.pid);
         Ok(true)
     }

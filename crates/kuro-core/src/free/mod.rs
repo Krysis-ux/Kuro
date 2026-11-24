@@ -1,3 +1,4 @@
+//! One model id, many free tiers behind it.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,24 +10,36 @@ use serde::Serialize;
 use crate::classify::{classify, Speciality};
 use crate::wire::{Auth, Quirks};
 
+/// Prefix marking a model as belonging to the free pool. Unlike `cloud:`, which
+/// names one endpoint, it names a preference order.
 pub const MODEL_PREFIX: &str = "free:";
 
+/// Credential-store key for one provider's free key.
 pub fn secret_reference(slug: &str) -> String {
     format!("free:{slug}")
 }
 
+/// How long a provider is skipped after refusing.
 const RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(180);
+/// Longer, because a rejected key does not usually start working on its own.
 const AUTH_COOLDOWN: Duration = Duration::from_secs(1800);
+/// Short: a missing model is fixed by re-reading the catalogue, not by waiting.
 const GONE_COOLDOWN: Duration = Duration::from_secs(60);
 
+/// How long a provider's live model list is trusted before being read again.
 pub const CATALOGUE_TTL: Duration = Duration::from_secs(1800);
 
+/// What a request is asking for, so the pool can pick a suitable model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FreeFlavour {
+    /// Whatever is best available. The default and the one most people want.
     Auto,
+    /// Prefer a model trained on code.
     Coding,
+    /// Prefer a model that thinks before answering.
     Reasoning,
+    /// Prefer something small and quick.
     Fast,
 }
 
@@ -53,10 +66,12 @@ impl FreeFlavour {
         }
     }
 
+    /// The model id the picker shows.
     pub fn model_id(self) -> String {
         format!("{MODEL_PREFIX}{}", self.as_str())
     }
 
+    /// What this flavour is looking for in a model it has never seen.
     pub fn speciality(self) -> Option<Speciality> {
         match self {
             Self::Auto => None,
@@ -85,16 +100,23 @@ impl FreeFlavour {
     }
 }
 
+/// One model a provider offers for nothing.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct FreeModel {
+    /// The name the provider knows it by, sent verbatim in the request body.
     pub id: &'static str,
+    /// Which flavours this model is a good answer to.
     pub flavours: &'static [FreeFlavour],
+    /// Rough ordering within a flavour. Lower is preferred.
     pub rank: u8,
 }
 
+/// How to tell which of a provider's advertised models cost nothing.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum FreeMarker {
+    /// Everything this key can reach is inside the free allowance.
     Everything,
+    /// Only ids ending in one of these markers are free; the rest are billed.
     Suffix(&'static [&'static str]),
 }
 
@@ -107,16 +129,22 @@ impl FreeMarker {
     }
 }
 
+/// What kind of free this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum FreeTier {
+    /// Renews on its own. A daily or monthly allowance that comes back.
     Recurring,
+    /// No account at all: shared, rate-limited by address, least private.
     Keyless,
+    /// A one-off grant. Runs out and does not return.
     StarterCredit,
+    /// Free until a date, billable after it. `until` is an ISO date.
     ExpiringTrial { until: &'static str },
 }
 
 impl FreeTier {
+    /// Whether this tier has stopped being free.
     pub fn expired_on(self, today: &str) -> bool {
         matches!(self, Self::ExpiringTrial { until } if today > until)
     }
@@ -131,42 +159,62 @@ impl FreeTier {
     }
 }
 
+/// What a provider may do with what it is sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Privacy {
+    /// Prompts are retained somewhere the provider's staff can read them.
     pub logged: bool,
+    /// Prompts may be used to train models.
     pub trains: bool,
 }
 
 impl Privacy {
+    /// A provider that makes no unusual claim over what it is sent.
     pub const STANDARD: Self = Self { logged: false, trains: false };
+    /// A shared endpoint, or a tier whose terms reserve the right to train.
     pub const SHARED: Self = Self { logged: true, trains: true };
 }
 
+/// A provider with an allowance worth having.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct FreeProvider {
     pub slug: &'static str,
     pub name: &'static str,
+    /// OpenAI-compatible base URL; everything here speaks that shape.
     pub base_url: &'static str,
+    /// Where the key comes from. Every entry has one.
     pub credentials_url: &'static str,
+    /// What the allowance is, in the provider's own terms rather than a summed
+    /// headline number, which would go stale.
     pub allowance: &'static str,
+    /// What the key normally starts with, so a wrong paste is obvious.
     pub key_hint: Option<&'static str>,
+    /// Which of this provider's models the free allowance covers.
     pub free_marker: FreeMarker,
+    /// Whether this allowance renews, runs out, or is a shared endpoint.
     pub tier: FreeTier,
     pub privacy: Privacy,
+    /// How this endpoint departs from the plain OpenAI shape.
     pub quirks: Quirks,
+    /// Where a *single model's* key is generated, for a provider that issues keys per model rather
+    /// than per catalogue.
     pub model_key_url: Option<&'static str>,
     pub models: &'static [FreeModel],
 }
 
 impl FreeProvider {
+    /// Whether this provider can serve a request with what is on hand.
     pub fn is_reachable(&self, keys: &HashMap<String, String>, allow_keyless: bool) -> bool {
         if self.quirks.auth.keyless() {
+            // A stored key still counts: on an endpoint that takes one
+            // optionally, it usually buys a larger allowance.
             return allow_keyless || keys.contains_key(self.slug);
         }
         keys.contains_key(self.slug)
     }
 }
 
+/// The catalogue. Ordered by how much a first key is worth.
 pub const FREE_PROVIDERS: &[FreeProvider] = &[
     FreeProvider {
         slug: "groq",
@@ -256,6 +304,8 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::SHARED,
         quirks: Quirks {
+            // OpenRouter asks callers to identify themselves and uses it when
+            // deciding rate limits.
             headers: &[
                 ("HTTP-Referer", "https://github.com/Krysis-ux/kuro"),
                 ("X-Title", "Kuro"),
@@ -264,6 +314,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         },
         model_key_url: None,
         models: &[FreeModel {
+            // Kept short: curated ids go stale, so the pool reads the live list first.
             id: "openai/gpt-oss-20b:free",
             flavours: &[FreeFlavour::Auto, FreeFlavour::Coding],
             rank: 2,
@@ -305,6 +356,8 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks {
+            // Cohere refuses a tool whose schema carries `additionalProperties`
+            // or `$schema`, and every Kuro built-in emits both.
             strip_schema_keywords: true,
             ..Quirks::OPENAI
         },
@@ -408,6 +461,8 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         name: "NVIDIA NIM",
         base_url: "https://integrate.api.nvidia.com/v1",
         credentials_url: "https://build.nvidia.com/",
+        // NVIDIA's page implies one key reaches every model; several answer 404 until a
+        // key is generated from the model's own page.
         allowance: "Free API credits for developers, across a large catalogue. Note that one \
                     key does not reach every model: some are enabled per key. If a model here \
                     is greyed out, use the link on its row to generate a key from that model's \
@@ -417,6 +472,8 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks {
+            // Some NVIDIA-hosted models serve one tool call at a time, and the
+            // large ones can take minutes to produce a first token.
             no_parallel_tool_calls: true,
             timeout: Some(Duration::from_secs(180)),
             ..Quirks::OPENAI
@@ -554,6 +611,7 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
         tier: FreeTier::Recurring,
         privacy: Privacy::STANDARD,
         quirks: Quirks {
+            // Free.ai's chat route is `/chat/`, not `/chat/completions`.
             chat_path: "/chat/",
             ..Quirks::OPENAI
         },
@@ -571,6 +629,9 @@ pub const FREE_PROVIDERS: &[FreeProvider] = &[
             },
         ],
     },
+    // ---- Shared endpoints, from here down --------------------------------
+    //
+    // No account, no key, no promise. `choose` sorts these last whatever their position.
     FreeProvider {
         slug: "kilo",
         name: "Kilo Gateway (shared)",
@@ -630,6 +691,8 @@ pub fn find(slug: &str) -> Option<&'static FreeProvider> {
         .find(|provider| provider.slug.eq_ignore_ascii_case(slug))
 }
 
+/// The rank a live-catalogue pick inherits: the provider's best curated rank, so
+/// one whose curated ids are all retired keeps its position.
 fn model_rank(provider: &FreeProvider) -> u8 {
     provider
         .models
@@ -639,10 +702,12 @@ fn model_rank(provider: &FreeProvider) -> u8 {
         .unwrap_or(u8::MAX)
 }
 
+/// Whether a model id names the free pool.
 pub fn is_free_model(model_id: &str) -> bool {
     parse_selection(model_id).is_some()
 }
 
+/// The flavour a free model id asks for.
 pub fn flavour_of(model_id: &str) -> Option<FreeFlavour> {
     match parse_selection(model_id)? {
         Selection::Flavour(flavour) => Some(flavour),
@@ -650,19 +715,25 @@ pub fn flavour_of(model_id: &str) -> Option<FreeFlavour> {
     }
 }
 
+/// What a `free:` id is asking for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selection {
+    /// Let the pool choose, preferring this flavour.
     Flavour(FreeFlavour),
+    /// This provider's model, named exactly.
     Pinned {
         slug: String,
+        /// The provider's own id for the model, which may itself contain `/`.
         model: String,
     },
 }
 
+/// The connector id a free provider's models are grouped under in the picker.
 pub fn connector_id(slug: &str) -> String {
     format!("{MODEL_PREFIX}{slug}")
 }
 
+/// Read a `free:` model id.
 pub fn parse_selection(model_id: &str) -> Option<Selection> {
     let rest = model_id.strip_prefix(MODEL_PREFIX)?;
 
@@ -674,6 +745,8 @@ pub fn parse_selection(model_id: &str) -> Option<Selection> {
     if model.is_empty() {
         return None;
     }
+    // An unknown slug is not a free model. Answering otherwise would route a
+    // typo into the pool and report it as an exhausted allowance.
     let provider = find(slug)?;
 
     Some(Selection::Pinned {
@@ -682,14 +755,19 @@ pub fn parse_selection(model_id: &str) -> Option<Selection> {
     })
 }
 
+/// Why a provider is being skipped, and until when.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trouble {
+    /// Out of allowance for now.
     RateLimited,
+    /// The key was rejected.
     Rejected,
+    /// The model asked for is not there any more.
     Gone,
 }
 
 impl Trouble {
+    /// How long something that refused this way is left alone.
     pub fn cooldown(self) -> Duration {
         match self {
             Self::RateLimited => RATE_LIMIT_COOLDOWN,
@@ -698,10 +776,12 @@ impl Trouble {
         }
     }
 
+    /// Read a provider's HTTP status as one of these, when it is one.
     pub fn from_status(status: u16) -> Option<Self> {
         match status {
             401 | 403 => Some(Self::Rejected),
             402 | 429 => Some(Self::RateLimited),
+            // "No such model": set it aside so later messages stop asking for it.
             404 => Some(Self::Gone),
             _ => None,
         }
@@ -715,6 +795,7 @@ impl Trouble {
         }
     }
 
+    /// Read back a stored kind. Unknown values are dropped rather than guessed.
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "rate_limited" => Some(Self::RateLimited),
@@ -724,37 +805,62 @@ impl Trouble {
         }
     }
 
+    /// Whether this is a sign the cached catalogue is out of date.
     pub fn stale_catalogue(self) -> bool {
         self == Self::Gone
     }
 }
 
+/// One provider chosen for one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
     pub slug: String,
     pub name: String,
     pub base_url: String,
+    /// The complete `Authorization` value, or `None` for an endpoint that takes none.
     pub authorization: Option<String>,
     pub model: String,
+    /// How this endpoint departs from the plain OpenAI shape.
     pub quirks: Quirks,
 }
 
+/// How good an answer a candidate is, most preferred first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Quality {
+    /// A curated model that matches the flavour that was asked for.
     Matched,
+    /// A curated model that does not, taken rather than refusing.
     AnyCurated,
+    /// Whatever the provider currently advertises. The flavour is lost.
     Live,
 }
 
+/// Which providers are currently in trouble.
 #[derive(Clone, Default)]
 pub struct FreePool {
     troubled: Arc<Mutex<HashMap<String, (Trouble, Instant)>>>,
+    /// What each provider says it currently offers, and when it said so.
     live: Arc<Mutex<Catalogues>>,
+    /// Whether shared, unauthenticated endpoints may answer.
     allow_keyless: Arc<AtomicBool>,
+    /// Models a provider advertises but will not actually serve on this key.
+    ///
+    /// Separate from `troubled`, which is about the provider. On NVIDIA NIM several
+    /// models are provisioned per key, and one the key was not issued for answers
+    ///
+    /// ```text
+    /// 404 {"detail":"Function '0417…': Not found for account 'p4OU…'"}
+    /// ```
+    ///
+    /// which concerns that model and key only; treating it as a provider failure
+    /// would discard the whole catalogue. Keyed on `slug/model` and short-lived, so a
+    /// newly generated key works at once.
     unavailable: Arc<Mutex<HashMap<String, (Trouble, Instant)>>>,
+    /// Whether a catalogue read is already running.
     refreshing: Arc<AtomicBool>,
 }
 
+/// What each provider advertises, and when it was asked.
 type Catalogues = HashMap<String, (Vec<String>, Instant)>;
 
 impl std::fmt::Debug for FreePool {
@@ -768,6 +874,7 @@ impl FreePool {
         Self::default()
     }
 
+    /// Note that a provider refused, so the next request skips it.
     pub fn note_trouble(&self, slug: &str, trouble: Trouble) {
         self.troubled
             .lock()
@@ -776,6 +883,7 @@ impl FreePool {
         tracing::info!(slug, kind = trouble.as_str(), "free provider set aside");
     }
 
+    /// Forget a provider's trouble, after a key is replaced or a test succeeds.
     pub fn clear_trouble(&self, slug: &str) {
         self.troubled.lock().expect("free pool lock").remove(slug);
 
@@ -786,6 +894,7 @@ impl FreePool {
             .retain(|key, _| !key.starts_with(&prefix));
     }
 
+    /// Note that one model will not serve on this key.
     pub fn note_model_trouble(&self, slug: &str, model: &str, trouble: Trouble) {
         self.unavailable
             .lock()
@@ -794,6 +903,7 @@ impl FreePool {
         tracing::info!(slug, model, kind = trouble.as_str(), "free model set aside");
     }
 
+    /// Why one model is currently being skipped, if it is.
     pub fn model_trouble(&self, slug: &str, model: &str) -> Option<Trouble> {
         let mut held = self.unavailable.lock().expect("free pool lock");
         let key = format!("{slug}/{model}");
@@ -805,14 +915,17 @@ impl FreePool {
         Some(trouble)
     }
 
+    /// Allow or forbid the shared, unauthenticated endpoints.
     pub fn set_allow_keyless(&self, allowed: bool) {
         self.allow_keyless.store(allowed, Ordering::Relaxed);
     }
 
+    /// Whether shared endpoints may currently answer.
     pub fn allows_keyless(&self) -> bool {
         self.allow_keyless.load(Ordering::Relaxed)
     }
 
+    /// Record what a provider says it currently offers.
     pub fn set_live_models(&self, slug: &str, models: Vec<String>) {
         self.live
             .lock()
@@ -820,6 +933,7 @@ impl FreePool {
             .insert(slug.to_string(), (models, Instant::now()));
     }
 
+    /// Providers and models currently set aside, with how long is left.
     pub fn troubles(&self) -> Vec<(String, &'static str, u64)> {
         let held = self.troubled.lock().expect("free pool lock");
         let models = self.unavailable.lock().expect("free pool lock");
@@ -833,6 +947,7 @@ impl FreePool {
             .collect()
     }
 
+    /// Put back what was set aside before a restart.
     pub fn restore_troubles(&self, stored: Vec<(String, String, u64)>) {
         let now = Instant::now();
 
@@ -844,10 +959,14 @@ impl FreePool {
             let Some(elapsed) = trouble.cooldown().checked_sub(left) else {
                 continue;
             };
+            // Backdated so it expires when it would have, rather than starting
+            // its cooldown again from zero on every restart.
             let Some(since) = now.checked_sub(elapsed) else {
                 continue;
             };
 
+            // A `/` means it names one model on a provider rather than the
+            // provider itself — the same split `note_model_trouble` writes.
             let target = if key.contains('/') {
                 &self.unavailable
             } else {
@@ -857,6 +976,7 @@ impl FreePool {
         }
     }
 
+    /// Every catalogue currently held, for writing to storage.
     pub fn catalogues(&self) -> HashMap<String, Vec<String>> {
         self.live
             .lock()
@@ -866,28 +986,29 @@ impl FreePool {
             .collect()
     }
 
+    /// Put back catalogues read before a restart.
     pub fn restore_catalogues(&self, stored: HashMap<String, Vec<String>>) {
         let mut held = self.live.lock().expect("free pool lock");
         let now = Instant::now();
         for (slug, models) in stored {
+            // Anything read during this process is fresher by definition.
             held.entry(slug).or_insert((models, now));
         }
     }
 
-    pub fn forget_live_models(&self, slug: &str) {
-        self.live.lock().expect("free pool lock").remove(slug);
-    }
-
+    /// Claim the right to read the catalogues, if nobody else holds it.
     pub fn begin_refresh(&self) -> bool {
         self.refreshing
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
     }
 
+    /// Release the claim taken by [`FreePool::begin_refresh`].
     pub fn end_refresh(&self) {
         self.refreshing.store(false, Ordering::Release);
     }
 
+    /// Whether any reachable provider's catalogue is worth re-reading.
     pub fn needs_any_catalogue(&self, keys: &HashMap<String, String>) -> bool {
         let allow_keyless = self.allows_keyless();
         FREE_PROVIDERS
@@ -896,6 +1017,7 @@ impl FreePool {
             .any(|provider| self.needs_catalogue(provider.slug))
     }
 
+    /// Whether this provider's catalogue is missing or too old to trust.
     pub fn needs_catalogue(&self, slug: &str) -> bool {
         self.live
             .lock()
@@ -904,6 +1026,7 @@ impl FreePool {
             .is_none_or(|(_, read_at)| read_at.elapsed() >= CATALOGUE_TTL)
     }
 
+    /// Whether a provider currently advertises a model.
     fn advertises(&self, slug: &str, model: &str) -> bool {
         let held = self.live.lock().expect("free pool lock");
         let Some((models, _)) = held.get(slug) else {
@@ -912,6 +1035,7 @@ impl FreePool {
         models.is_empty() || models.iter().any(|known| known == model)
     }
 
+    /// The trouble a provider is currently in, if its cooldown has not expired.
     pub fn trouble(&self, slug: &str) -> Option<Trouble> {
         let mut held = self.troubled.lock().expect("free pool lock");
         let (trouble, since) = *held.get(slug)?;
@@ -922,6 +1046,7 @@ impl FreePool {
         Some(trouble)
     }
 
+    /// Pick a provider and model for one request.
     pub fn choose(&self, flavour: FreeFlavour, keys: &HashMap<String, String>) -> Option<Choice> {
         let allow_keyless = self.allows_keyless();
         let usable = |provider: &FreeProvider| {
@@ -937,6 +1062,7 @@ impl FreePool {
                 if !self.advertises(provider.slug, model.id) {
                     continue;
                 }
+                // Refused on this key: skip it, rather than make the provider look down.
                 if self.model_trouble(provider.slug, model.id).is_some() {
                     continue;
                 }
@@ -949,6 +1075,8 @@ impl FreePool {
                         model.id.to_string(),
                     ));
                 } else if flavour != FreeFlavour::Auto {
+                    // Falling back to any model is deliberate: someone with one key who asks for
+                    // `free:coding` is better served by a general model than by an error.
                     candidates.push((
                         keyless,
                         Quality::AnyCurated,
@@ -959,11 +1087,15 @@ impl FreePool {
                 }
             }
 
+            // If the curated list is overtaken entirely (every id retired), take what the
+            // provider advertises. The live list is classified, so the flavour survives.
             if let Some(model) = self.best_live_model(provider, flavour) {
                 candidates.push((keyless, Quality::Live, model_rank(provider), provider, model));
             }
         }
 
+        // Keyless-ness is the *most* significant sort key, so a provider the user holds
+        // a key for beats a shared endpoint even on its worst fallback.
         candidates.sort_by_key(|(keyless, quality, rank, _, _)| (*keyless, *quality, *rank));
 
         let (_, _, _, provider, model) = candidates.first()?;
@@ -981,6 +1113,7 @@ impl FreePool {
         })
     }
 
+    /// The best *free* model a provider advertises, when nothing curated survives.
     fn best_live_model(&self, provider: &FreeProvider, flavour: FreeFlavour) -> Option<String> {
         let held = self.live.lock().expect("free pool lock");
         let (models, _) = held.get(provider.slug)?;
@@ -995,6 +1128,8 @@ impl FreePool {
                 if !classified.kind.is_chat() {
                     return None;
                 }
+                // On `Auto` a tiny model is a poor answer to "whatever is best", so the
+                // preference runs the other way.
                 let matches = match wanted {
                     Some(speciality) => classified.has(speciality),
                     None => !classified.has(Speciality::Fast),
@@ -1003,10 +1138,12 @@ impl FreePool {
             })
             .collect();
 
+        // Match first, name second, so the same key picks the same model across restarts.
         usable.sort();
         usable.first().map(|(_, model)| (*model).clone())
     }
 
+    /// Route to one named provider and model, with no failover.
     pub fn pinned(
         &self,
         slug: &str,
@@ -1034,6 +1171,7 @@ impl FreePool {
         })
     }
 
+    /// Every chat model a provider currently advertises inside its allowance.
     pub fn advertised_chat_models(&self, provider: &FreeProvider) -> Vec<String> {
         let held = self.live.lock().expect("free pool lock");
         let Some((models, _)) = held.get(provider.slug) else {
@@ -1051,6 +1189,7 @@ impl FreePool {
         usable
     }
 
+    /// Providers that could serve a request right now.
     pub fn available(&self, keys: &HashMap<String, String>) -> Vec<&'static FreeProvider> {
         FREE_PROVIDERS
             .iter()
@@ -1085,6 +1224,8 @@ mod tests {
 
     #[test]
     fn every_provider_says_where_its_key_comes_from_and_what_the_limit_is() {
+        // A provider nobody can get a key for is not an option, and an allowance
+        // nobody can see is a number somebody will assume is unlimited.
         for provider in FREE_PROVIDERS {
             assert!(provider.credentials_url.starts_with("https://"), "{}", provider.slug);
             assert!(provider.allowance.len() > 25, "{}", provider.slug);
@@ -1123,6 +1264,8 @@ mod tests {
 
     #[test]
     fn nothing_resolves_until_the_user_has_added_a_key() {
+        // The honest failure. Kuro supplies no keys, and a pool that answered
+        // anyway would be answering from somewhere nobody agreed to.
         let pool = FreePool::new();
         assert!(pool.choose(FreeFlavour::Auto, &HashMap::new()).is_none());
         assert!(pool.available(&HashMap::new()).is_empty());
@@ -1192,6 +1335,8 @@ mod tests {
 
     #[test]
     fn a_curated_model_the_provider_no_longer_lists_is_not_asked_for() {
+        // A retired curated id fails with "This model is unavailable for free" even
+        // though the key works, so only advertised models may be requested.
         let pool = FreePool::new();
         let held = keys(&["openrouter"]);
 
@@ -1215,6 +1360,7 @@ mod tests {
 
     #[test]
     fn a_curated_model_that_is_still_listed_keeps_its_flavour() {
+        // Live discovery must keep what the hand-written table is for: which model codes.
         let pool = FreePool::new();
         pool.set_live_models(
             "ollama",
@@ -1228,6 +1374,7 @@ mod tests {
 
     #[test]
     fn a_provider_kuro_has_not_asked_yet_is_still_tried() {
+        // A failed catalogue read must not strand a working key.
         let pool = FreePool::new();
         assert!(pool.needs_catalogue("groq"));
         assert!(pool.choose(FreeFlavour::Auto, &keys(&["groq"])).is_some());
@@ -1235,6 +1382,8 @@ mod tests {
 
     #[test]
     fn an_empty_catalogue_is_treated_as_unknown_rather_than_as_nothing_offered() {
+        // Some endpoints answer `/models` with an empty or unreadable list, which is
+        // not "no models" and must not disable a working key.
         let pool = FreePool::new();
         pool.set_live_models("groq", Vec::new());
 
@@ -1255,6 +1404,8 @@ mod tests {
 
     #[test]
     fn the_live_fallback_never_reaches_for_a_model_that_would_be_billed() {
+        // With every curated id retired, an unfiltered fallback would take the alphabetically first
+        // model (`ai21/jamba-large-1.7`, which is paid).
         let pool = FreePool::new();
         pool.set_live_models(
             "openrouter",
@@ -1286,6 +1437,7 @@ mod tests {
 
     #[test]
     fn an_account_level_free_tier_may_use_anything_it_lists() {
+        // Groq's free tier has no card attached, so nothing it can reach bills.
         let pool = FreePool::new();
         pool.set_live_models("groq", vec!["some-new-groq-model".to_string()]);
 
@@ -1293,8 +1445,10 @@ mod tests {
         assert_eq!(chosen.model, "some-new-groq-model");
     }
 
+    /// A slice of NVIDIA NIM's catalogue, in the shape it actually arrives in.
     fn nvidia_catalogue() -> Vec<String> {
         [
+            // Alphabetically first, and an embedding model.
             "baai/bge-m3",
             "black-forest-labs/flux.1-dev",
             "meta/llama-3.3-70b-instruct",
@@ -1311,9 +1465,12 @@ mod tests {
 
     #[test]
     fn a_catalogue_full_of_things_that_are_not_chat_models_still_yields_a_chat_model() {
+        // Taking the first sorted id gives `baai/bge-m3`, an embedding model that
+        // answers a conversation with a 400 that reads as a bad key.
         let pool = FreePool::new();
         pool.set_live_models("nvidia", nvidia_catalogue());
 
+        // Curated ids removed, so only the fallback path can answer.
         let live_only: Vec<String> = nvidia_catalogue()
             .into_iter()
             .filter(|id| id != "meta/llama-3.3-70b-instruct" && !id.contains("coder"))
@@ -1373,6 +1530,8 @@ mod tests {
 
     #[test]
     fn a_model_id_naming_one_provider_and_model_survives_the_round_trip() {
+        // The provider's own id contains a slash; a naive split would ask NVIDIA for
+        // `llama-3.3-70b-instruct`.
         let parsed = parse_selection("free:nvidia/meta/llama-3.3-70b-instruct");
 
         assert_eq!(
@@ -1396,6 +1555,8 @@ mod tests {
 
     #[test]
     fn an_id_naming_a_provider_kuro_does_not_have_is_not_a_free_model() {
+        // Otherwise a typo routes into the pool and comes back reported as an
+        // exhausted allowance, which sends somebody to check a key that is fine.
         assert_eq!(parse_selection("free:notaprovider/some-model"), None);
         assert!(!is_free_model("free:notaprovider/some-model"));
         assert!(!is_free_model("free:nvidia/"));
@@ -1404,6 +1565,8 @@ mod tests {
 
     #[test]
     fn one_model_refusing_does_not_take_the_provider_down_with_it() {
+        // A key not provisioned for one model answers 404 for that model only; reading
+        // it as a provider failure would report no working NVIDIA key at all.
         let pool = FreePool::new();
         let held = keys(&["nvidia"]);
 
@@ -1439,12 +1602,16 @@ mod tests {
 
         assert_eq!(after.trouble("cerebras"), Some(Trouble::RateLimited));
         assert_eq!(after.model_trouble("nvidia", "some/model"), Some(Trouble::Gone));
+        // And the split between the two maps survives the round trip: a
+        // provider-level refusal must not come back as a model-level one.
         assert!(after.trouble("nvidia").is_none());
     }
 
     #[test]
     fn a_refusal_that_has_already_expired_is_not_restored() {
         let pool = FreePool::new();
+        // Zero seconds left is an expired cooldown, and restoring it would set
+        // a provider aside for a full fresh cooldown on every restart.
         pool.restore_troubles(vec![("groq".to_string(), "rate_limited".to_string(), 0)]);
 
         assert!(pool.trouble("groq").is_none());
@@ -1505,6 +1672,8 @@ mod tests {
 
     #[test]
     fn a_guard_model_is_never_offered_as_a_conversation() {
+        // `meta/llama-guard-4-12b` is a Llama and is free; only the classifier keeps it
+        // out of a failover.
         let pool = FreePool::new();
         pool.set_live_models(
             "nvidia",
@@ -1522,6 +1691,8 @@ mod tests {
 
     #[test]
     fn every_curated_model_is_one_its_provider_marks_as_free() {
+        // The markers and the hand-written ids have to agree, or the filter that
+        // protects the wallet would also filter out the curated list.
         for provider in FREE_PROVIDERS {
             for model in provider.models {
                 assert!(
@@ -1542,6 +1713,8 @@ mod tests {
             .map(|provider| provider.slug)
             .collect();
 
+        // Both serve a mostly billed catalogue, so only marked ids may be used; every
+        // other entry is an account that cannot be billed.
         assert_eq!(by_suffix, vec!["openrouter", "kilo"]);
 
         assert!(FreeMarker::Suffix(&[":free"]).covers("a/b:free"));
@@ -1560,6 +1733,8 @@ mod tests {
 
     #[test]
     fn the_retired_providers_are_gone_and_do_not_resolve() {
+        // Each was removed: GitHub retired its endpoint, Together issues no free key,
+        // Chutes ended its free plan.
         for slug in ["github", "together", "chutes"] {
             assert!(find(slug).is_none(), "`{slug}` is still in the table");
         }
@@ -1567,6 +1742,8 @@ mod tests {
 
     #[test]
     fn every_keyless_provider_says_it_is_shared() {
+        // A shared endpoint that did not warn would be the one place in Kuro
+        // where a prompt leaves for somewhere the user never chose.
         for provider in FREE_PROVIDERS {
             let keyless = provider.quirks.auth.keyless();
             assert_eq!(
@@ -1598,6 +1775,7 @@ mod tests {
 
     #[test]
     fn shared_endpoints_stay_silent_until_they_are_allowed() {
+        // Off by default, so a pool built before settings are read ignores shared endpoints.
         let pool = FreePool::new();
         assert!(!pool.allows_keyless());
         assert!(
@@ -1619,6 +1797,8 @@ mod tests {
         let pool = FreePool::new();
         pool.set_allow_keyless(true);
 
+        // Cerebras keeps its key but every curated id it has is retired, so the
+        // only thing left for it is a live pick.
         pool.set_live_models("cerebras", vec!["some-new-cerebras-model".to_string()]);
 
         let chosen = pool
@@ -1647,6 +1827,7 @@ mod tests {
     #[test]
     fn a_key_stored_for_a_shared_endpoint_is_used_and_promotes_it() {
         let pool = FreePool::new();
+        // Deliberately NOT allowing keyless: a stored key is its own permission.
         let chosen = pool
             .choose(FreeFlavour::Auto, &keys(&["kilo"]))
             .expect("a stored key is reason enough");
@@ -1661,9 +1842,6 @@ mod tests {
 
         pool.set_live_models("groq", vec!["llama-3.3-70b-versatile".to_string()]);
         assert!(!pool.needs_catalogue("groq"), "just read");
-
-        pool.forget_live_models("groq");
-        assert!(pool.needs_catalogue("groq"), "forgotten after a 404");
     }
 
     #[test]
@@ -1679,6 +1857,8 @@ mod tests {
 
     #[test]
     fn a_rejected_key_is_set_aside_for_longer_than_a_busy_one() {
+        // A 429 resets on its own; a 401 means the key is wrong, and retrying it
+        // every three minutes forever helps nobody.
         assert!(Trouble::Rejected.cooldown() > Trouble::RateLimited.cooldown());
 
         assert_eq!(Trouble::from_status(429), Some(Trouble::RateLimited));

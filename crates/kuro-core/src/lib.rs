@@ -1,8 +1,5 @@
-//! Kuro LLM core.
-//!
-//! Everything that is not HTTP routing or CLI argument parsing lives here so
-//! that the server and the CLI share one implementation of model management,
-//! engine supervision and storage.
+//! Kuro LLM core: everything except HTTP routing and CLI parsing, shared by the
+//! server and the CLI.
 
 pub mod agents;
 pub mod catalog;

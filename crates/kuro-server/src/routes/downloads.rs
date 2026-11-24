@@ -22,9 +22,7 @@ pub async fn get_download(
     Ok(Json(json!(record)))
 }
 
-/// Stop an in-flight transfer.
-///
-/// The partially downloaded file is kept so the same pull can resume later.
+/// Stop an in-flight transfer. The partial file is kept so the pull can resume.
 pub async fn cancel_download(
     State(state): State<SharedState>,
     Path(id): Path<String>,

@@ -1,36 +1,55 @@
+//! Telling the model where it is and what it can do.
 
 use crate::skills::Skill;
 use crate::workspace::WorkspaceMode;
 
+/// What the model needs to know about this turn.
 #[derive(Debug, Clone)]
 pub struct PromptContext<'a> {
+    /// The model's own id, so it can answer "what are you running as".
     pub model_id: &'a str,
+    /// True when the request goes to a provider rather than a local engine.
     pub is_remote: bool,
+    /// Whether the web tool group is on for this message.
     pub web_enabled: bool,
+    /// Whether Kuro already ran a search and put the results in the context.
     pub search_ran: bool,
     pub memory_enabled: bool,
+    /// How many memories exist, so "you remember nothing yet" can be said plainly.
     pub memory_count: i64,
+    /// Tool names offered this turn, exactly as the model will see them.
     pub tool_names: &'a [String],
+    /// Names of the MCP servers currently connected.
     pub mcp_servers: &'a [String],
+    /// The coding workspace this turn is running in, when there is one. Absent
+    /// in an ordinary chat, which has no access to files at all.
     pub workspace: Option<WorkspaceBrief<'a>>,
+    /// Whether this turn can read the user's coding workspaces without being in
+    /// one. Read-only: it cannot change a byte.
     pub projects_readable: bool,
+    /// Skills the user switched on.
     pub skills: &'a [&'a Skill],
+    /// Standing instructions from the project this conversation belongs to.
     pub project: Option<ProjectBrief<'a>>,
 }
 
+/// The folder this turn is working in, and how much it may do there.
 #[derive(Debug, Clone, Copy)]
 pub struct WorkspaceBrief<'a> {
     pub name: &'a str,
+    /// The workspace root, as the user chose it.
     pub root: &'a str,
     pub mode: WorkspaceMode,
 }
 
+/// A project's name and standing instructions.
 #[derive(Debug, Clone, Copy)]
 pub struct ProjectBrief<'a> {
     pub name: &'a str,
     pub instructions: &'a str,
 }
 
+/// Build the system prompt for one turn.
 pub fn build(context: &PromptContext<'_>) -> String {
     let mut out = String::with_capacity(1200);
 
@@ -47,6 +66,7 @@ pub fn build(context: &PromptContext<'_>) -> String {
         out.push_str(&skills(context));
     }
 
+    // Last, so on a conflict the user's own words are what the model read most recently.
     if let Some(project) = &context.project {
         out.push_str(&project_section(project));
     }
@@ -85,6 +105,7 @@ fn identity(context: &PromptContext<'_>) -> String {
     )
 }
 
+/// The live state of every switch, stated as fact.
 fn capabilities(context: &PromptContext<'_>) -> String {
     let mut out = String::from("Right now, in this conversation:\n");
 
@@ -145,6 +166,7 @@ fn capabilities(context: &PromptContext<'_>) -> String {
     out
 }
 
+/// What the model can do with the user's files, stated exactly.
 fn files_line(context: &PromptContext<'_>) -> String {
     let Some(workspace) = &context.workspace else {
         let projects = if context.projects_readable {
@@ -211,6 +233,7 @@ fn tools(context: &PromptContext<'_>) -> String {
     )
 }
 
+/// The rules that stop failures seen in real transcripts.
 fn honesty(context: &PromptContext<'_>) -> String {
     let mut out = String::from("Rules:\n");
 
@@ -221,6 +244,7 @@ fn honesty(context: &PromptContext<'_>) -> String {
          - Answer the question that was asked. Skip preamble and restatement.\n",
     );
 
+    // Invented URLs are the worst failure because they look entirely plausible.
     out.push_str(
         "- Never invent a URL, a citation, a price, a statistic or a date. If you did not \
          get it from a tool result or from the user, you do not have it.\n",
@@ -361,6 +385,7 @@ mod tests {
 
     #[test]
     fn the_model_is_told_it_can_see_the_conversation() {
+        // Asked "what was my first message", a small model otherwise refuses.
         assert!(build(&context()).contains("see the whole conversation"));
     }
 
@@ -372,6 +397,7 @@ mod tests {
 
     #[test]
     fn replying_normally_is_the_first_rule_and_not_knowing_is_the_last() {
+        // A small model follows the rule it read first.
         let prompt = build(&context());
 
         let rules = prompt.find("Rules:").expect("rules section");
@@ -402,6 +428,7 @@ mod tests {
 
     #[test]
     fn search_results_must_be_synthesised_rather_than_listed() {
+        // With results in context the model should synthesise, not list links.
         let prompt = build(&PromptContext {
             web_enabled: true,
             search_ran: true,
@@ -415,6 +442,7 @@ mod tests {
 
     #[test]
     fn connected_mcp_servers_are_named_so_the_question_can_be_answered() {
+        // The model needs the names to answer "what MCP servers did I just connect".
         let servers = vec!["Filesystem".to_string(), "Context7".to_string()];
         let prompt = build(&PromptContext {
             mcp_servers: &servers,
@@ -464,6 +492,8 @@ mod tests {
 
     #[test]
     fn a_workspace_turn_is_not_also_told_about_the_weaker_project_tools() {
+        // The file line already covers that folder; a second, weaker route to the same
+        // files only confuses.
         let prompt = build(&PromptContext {
             workspace: Some(WorkspaceBrief {
                 name: "App",
@@ -479,6 +509,7 @@ mod tests {
 
     #[test]
     fn a_writable_workspace_is_told_it_can_run_things_and_look_at_them() {
+        // Prevents a model that could run the test suite describing the command instead.
         let prompt = build(&PromptContext {
             workspace: Some(WorkspaceBrief {
                 name: "App",
@@ -613,6 +644,7 @@ mod tests {
         });
 
         let words = prompt.split_whitespace().count();
+        // Every switch on at once is the worst case.
         assert!(
             words < 560,
             "a 0.5B model has little context to spare; got {words} words"

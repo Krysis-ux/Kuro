@@ -1,15 +1,4 @@
-//! Getting JSON-RPC to an MCP server.
-//!
-//! Two transports, both stateless from the caller's point of view: a call opens
-//! the channel, completes the handshake, does its work and closes. That is a
-//! deliberate trade. A pooled long-lived connection would save the handshake on
-//! every call, but it also means a stdio child process left running for the life
-//! of the app, and a user who edits a server's configuration would not see the
-//! change until a restart. Reconnecting per call costs a few hundred milliseconds
-//! and removes a whole class of stale-state bugs.
-//!
-//! Cost is contained instead by caching the *tool list* in the manager, which is
-//! what the UI reads constantly. Only an actual `tools/call` pays for a connection.
+//! Getting JSON-RPC to an MCP server over stdio or HTTP.
 
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -23,11 +12,10 @@ use crate::db::{McpServerRecord, McpTransport};
 use crate::mcp::protocol;
 use crate::{KuroError, Result};
 
-/// A server that has not answered within this is treated as unreachable. Long
-/// enough for `npx` to resolve a package on a cold cache, short enough that a
-/// dead server does not hold up a conversation.
+/// A server silent for this long is unreachable (long enough for `npx` on a
+/// cold cache).
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
-/// A single tool call's budget. Search and crawl tools legitimately take a while.
+/// A single tool call's budget.
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How a server was reached, and what it said about itself.
@@ -95,12 +83,7 @@ pub async fn call_tool(
 
 /* ---------- stdio ---------- */
 
-/// Handshake then call, as one step, so the caller can shut the child down
-/// afterwards regardless of which half failed.
-///
-/// The child is always terminated by the caller, including on the error path. A
-/// leaked MCP server process would keep running — and keep whatever access it was
-/// given — long after the conversation ended.
+/// Handshake then call as one step, so the caller always shuts the child down, including on error.
 async fn stdio_call(
     session: &mut StdioSession,
     params: Value,
@@ -143,9 +126,8 @@ impl StdioSession {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // The protocol runs on stdout, so a server's own logging on stderr
-            // must not be mixed in. Discarding it loses diagnostics; capturing it
-            // to the engine log directory would be the next improvement.
+            // The protocol runs on stdout. Server stderr is discarded (losing
+            // diagnostics); TODO: capture it to the engine log directory.
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
@@ -229,11 +211,8 @@ impl StdioSession {
         Ok(())
     }
 
-    /// Read until the reply to `id` arrives.
-    ///
-    /// Anything else on the stream — the server's own requests, log
-    /// notifications, non-JSON noise from a misbehaving process — is skipped
-    /// rather than treated as a protocol violation.
+    /// Read until the reply to `id` arrives, skipping anything else (server
+    /// requests, log notifications, non-JSON noise).
     async fn read_response(&mut self, id: u64) -> Result<Value> {
         let mut line = String::new();
 
@@ -262,8 +241,7 @@ impl StdioSession {
     }
 
     async fn shutdown(&mut self) {
-        // Closing stdin is how an MCP server is told to exit; killing it outright
-        // would deny it the chance to clean up.
+        // Closing stdin tells the server to exit and clean up.
         drop(self.writer.shutdown().await);
         let _ = self.child.start_kill();
         let _ = self.child.wait().await;
@@ -272,8 +250,7 @@ impl StdioSession {
 
 /* ---------- HTTP ---------- */
 
-/// Header a server uses to hand out a session id during `initialize`, which must
-/// then be echoed on every later request.
+/// Header carrying the session id from `initialize`, echoed on later requests.
 const SESSION_HEADER: &str = "mcp-session-id";
 
 struct HttpSession<'a> {
@@ -350,8 +327,7 @@ impl<'a> HttpSession<'a> {
         let mut request = self
             .client
             .post(&self.url)
-            // Both are advertised because a server may answer a single request
-            // either inline as JSON or as a one-event SSE stream, and it chooses.
+            // The server chooses between inline JSON and a one-event SSE stream.
             .header("Accept", "application/json, text/event-stream")
             .header("Content-Type", "application/json")
             .header("MCP-Protocol-Version", protocol::PROTOCOL_VERSION)
@@ -371,8 +347,7 @@ impl<'a> HttpSession<'a> {
 
     async fn notify(&self, method: &str) -> Result<()> {
         let payload = protocol::request(None, method, serde_json::json!({}));
-        // A notification has no reply; a server that answers 202 with no body is
-        // behaving correctly, so the response is not inspected beyond errors.
+        // A notification has no reply (202 with no body is correct); check errors only.
         let response = self
             .build(&payload, HANDSHAKE_TIMEOUT)
             .send()
@@ -472,10 +447,8 @@ fn http_status_error(name: &str, status: reqwest::StatusCode, body: &str) -> Kur
     }
 }
 
-/// Find the JSON-RPC reply to `id` inside an SSE body.
-///
-/// A streamable-HTTP server answers one request with a short stream: possibly
-/// some progress notifications, then the reply. Only the reply is wanted.
+/// Find the JSON-RPC reply to `id` in an SSE body (progress notifications may
+/// precede it).
 fn first_sse_response(body: &str, id: u64) -> Option<Value> {
     for block in body.split("\n\n") {
         let mut data = String::new();
@@ -578,9 +551,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_stdio_server_that_answers_the_handshake_yields_its_tools() {
-        // `cat` echoes back whatever is written to it, so it cannot complete a
-        // handshake — but it does prove the spawn, write and read path works and
-        // that a non-answer is reported rather than hanging forever.
+        // `cat` echoes, so it cannot complete a handshake; this exercises the
+        // spawn/write/read path and that a non-answer errors instead of hanging.
         let server = record(NewMcpServer {
             name: "Echo".to_string(),
             transport: "stdio".to_string(),

@@ -1,13 +1,5 @@
-//! Storage for projects.
-//!
-//! A project is standing instructions plus a grouping of conversations. The
-//! instructions are the substance — saying "this is a Rust codebase, assume the
-//! 2021 edition and tokio" once rather than at the top of every chat — and the
-//! grouping is what makes them discoverable again a week later.
-//!
-//! Deleting a project releases its conversations rather than deleting them. The
-//! chats are the work; the project is only a folder around them, and a folder
-//! should not be able to destroy its contents by accident.
+//! Storage for projects: standing instructions plus a grouping of conversations.
+//! Deleting a project releases its conversations rather than deleting them.
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -15,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::{json_or, now, Db};
 use crate::{KuroError, Result};
 
-/// Instructions longer than this stop being guidance and start being a document
-/// that crowds the conversation out of the context window.
+/// Longer instructions crowd the conversation out of the context window.
 const MAX_INSTRUCTION_CHARS: usize = 4000;
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,8 +40,7 @@ pub struct NewProject {
     pub tool_groups: Option<Vec<String>>,
 }
 
-/// A partial update. Every field absent means "leave it alone", which is what
-/// lets the instructions editor save without also having to send the model choice.
+/// A partial update; an absent field means "leave it alone".
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ProjectUpdate {
     #[serde(default)]
@@ -216,15 +206,12 @@ impl Db {
         })
     }
 
-    /// Conversations in a project, newest first.
-    ///
-    /// One indexed query rather than asking each conversation which project it is
-    /// in, which would be an N+1 on the page that exists to list them.
+    /// Conversations in a project, newest first, in one indexed query (no N+1).
     pub fn list_project_conversations(&self, project_id: &str) -> Result<Vec<super::Conversation>> {
         self.with(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, title, title_mode, model_id, pinned, archived, created_at,
-                        updated_at, forked_from_id, workspace_id
+                        updated_at, forked_from_id, workspace_id, project_id
                    FROM conversations
                   WHERE project_id = ?1 AND archived = 0
                   ORDER BY updated_at DESC",
@@ -242,6 +229,7 @@ impl Db {
                         updated_at: row.get(7)?,
                         forked_from_id: row.get(8)?,
                         workspace_id: row.get(9)?,
+                        project_id: row.get(10)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -272,8 +260,7 @@ impl Db {
 const COLUMNS: &str = "p.id, p.name, p.description, p.instructions, p.model_id, \
                        p.tool_groups, p.created_at, p.updated_at";
 
-/// Counted in the same statement rather than with a query per row, which would be
-/// an N+1 on a page that exists to list projects.
+/// Counted in the same statement rather than per row (no N+1).
 const COUNT_SUBQUERY: &str =
     "(SELECT COUNT(*) FROM conversations c WHERE c.project_id = p.id AND c.archived = 0)";
 

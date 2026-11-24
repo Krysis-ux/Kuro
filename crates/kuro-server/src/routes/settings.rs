@@ -6,10 +6,6 @@ use crate::error::{AppError, AppResult};
 use crate::state::SharedState;
 
 /// Every stored setting.
-///
-/// Keys the frontend owns (display toggles, composer preferences) live here
-/// alongside the handful the backend reads, so the UI needs no backend change
-/// to add a preference.
 pub async fn get_settings(State(state): State<SharedState>) -> AppResult<Json<Value>> {
     Ok(Json(Value::Object(state.db.all_settings()?)))
 }

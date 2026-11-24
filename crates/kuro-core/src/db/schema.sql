@@ -1,14 +1,10 @@
--- Kuro LLM schema, version 5.
+-- Kuro LLM schema. Every statement is `IF NOT EXISTS`, so the file is safe to
+-- re-run on an older database. Columns added to a shipped table go through
+-- `add_column_if_missing` in `db/mod.rs` instead. Bump `SCHEMA_VERSION` when
+-- this file changes.
 --
--- Every statement is `IF NOT EXISTS`, so the whole file is safe to re-run
--- against a database created by an earlier version. Columns added after a table
--- shipped cannot be expressed that way; those go through `add_column_if_missing`
--- in `db/mod.rs` instead.
---
--- Note: `models` holds only models the user has actually pulled. The curated
--- "recommended models" list is static data in `catalog::curated` and is merged
--- with these rows at the API layer, so refreshing recommendations in a new
--- release never requires a database migration.
+-- `models` holds only models the user has pulled; the curated list is static
+-- data in `catalog::curated`, merged in at the API layer.
 
 CREATE TABLE IF NOT EXISTS models (
     id                TEXT PRIMARY KEY,
@@ -30,17 +26,14 @@ CREATE TABLE IF NOT EXISTS models (
     last_used_at      TEXT
 );
 
--- A project groups conversations under standing instructions. The instructions
--- are appended to the model's brief for every conversation in the project, which
--- is the whole feature: "always answer as if reviewing production Rust" said once
--- rather than at the top of every chat.
+-- A project groups conversations under standing instructions, appended to the
+-- model's brief for every conversation in it.
 CREATE TABLE IF NOT EXISTS projects (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
     instructions TEXT NOT NULL DEFAULT '',
-    -- Model and tool defaults for chats started here, so a project can be
-    -- "the one where web search is always on".
+    -- Defaults for chats started here.
     model_id     TEXT,
     tool_groups  TEXT,                                -- JSON array, null means inherit
     created_at   TEXT NOT NULL,
@@ -50,15 +43,15 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE INDEX IF NOT EXISTS idx_projects_updated
     ON projects (updated_at DESC);
 
--- A coding workspace is a folder on this machine plus a mode saying how much a
--- model may do inside it. It is the only thing in Kuro that grants file access:
--- the chat surface has no file tools at all, whatever is enabled elsewhere.
+-- A coding workspace: a local folder plus a mode limiting what a model may do
+-- in it. It is the only thing that grants file access; plain chat has no file
+-- tools.
 CREATE TABLE IF NOT EXISTS workspaces (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
     root_path  TEXT NOT NULL,
     model_id   TEXT,
-    -- ask | plan | agent. Defaults to plan, which cannot change anything.
+    -- ask | plan | agent. `plan` is the default and cannot change anything.
     mode       TEXT NOT NULL DEFAULT 'plan',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -67,12 +60,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
 CREATE INDEX IF NOT EXISTS idx_workspaces_updated
     ON workspaces (updated_at DESC);
 
--- Every file a model changed, with what was there before it. This is what makes
--- agent mode reasonable to offer: a change that can be put back is one the user
--- can afford to let happen without being asked first.
---
--- Deleting a workspace clears its history, because the history is only useful
--- against the folder it was recorded for.
+-- Every file a model changed, with the prior content, so agent-mode changes can
+-- be undone. Deleting a workspace clears its history.
 CREATE TABLE IF NOT EXISTS workspace_changes (
     id              TEXT PRIMARY KEY,
     workspace_id    TEXT NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
@@ -99,26 +88,19 @@ CREATE TABLE IF NOT EXISTS conversations (
     archived     INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL,
-    -- Set when the conversation lives in a project. Deleting a project releases
-    -- its conversations rather than destroying them: the chats are the work, the
-    -- project is only a grouping.
+    -- Deleting a project releases its conversations rather than deleting them.
     project_id   TEXT REFERENCES projects (id) ON DELETE SET NULL,
-    -- Set when this conversation was branched off another one. Deleting the
-    -- original leaves the branch alone: a fork is a chat in its own right from
-    -- the moment it is made.
+    -- Set on a fork; deleting the original leaves the fork alone.
     forked_from_id TEXT REFERENCES conversations (id) ON DELETE SET NULL,
-    -- Set when the conversation belongs to a coding workspace, which is what
-    -- gives it access to files at all. Deleting the workspace releases the
-    -- chat rather than destroying it.
+    -- Coding workspace (gives file access); deleting it releases the chat.
     workspace_id   TEXT REFERENCES workspaces (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_updated
     ON conversations (archived, updated_at DESC);
 
--- Note: the index on `project_id` is NOT here. It cannot be, because on an
--- upgrade the column does not exist yet when this file runs — see LATE_INDEXES
--- in `db/mod.rs`.
+-- The `project_id` index is not here: on upgrade the column does not exist yet
+-- when this file runs. See LATE_INDEXES in `db/mod.rs`.
 
 CREATE TABLE IF NOT EXISTS messages (
     id                      TEXT PRIMARY KEY,
@@ -132,15 +114,13 @@ CREATE TABLE IF NOT EXISTS messages (
     used_web_search         INTEGER NOT NULL DEFAULT 0,
     web_sources             TEXT,                     -- JSON array of {title,url}
     model_id                TEXT,
-    -- Usage and timing come straight from llama-server's response, which is
-    -- what powers the per-message request inspector.
+    -- Usage and timing come from llama-server's response (request inspector).
     usage_prompt_tokens     INTEGER,
     usage_completion_tokens INTEGER,
-    -- Prompt tokens across every tool round, where the column above holds only
-    -- the last round's — which is what the inspector wants and understates
-    -- what an allowance actually paid for.
+    -- Prompt tokens summed across all tool rounds; the column above is the last
+    -- round only, which understates what an allowance paid for.
     usage_prompt_tokens_total INTEGER,
-    -- Which provider's allowance this turn spent. NULL for a local model.
+    -- Provider whose allowance this turn spent; NULL for a local model.
     provider_slug           TEXT,
     timing_ttft_ms          INTEGER,
     timing_total_ms         INTEGER,
@@ -165,14 +145,11 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     status      TEXT NOT NULL DEFAULT 'disconnected', -- connected | disconnected | error
     last_error  TEXT,
     created_at  TEXT NOT NULL,
-    -- Set when the server came from the recommended list, so the store can show
-    -- what is already installed without matching on names.
+    -- Set when the server came from the recommended list.
     slug        TEXT,
-    -- Tools reported by the last successful handshake. Cached so the list page
-    -- does not have to connect to every server to render a count.
+    -- Tool count from the last successful handshake, cached for the list page.
     tool_count  INTEGER,
-    -- Reference into the credential store for a bearer token. The token itself
-    -- is never written to this database.
+    -- Credential-store reference for a bearer token; the token is never stored here.
     auth_ref    TEXT
 );
 
@@ -182,12 +159,9 @@ CREATE TABLE IF NOT EXISTS conversation_mcp_servers (
     PRIMARY KEY (conversation_id, mcp_server_id)
 );
 
--- Remote model providers the user holds the key for: OpenRouter, OpenAI,
--- Anthropic, a rented GPU box, anything speaking the OpenAI API.
---
--- Credentials live in the separate credential store (see `secrets.rs`); this
--- table holds only the lookup reference, so a copy of the database never carries
--- a key with it.
+-- Remote model providers the user holds a key for (anything speaking the OpenAI
+-- API). Keys live in the credential store (`secrets.rs`); this table holds only
+-- the lookup reference.
 CREATE TABLE IF NOT EXISTS cloud_connectors (
     id             TEXT PRIMARY KEY,
     provider       TEXT NOT NULL,                     -- openrouter | openai | anthropic | groq | ... | custom
@@ -199,8 +173,7 @@ CREATE TABLE IF NOT EXISTS cloud_connectors (
     last_error     TEXT,
     created_at     TEXT NOT NULL,
     enabled        INTEGER NOT NULL DEFAULT 1,
-    -- Model ids reported by the endpoint's own `/models`, cached from the last
-    -- successful test so the picker does not have to call out on every render.
+    -- Model ids from the endpoint's `/models`, cached from the last successful test.
     models         TEXT NOT NULL DEFAULT '[]'         -- JSON array
 );
 
@@ -247,10 +220,8 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
     updated_at TEXT NOT NULL
 );
 
--- What the model has been asked to remember, written by the `remember` tool and
--- read back by `recall`. Kept in the database rather than in the prompt so it
--- survives a conversation ending, and scoped to nothing so a fact learned in one
--- chat is available in the next.
+-- Facts written by the `remember` tool and read by `recall`. Global, not
+-- per-conversation, so they carry across chats.
 CREATE TABLE IF NOT EXISTS memories (
     id         TEXT PRIMARY KEY,
     content    TEXT NOT NULL,
@@ -262,11 +233,22 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_memories_created
     ON memories (created_at DESC);
 
--- Skills the user added themselves: uploaded as a SKILL.md, or pulled out of a
--- GitHub repository. Kept apart from the built-in catalogue rather than merged
--- into it, because the two have different rules — a built-in is part of the
--- build and cannot be deleted, and one of these can be removed the moment it
--- turns out to be wrong.
+-- Skills the user added (a SKILL.md upload or a GitHub repository). Separate
+-- from the built-in catalogue because these can be deleted and built-ins cannot.
+-- Subagents the user wrote. The built-in ones live in code (`agents::AGENTS`).
+CREATE TABLE IF NOT EXISTS user_agents (
+    slug        TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    blurb       TEXT NOT NULL,
+    when_to_use TEXT NOT NULL,
+    brief       TEXT NOT NULL,
+    -- JSON array of skill slugs loaded on top of the project's own.
+    skills      TEXT NOT NULL DEFAULT '[]',
+    writes      INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS user_skills (
     slug          TEXT PRIMARY KEY,
     name          TEXT NOT NULL,
@@ -274,8 +256,26 @@ CREATE TABLE IF NOT EXISTS user_skills (
     category      TEXT NOT NULL,
     instructions  TEXT NOT NULL,
     approx_tokens INTEGER NOT NULL,
-    -- Where it came from, shown on the card: `upload`, or the repository URL.
+    -- `upload`, or the repository URL.
     source        TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
+);
+
+-- Saved prompts that run on a schedule. Each run's reply lands in `conversation_id`,
+-- made on the first run and made again if the user deletes that chat.
+CREATE TABLE IF NOT EXISTS user_automations (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    prompt          TEXT NOT NULL,
+    model           TEXT,                             -- NULL: the server default
+    -- `every:N` (minutes), `daily:HH:MM` or `weekdays:HH:MM`, in this Mac's local time.
+    schedule        TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    last_run_at     TEXT,
+    next_run_at     TEXT,                             -- NULL while switched off
+    last_error      TEXT,
+    conversation_id TEXT REFERENCES conversations (id) ON DELETE SET NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
 );

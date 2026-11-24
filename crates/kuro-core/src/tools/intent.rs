@@ -1,32 +1,20 @@
-//! Deciding whether a message needs the web, and what to search for.
+//! Whether a message needs the web, and what to search for.
 //!
-//! The web switch used to mean "search this message, verbatim, always". That is
-//! wrong in two ways that were both visible in real transcripts:
+//! * [`decide`]: skip greetings and pleasantries, questions about Kuro or this
+//!   machine, and questions about the conversation itself.
+//! * [`search_query`]: strip instruction words ("search for ...") so they do not
+//!   compete with the subject in ranking.
 //!
-//! * "hi" was searched. Five dictionary definitions of the word "hi" came back,
-//!   none of which answer a greeting, and the model — told to use the results and
-//!   to admit when it does not know — replied "I don't know" and listed them.
-//! * "search for more research papers on deepseek and llms and how we can
-//!   optimize them" was searched as that whole sentence. Search engines rank on
-//!   the query they are given, so the instruction words competed with the actual
-//!   subject.
-//!
-//! So two decisions live here. Whether to search at all, which is a
-//! classification, and what string to send if so, which is an extraction. Both
-//! are deliberately blunt keyword work rather than a model call: this runs before
-//! the first token of every message with the switch on, and spending an inference
-//! round on it would be felt as latency on every turn.
-//!
-//! The bias is towards searching. A needless search costs a second and some
-//! context; a missed one costs the answer. Skipping only happens on a short list
-//! of cases where searching is provably useless.
+//! Both are blunt keyword matching, not a model call, because this runs before
+//! the first token of every message. The bias is towards searching: a needless
+//! search costs a second, a missed one costs the answer.
 
 /// What to do about the web for one message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchDecision {
     /// Search, using this query rather than the raw message.
     Search(String),
-    /// Do not search. The reason is shown in the log and in the request inspector.
+    /// Do not search. The reason is shown in the log and request inspector.
     Skip(SkipReason),
 }
 
@@ -34,8 +22,8 @@ pub enum SearchDecision {
 pub enum SkipReason {
     /// A greeting or pleasantry. There is nothing to look up.
     Conversational,
-    /// A question about Kuro, this machine, or the model's own setup. The answer
-    /// is in the system prompt; the web knows nothing about this deployment.
+    /// A question about Kuro, this machine, or the model's setup (answered from
+    /// the system prompt, not the web).
     AboutThisSetup,
     /// A question about what has already been said in this conversation.
     AboutThisConversation,
@@ -55,10 +43,8 @@ impl SkipReason {
     }
 }
 
-/// Greetings and pleasantries, matched against the whole message.
-///
-/// Matching the whole message rather than looking for these as substrings is the
-/// point: "hi" is a greeting, "hi-fi speaker reviews" is a query.
+/// Greetings and pleasantries, matched against the whole message ("hi" is a
+/// greeting, "hi-fi speaker reviews" is a query).
 const PLEASANTRIES: &[&str] = &[
     "hi", "hii", "hiya", "hey", "heya", "hello", "helo", "yo", "sup", "wassup", "whats up",
     "what's up", "howdy", "greetings", "good morning", "good afternoon", "good evening",
@@ -71,11 +57,8 @@ const PLEASANTRIES: &[&str] = &[
     "how's it going", "how do you do", "whats good", "what's good",
 ];
 
-/// Phrases that mean the question is about this application, this machine, or
-/// the model's own configuration.
-///
-/// Deliberately specific. A loose rule here would swallow real questions — "can
-/// you read this paper for me" is a fetch, not a question about capabilities.
+/// Phrases meaning the question is about this application, this machine, or the model's
+/// configuration.
 const ABOUT_THIS_SETUP: &[&str] = &[
     "mcp server",
     "mcp servers",
@@ -138,10 +121,8 @@ const ABOUT_THIS_CONVERSATION: &[&str] = &[
     "earlier you said",
 ];
 
-/// Instruction prefixes stripped before searching.
-///
-/// Longest first, so "do a search for" is removed whole rather than leaving
-/// "a search for" behind after "do " matches.
+/// Instruction prefixes stripped before searching. Longest first, so "do a
+/// search for" is removed whole.
 const LEAD_INS: &[&str] = &[
     "can you please search the web for",
     "can you please search for",
@@ -204,19 +185,15 @@ const TRAILING_FILLER: &[&str] = &[
     "if possible",
 ];
 
-/// A query longer than this is trimmed. Search engines weight the head of a
-/// query and a rambling tail mostly adds noise.
+/// Queries longer than this (chars) are trimmed; a rambling tail adds noise.
 const MAX_QUERY_CHARS: usize = 200;
 
 /// Decide what the web should do about one message.
 pub fn decide(message: &str) -> SearchDecision {
     let normalised = normalise(message);
 
-    // Checked before the length floor, because the shortest messages of all —
-    // "hi", "ok", "no" — are exactly the ones this catches.
-    //
-    // A pleasantry is the whole message or nothing. "hi" skips; "hi, what is the
-    // population of Tokyo" is a real question that happens to open politely.
+    // Before the length floor, since "hi"/"ok"/"no" are the shortest messages.
+    // A pleasantry must be the whole message.
     if PLEASANTRIES.contains(&normalised.as_str()) {
         return SearchDecision::Skip(SkipReason::Conversational);
     }
@@ -244,10 +221,8 @@ pub fn decide(message: &str) -> SearchDecision {
     SearchDecision::Search(search_query(message))
 }
 
-/// Turn a message into the string to hand a search engine.
-///
-/// The instruction is removed and the subject kept, so "search for research
-/// papers on deepseek" is searched as "research papers on deepseek".
+/// Turn a message into a search query: "search for research papers on deepseek"
+/// becomes "research papers on deepseek".
 pub fn search_query(message: &str) -> String {
     let mut working = collapse_whitespace(message.trim());
 
@@ -262,8 +237,7 @@ pub fn search_query(message: &str) -> String {
         };
         let rest = working[matched.len()..].trim_start_matches([' ', ',', ':']).trim();
         if rest.is_empty() {
-            // The whole message was an instruction with no subject. Keep what
-            // there was rather than searching for nothing.
+            // Instruction with no subject: keep it rather than search for nothing.
             break;
         }
         working = rest.to_string();
@@ -318,10 +292,8 @@ fn strip_leading_greeting(normalised: &str) -> Option<String> {
     )
 }
 
-/// Whether `text` starts with `prefix` at a word boundary.
-///
-/// Without the boundary check, "search" would match the start of "searching for
-/// a job in Berlin" and leave "ing for a job in Berlin".
+/// Whether `text` starts with `prefix` at a word boundary ("search" must not
+/// match "searching for a job").
 fn starts_with_word(text: &str, prefix: &str) -> bool {
     let Some(rest) = text.strip_prefix(prefix) else {
         return false;
@@ -368,8 +340,6 @@ mod tests {
 
     #[test]
     fn a_greeting_is_not_a_search() {
-        // The bug this module exists for: "hi" returned dictionary definitions
-        // of the word "hi", and the model answered "I don't know".
         for greeting in ["hi", "Hi", "hello", "hey!", "  hi  ", "yo", "Good morning"] {
             assert_eq!(skipped(greeting), SkipReason::Conversational, "{greeting}");
         }
@@ -399,8 +369,6 @@ mod tests {
 
     #[test]
     fn questions_about_this_setup_are_answered_from_the_prompt_not_the_web() {
-        // Searching the web for "what MCP servers did I connect" cannot work:
-        // the web does not know what is on this machine.
         for message in [
             "what mcp servers did i just connect",
             "do you have access to my file system",
@@ -434,8 +402,6 @@ mod tests {
 
     #[test]
     fn the_instruction_is_stripped_and_the_subject_kept() {
-        // The second transcript bug: the whole sentence was the query, so the
-        // instruction words competed with the subject for ranking.
         let query = search_query(
             "search for more research papers on deepseek ai and llm's and how we can optimize them",
         );

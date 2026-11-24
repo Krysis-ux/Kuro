@@ -1,13 +1,17 @@
+//! Anthropic Messages API in, OpenAI chat API out.
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 pub mod stream;
 
 pub use stream::{AnthropicEvent, StreamTranslator};
 
+/// Turn an Anthropic Messages request into an OpenAI chat request.
 pub fn to_openai_request(anthropic: &Value, model: &str) -> Value {
     let mut messages: Vec<Value> = Vec::new();
 
+    // The system prompt becomes the first message. Anthropic also allows an array
+    // of text blocks here (a cached multi-part prompt).
     if let Some(system) = anthropic.get("system") {
         let text = flatten_text(system);
         if !text.is_empty() {
@@ -30,6 +34,7 @@ pub fn to_openai_request(anthropic: &Value, model: &str) -> Value {
         "stream": anthropic.get("stream").and_then(Value::as_bool).unwrap_or(false),
     });
 
+    // Copied only when present: a default here would overrule the endpoint's own.
     for key in ["max_tokens", "temperature", "top_p", "stop_sequences"] {
         if let Some(value) = anthropic.get(key) {
             let name = if key == "stop_sequences" { "stop" } else { key };
@@ -48,6 +53,8 @@ pub fn to_openai_request(anthropic: &Value, model: &str) -> Value {
     body
 }
 
+/// Anthropic's `{name, description, input_schema}` is OpenAI's
+/// `{type: "function", function: {name, description, parameters}}`.
 fn to_openai_tool(tool: &Value) -> Value {
     json!({
         "type": "function",
@@ -79,10 +86,12 @@ fn tool_choice(anthropic: &Value) -> Value {
     }
 }
 
+/// Translate one Anthropic message, which may become several OpenAI ones.
 fn translate_message(message: &Value, out: &mut Vec<Value>) {
     let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
 
     let Some(blocks) = message.get("content").and_then(Value::as_array) else {
+        // Plain string content.
         out.push(json!({
             "role": role,
             "content": message.get("content").cloned().unwrap_or_else(|| json!("")),
@@ -105,6 +114,7 @@ fn translate_message(message: &Value, out: &mut Vec<Value>) {
                 "type": "function",
                 "function": {
                     "name": block.get("name").cloned().unwrap_or(Value::Null),
+                    // OpenAI wants the arguments as a JSON *string*.
                     "arguments": block
                         .get("input")
                         .map(|input| input.to_string())
@@ -112,6 +122,8 @@ fn translate_message(message: &Value, out: &mut Vec<Value>) {
                 },
             })),
             Some("tool_result") => {
+                // Emitted in order: a tool result must follow the assistant message that
+                // called for it, or the endpoint rejects the conversation.
                 out.push(json!({
                     "role": "tool",
                     "tool_call_id": block.get("tool_use_id").cloned().unwrap_or(Value::Null),
@@ -120,12 +132,15 @@ fn translate_message(message: &Value, out: &mut Vec<Value>) {
                     ),
                 }));
             }
+            // Image blocks can't be carried on this path; dropped rather than passed
+            // on in a shape the endpoint would reject.
             _ => {}
         }
     }
 
     if !tool_calls.is_empty() {
         let mut assistant = json!({ "role": "assistant", "tool_calls": tool_calls });
+        // `content` must be present (null here) or several endpoints reject the message.
         assistant["content"] = if text.is_empty() { Value::Null } else { json!(text) };
         out.push(assistant);
     } else if !text.is_empty() {
@@ -133,6 +148,7 @@ fn translate_message(message: &Value, out: &mut Vec<Value>) {
     }
 }
 
+/// Reduce Anthropic's "string or array of blocks" to a plain string.
 pub fn flatten_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
@@ -149,6 +165,7 @@ pub fn flatten_text(value: &Value) -> String {
     }
 }
 
+/// Turn a complete OpenAI chat response into an Anthropic Messages response.
 pub fn to_anthropic_response(openai: &Value, model: &str) -> Value {
     let message = openai.pointer("/choices/0/message").cloned().unwrap_or_else(|| json!({}));
     let mut content: Vec<Value> = Vec::new();
@@ -188,6 +205,7 @@ pub fn to_anthropic_response(openai: &Value, model: &str) -> Value {
     })
 }
 
+/// One OpenAI tool call as an Anthropic `tool_use` block.
 pub fn tool_use_block(call: &Value) -> Value {
     let arguments = call
         .pointer("/function/arguments")
@@ -198,11 +216,13 @@ pub fn tool_use_block(call: &Value) -> Value {
         "type": "tool_use",
         "id": call.get("id").cloned().unwrap_or_else(|| json!("toolu_kuro")),
         "name": call.pointer("/function/name").cloned().unwrap_or(Value::Null),
+        // Back to an object: a string `input` reads as a tool call with no arguments.
         "input": serde_json::from_str::<Value>(arguments)
             .unwrap_or_else(|_| json!({})),
     })
 }
 
+/// OpenAI's finish reasons in Anthropic's vocabulary.
 pub fn stop_reason(finish: &str) -> &'static str {
     match finish {
         "tool_calls" | "function_call" => "tool_use",
@@ -219,6 +239,7 @@ fn usage(openai: &Value, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// A Messages-shaped error, so a failure is legible to the caller.
 pub fn error_body(kind: &str, message: &str) -> Value {
     json!({
         "type": "error",
@@ -226,16 +247,14 @@ pub fn error_body(kind: &str, message: &str) -> Value {
     })
 }
 
+/// Whether a request asked for streaming.
 pub fn wants_stream(anthropic: &Value) -> bool {
     anthropic.get("stream").and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// The model name the caller asked for, if any.
 pub fn requested_model(anthropic: &Value) -> Option<&str> {
     anthropic.get("model").and_then(Value::as_str)
-}
-
-pub fn is_object(value: &Value) -> Option<&Map<String, Value>> {
-    value.as_object()
 }
 
 #[cfg(test)]
@@ -260,6 +279,7 @@ mod tests {
 
     #[test]
     fn a_system_prompt_split_into_blocks_is_joined() {
+        // How a client sends a prompt it wants cached in parts.
         let request = json!({
             "system": [
                 { "type": "text", "text": "First part." },
@@ -289,6 +309,7 @@ mod tests {
 
         assert_eq!(tool["type"], "function");
         assert_eq!(tool["function"]["name"], "read_file");
+        // `input_schema` becomes `parameters`, which is the whole difference.
         assert_eq!(tool["function"]["parameters"]["properties"]["path"]["type"], "string");
     }
 
@@ -411,6 +432,7 @@ mod tests {
 
     #[test]
     fn malformed_tool_arguments_become_an_empty_object_rather_than_a_string() {
+        // Small models emit invalid JSON often enough that this is the normal case.
         let call = json!({
             "id": "c1",
             "function": { "name": "x", "arguments": "{not json" },
@@ -424,6 +446,7 @@ mod tests {
         assert_eq!(stop_reason("tool_calls"), "tool_use");
         assert_eq!(stop_reason("length"), "max_tokens");
         assert_eq!(stop_reason("stop"), "end_turn");
+        // An unknown reason is an ordinary end rather than an error.
         assert_eq!(stop_reason("something_new"), "end_turn");
     }
 

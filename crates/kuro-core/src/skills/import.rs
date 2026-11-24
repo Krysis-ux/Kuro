@@ -1,3 +1,4 @@
+//! Pulling skills out of a GitHub repository.
 
 use serde::Deserialize;
 
@@ -6,12 +7,15 @@ use crate::{KuroError, Result};
 
 use super::custom::{estimate_tokens, parse_skill_md, ParsedSkill};
 
+/// Most `SKILL.md` files taken from one repository (more would flood the palette).
 pub const MAX_PER_REPO: usize = 60;
 
+/// A repository, as the tree API needs it named.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repo {
     pub owner: String,
     pub name: String,
+    /// `None` when the URL did not name one, in which case the default is used.
     pub branch: Option<String>,
 }
 
@@ -21,6 +25,8 @@ impl Repo {
     }
 }
 
+/// Read a GitHub URL: browser URL, clone URL (`.git`), `tree/<branch>` link, or
+/// bare `owner/name`.
 pub fn parse_repo(raw: &str) -> Result<Repo> {
     let trimmed = raw.trim().trim_end_matches('/');
 
@@ -30,6 +36,8 @@ pub fn parse_repo(raw: &str) -> Result<Repo> {
         .or_else(|| trimmed.strip_prefix("git@github.com:"))
         .or_else(|| trimmed.strip_prefix("github.com/"));
 
+    // A bare `owner/name` is allowed, but anything with a scheme or host must have matched a form
+    // above (else `https://example.com` parses as owner `https:`).
     let path = match matched {
         Some(rest) => rest,
         None if trimmed.contains("://") || trimmed.contains('@') => {
@@ -54,6 +62,7 @@ pub fn parse_repo(raw: &str) -> Result<Repo> {
         )));
     }
 
+    // `.../tree/<branch>/...` imports that branch.
     let branch = match parts.next() {
         Some("tree") => parts.next().map(str::to_string),
         _ => None,
@@ -80,13 +89,17 @@ struct TreeEntry {
     kind: String,
 }
 
+/// One skill found in a repository, and what it cost to notice.
 #[derive(Debug, Clone)]
 pub struct Found {
     pub parsed: ParsedSkill,
+    /// Where in the repository it came from, shown so the user can check it.
     pub path: String,
+    /// True when the file expects `scripts/` that were deliberately not taken.
     pub wants_scripts: bool,
 }
 
+/// Find and read every `SKILL.md` in a repository.
 pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<Found>> {
     let branch = match &repo.branch {
         Some(named) => named.clone(),
@@ -122,6 +135,7 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
         .filter(|path| is_skill_file(path))
         .collect();
 
+    // Shallower paths first, so the cap keeps the obvious skills.
     paths.sort_by_key(|path| (path.matches('/').count(), path.clone()));
 
     if paths.is_empty() {
@@ -154,6 +168,7 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
         }
         let Ok(text) = body.text().await else { continue };
 
+        // The containing directory is the skill's name in every common layout.
         let fallback = path
             .rsplit('/')
             .nth(1)
@@ -162,6 +177,8 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
 
         match parse_skill_md(&text, &fallback) {
             Ok(parsed) => {
+                // Repositories mirror one skill under several agent folders. Dedupe by slug,
+                // since a lone copy in one of them must still import.
                 if seen.iter().any(|held| held == &parsed.slug) {
                     continue;
                 }
@@ -172,6 +189,7 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
                     path,
                 });
             }
+            // One malformed file should not fail an import of forty.
             Err(error) => tracing::debug!(%path, %error, "skipped an unreadable SKILL.md"),
         }
     }
@@ -186,6 +204,8 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
     Ok(found)
 }
 
+/// Ask GitHub for the default branch (guessing `main` 404s on `master` repos,
+/// which reads as "no such repository").
 async fn default_branch(client: &reqwest::Client, repo: &Repo) -> Result<String> {
     #[derive(Deserialize)]
     struct RepoResponse {
@@ -227,12 +247,15 @@ fn github_error(status: reqwest::StatusCode, slug: &str) -> KuroError {
     }
 }
 
+/// Whether a path is a skill definition (`SKILL.md`, case-insensitive since some
+/// repositories use `skill.md`).
 fn is_skill_file(path: &str) -> bool {
     path.rsplit('/')
         .next()
         .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
 }
 
+/// Whether the instructions expect files this import does not take.
 fn mentions_scripts(instructions: &str) -> bool {
     let lowered = instructions.to_lowercase();
     ["scripts/", "./script", "python scripts", "run the script"]
@@ -240,6 +263,7 @@ fn mentions_scripts(instructions: &str) -> bool {
         .any(|needle| lowered.contains(needle))
 }
 
+/// Turn a parsed skill into the row that will be stored.
 pub fn to_record(found: &Found, source: &str) -> UserSkillRecord {
     UserSkillRecord {
         slug: found.parsed.slug.clone(),
@@ -299,6 +323,7 @@ mod tests {
         assert!(is_skill_file("skills/taste/SKILL.md"));
         assert!(is_skill_file("a/b/c/skill.md"));
 
+        // Other files in a skills repository.
         assert!(!is_skill_file("README.md"));
         assert!(!is_skill_file("skills/taste/reference.md"));
         assert!(!is_skill_file("scripts/build.py"));
@@ -307,10 +332,11 @@ mod tests {
 
     #[test]
     fn shallower_paths_are_preferred_so_a_mirror_never_wins() {
+        // Prefer the top-level copy over per-agent mirrors.
         let mut paths = [
             ".cursor/skills/x/SKILL.md".to_string(),
             "SKILL.md".to_string(),
-            ".claude/skills/x/SKILL.md".to_string(),
+            ".agents/skills/x/SKILL.md".to_string(),
         ];
         paths.sort_by_key(|path| (path.matches('/').count(), path.clone()));
 

@@ -1,23 +1,18 @@
-//! Rough "will this model run here?" estimate.
-//!
-//! This is deliberately a coarse heuristic, not a benchmark. It answers the one
-//! question a model card needs to answer — is downloading this a good idea? —
-//! and the UI labels it as approximate. Real throughput depends on the model
-//! architecture, context length and what else is running.
+//! Rough "will this model run here?" estimate: a coarse heuristic, not a
+//! benchmark. Real throughput depends on architecture, context length and load.
 
 use serde::Serialize;
 
 use super::HardwareInfo;
 
-/// Weights are not the whole cost: the KV cache, compute buffers and the
-/// allocator's slack all sit on top. This multiplier covers that.
+/// Multiplier on weight size for the KV cache, compute buffers and allocator slack.
 const OVERHEAD_MULTIPLIER: f64 = 1.15;
 
-/// Roughly what the KV cache and runtime buffers cost at the default 4k
-/// context. Larger contexts cost more, which is why the estimate is a floor.
+/// Approximate KV cache and runtime buffer cost at the default 4k context
+/// (larger contexts cost more, so the estimate is a floor).
 const BASE_RUNTIME_OVERHEAD_BYTES: f64 = 1.0 * 1024.0 * 1024.0 * 1024.0;
 
-/// Memory the operating system and other applications need to stay responsive.
+/// Memory left to the OS and other applications.
 const SYSTEM_RESERVE_BYTES: f64 = 3.0 * 1024.0 * 1024.0 * 1024.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

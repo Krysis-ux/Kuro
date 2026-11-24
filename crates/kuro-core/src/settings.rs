@@ -1,3 +1,4 @@
+//! Typed access to the settings the backend itself acts on.
 
 use std::collections::HashMap;
 
@@ -17,10 +18,14 @@ pub const KEY_ENGINE_RELEASE_TAG: &str = "engine.releaseTag";
 pub const KEY_DEFAULT_MODEL: &str = "chat.defaultModel";
 pub const KEY_SEARCH_PROVIDER: &str = "search.provider";
 pub const KEY_SEARCH_BASE_URL: &str = "search.baseUrl";
+/// Tool groups on by default in a new conversation.
 pub const KEY_DEFAULT_TOOL_GROUPS: &str = "tools.defaultGroups";
+/// Whether saved memories are prepended to a conversation without being asked for.
 pub const KEY_MEMORY_PRELOAD: &str = "tools.memoryPreload";
+/// Standing facts the user typed about themselves, rather than ones a model saved.
 pub const KEY_MEMORY_ABOUT_YOU: &str = "memory.aboutYou";
 
+/// What the user wants every model to know about them.
 pub fn about_you(db: &Db) -> Result<Option<String>> {
     Ok(db
         .get_setting(KEY_MEMORY_ABOUT_YOU)?
@@ -29,15 +34,30 @@ pub fn about_you(db: &Db) -> Result<Option<String>> {
         .filter(|text| !text.is_empty()))
 }
 
+/* --- Per-surface preferences ---
+ * Chat and coding have separate settings: the right default differs on almost
+ * every one (a chat that ran the tests unasked would alarm; a coding turn that
+ * did not would be useless).
+ */
+
+/// Whether effort also selects skills and tool budget on the chat surface.
 pub const KEY_CHAT_AUTO_ORCHESTRATE: &str = "chat.autoOrchestrate";
+/// The same, for coding workspaces.
 pub const KEY_CODE_AUTO_ORCHESTRATE: &str = "code.autoOrchestrate";
+/// Effort a new chat starts at.
 pub const KEY_CHAT_DEFAULT_EFFORT: &str = "chat.defaultEffort";
+/// Effort a coding turn starts at.
 pub const KEY_CODE_DEFAULT_EFFORT: &str = "code.defaultEffort";
+/// Mode a newly opened workspace starts in.
 pub const KEY_CODE_DEFAULT_MODE: &str = "code.defaultMode";
+/// Where downloaded model files are kept. Empty means Kuro's own data directory.
 pub const KEY_MODELS_DIRECTORY: &str = "models.directory";
+/// Whether the free pool may fall back to shared, unauthenticated endpoints.
 pub const KEY_FREE_ALLOW_KEYLESS: &str = "free.allowKeyless";
+/// Per-provider allowances the user typed in, as a JSON object.
 pub const KEY_FREE_ALLOWANCES: &str = "free.allowances";
 
+/// Whether shared, keyless endpoints may answer.
 pub fn allow_keyless(db: &Db) -> Result<bool> {
     Ok(db
         .get_setting(KEY_FREE_ALLOW_KEYLESS)?
@@ -45,6 +65,7 @@ pub fn allow_keyless(db: &Db) -> Result<bool> {
         .unwrap_or(true))
 }
 
+/// A ceiling the user typed in for one provider.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Allowance {
     #[serde(rename = "tokensPerDay", skip_serializing_if = "Option::is_none")]
@@ -54,18 +75,23 @@ pub struct Allowance {
 }
 
 impl Allowance {
+    /// Whether this says anything at all.
     pub fn is_empty(self) -> bool {
         self.tokens_per_day.is_none() && self.tokens_per_month.is_none()
     }
 }
 
+/// Every allowance the user has entered, by provider slug.
 pub fn free_allowances(db: &Db) -> Result<HashMap<String, Allowance>> {
     let Some(value) = db.get_setting(KEY_FREE_ALLOWANCES)? else {
         return Ok(HashMap::new());
     };
+    // An unreadable stored value counts as none: failing the free-models page
+    // would remove the place it is edited.
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
+/// Set or clear one provider's allowance.
 pub fn set_free_allowance(db: &Db, slug: &str, allowance: Option<Allowance>) -> Result<()> {
     let mut held = free_allowances(db)?;
     match allowance.filter(|entry| !entry.is_empty()) {
@@ -75,6 +101,7 @@ pub fn set_free_allowance(db: &Db, slug: &str, allowance: Option<Allowance>) -> 
     db.set_setting(KEY_FREE_ALLOWANCES, &serde_json::to_value(held)?)
 }
 
+/// Whether effort should also pick skills and a tool budget.
 pub fn auto_orchestrate(db: &Db, surface: crate::orchestrate::Surface) -> Result<bool> {
     let key = match surface {
         crate::orchestrate::Surface::Chat => KEY_CHAT_AUTO_ORCHESTRATE,
@@ -83,6 +110,7 @@ pub fn auto_orchestrate(db: &Db, surface: crate::orchestrate::Surface) -> Result
     Ok(db.get_setting(key)?.and_then(|value| value.as_bool()).unwrap_or(true))
 }
 
+/// The effort a surface starts at.
 pub fn default_effort(db: &Db, surface: crate::orchestrate::Surface) -> Result<Effort> {
     let (key, fallback) = match surface {
         crate::orchestrate::Surface::Chat => (KEY_CHAT_DEFAULT_EFFORT, Effort::Balanced),
@@ -95,6 +123,7 @@ pub fn default_effort(db: &Db, surface: crate::orchestrate::Surface) -> Result<E
         .unwrap_or(fallback))
 }
 
+/// The mode a newly opened workspace starts in.
 pub fn default_workspace_mode(db: &Db) -> Result<crate::workspace::WorkspaceMode> {
     Ok(db
         .get_setting(KEY_CODE_DEFAULT_MODE)?
@@ -106,8 +135,11 @@ pub fn default_workspace_mode(db: &Db) -> Result<crate::workspace::WorkspaceMode
         .unwrap_or(crate::workspace::WorkspaceMode::Agent))
 }
 
+/// How long a model stays resident with no requests before it is unloaded.
+/// Zero means "keep it loaded until told otherwise".
 const DEFAULT_IDLE_UNLOAD_MINUTES: u32 = 30;
 
+/// Engine options resolved against the user's overrides and this machine's capabilities.
 #[derive(Debug, Clone, Serialize)]
 pub struct EngineSettings {
     pub context_size: u32,
@@ -143,6 +175,7 @@ impl EngineSettings {
     }
 }
 
+/// Web search preferences.
 #[derive(Debug, Clone)]
 pub struct SearchSettings {
     pub provider: SearchProvider,
@@ -150,6 +183,8 @@ pub struct SearchSettings {
 }
 
 impl SearchSettings {
+    /// Credential-store reference for the search provider's key. A single reference:
+    /// only one provider is active, and a stale key for another is a liability.
     pub const KEY_REFERENCE: &'static str = "search:api-key";
 
     pub fn resolve(db: &Db) -> Result<Self> {
@@ -167,6 +202,7 @@ impl SearchSettings {
     }
 }
 
+/// Tool groups a new conversation starts with.
 pub fn default_tool_groups(db: &Db) -> Result<Vec<ToolGroup>> {
     let fallback = || vec![ToolGroup::Memory, ToolGroup::Projects];
 
@@ -186,6 +222,7 @@ pub fn default_tool_groups(db: &Db) -> Result<Vec<ToolGroup>> {
         .unwrap_or_else(fallback))
 }
 
+/// Whether saved memories are put in front of the model unasked.
 pub fn memory_preload_enabled(db: &Db) -> Result<bool> {
     Ok(db
         .get_setting(KEY_MEMORY_PRELOAD)?
@@ -204,6 +241,7 @@ fn read_i64(db: &Db, key: &str) -> Result<Option<i64>> {
     Ok(db.get_setting(key)?.and_then(|value| value.as_i64()))
 }
 
+/// How much compute to spend on a reply.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default,
 )]
@@ -214,6 +252,7 @@ pub enum Effort {
     Balanced,
     High,
     Max,
+    /// Everything, and only offered when coding.
     Ultra,
 }
 
@@ -222,6 +261,8 @@ pub struct EffortParams {
     pub temperature: f32,
     pub top_p: f32,
     pub max_tokens: u32,
+    /// Passed through to models that expose a thinking budget. Models that do
+    /// not understand it simply ignore the field.
     pub reasoning_effort: Option<&'static str>,
 }
 
@@ -247,10 +288,7 @@ impl Effort {
         }
     }
 
-    pub fn coding_only(self) -> bool {
-        self == Self::Ultra
-    }
-
+    /// The highest level a surface offers.
     pub fn ceiling(coding: bool) -> Self {
         if coding {
             Self::Ultra
@@ -259,6 +297,8 @@ impl Effort {
         }
     }
 
+    /// Effort mainly buys output length and thinking budget. Temperature moves
+    /// only slightly, because "try harder" should not mean "be more random".
     pub fn params(self) -> EffortParams {
         match self {
             Self::Low => EffortParams {
@@ -285,6 +325,8 @@ impl Effort {
                 max_tokens: 8192,
                 reasoning_effort: Some("high"),
             },
+            // Not hotter than Max: Ultra buys persistence, and more randomness would cost
+            // the reliability a long agentic run needs.
             Self::Ultra => EffortParams {
                 temperature: 0.7,
                 top_p: 0.95,
@@ -371,10 +413,9 @@ mod tests {
 
     #[test]
     fn ultra_is_offered_when_coding_and_nowhere_else() {
+        // A chat has nothing to spend it on.
         assert_eq!(Effort::ceiling(true), Effort::Ultra);
         assert_eq!(Effort::ceiling(false), Effort::Max);
-        assert!(Effort::Ultra.coding_only());
-        assert!(!Effort::Max.coding_only());
     }
 
     #[test]
@@ -402,6 +443,7 @@ mod tests {
             .expect("set");
         assert_eq!(about_you(&db).expect("read").as_deref(), Some("I work in Rust."));
 
+        // A field somebody emptied is not a description of them.
         db.set_setting(KEY_MEMORY_ABOUT_YOU, &json!("   ")).expect("set");
         assert!(about_you(&db).expect("read").is_none());
     }

@@ -1,3 +1,4 @@
+//! `POST /v1/messages`, the Anthropic-compatible endpoint behind `kuro launch`.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -17,7 +18,11 @@ use serde_json::{json, Value};
 use crate::routes::common::resolve_target;
 use crate::state::SharedState;
 
+// `/v1/models` is left to the OpenAI handler; its `data` array of `{id}` is
+// what clients read to validate a model name.
 pub async fn messages(State(state): State<SharedState>, Json(body): Json<Value>) -> Response {
+    // An unknown name is not an error: `resolve_target` falls back to Kuro's
+    // default, which lets `kuro launch` work without Kuro's model ids.
     let requested = gateway::requested_model(&body);
 
     let target = match resolve_target(&state, requested).await {
@@ -25,6 +30,7 @@ pub async fn messages(State(state): State<SharedState>, Json(body): Json<Value>)
         Err(error) => return failed(StatusCode::BAD_REQUEST, &error.to_string()),
     };
 
+    // A local model must be running before the request; its address is known only once it is.
     let base_url = match &target {
         ChatTarget::Local { model_id } => match state.engines.ensure_base_url(model_id).await {
             Ok(url) => url,
@@ -53,6 +59,7 @@ pub async fn messages(State(state): State<SharedState>, Json(body): Json<Value>)
     }
 }
 
+/// Build the upstream request for either kind of target.
 fn upstream_request(
     state: &SharedState,
     target: &ChatTarget,
@@ -87,6 +94,7 @@ fn upstream_request(
     .json(body)
 }
 
+/// One request, one JSON answer.
 async fn once(
     state: SharedState,
     target: ChatTarget,
@@ -111,6 +119,7 @@ async fn once(
     }
 }
 
+/// One request, a translated event stream.
 async fn stream(
     state: SharedState,
     target: ChatTarget,
@@ -129,6 +138,7 @@ async fn stream(
         return failed(status, &first_line(&detail));
     }
 
+    // A channel rather than a generator, as in the chat route (`async-stream` is not a dependency).
     let (sender, receiver) = tokio::sync::mpsc::channel::<Result<String, Infallible>>(64);
 
     tokio::spawn(async move {
@@ -140,6 +150,8 @@ async fn stream(
             let bytes = match chunk {
                 Ok(bytes) => bytes,
                 Err(_) => {
+                    // The connection died mid-answer: emit an error event, then close properly
+                    // below so the client reports a failure instead of hanging.
                     let _ = sender
                         .send(Ok(encode(&translator.error(
                             "the connection to the model was lost",
@@ -165,6 +177,7 @@ async fn stream(
             }
         }
 
+        // Always, even after an error: a client waiting for `message_stop` hangs without it.
         for out in translator.finish() {
             let _ = sender.send(Ok(encode(&out))).await;
         }
@@ -180,6 +193,7 @@ async fn stream(
         .unwrap_or_else(|_| failed(StatusCode::INTERNAL_SERVER_ERROR, "could not open the stream"))
 }
 
+/// One SSE frame. The `event:` line matters: the Messages API dispatches on it, not on `type`.
 fn encode(event: &gateway::AnthropicEvent) -> String {
     format!("event: {}\ndata: {}\n\n", event.name, event.data)
 }

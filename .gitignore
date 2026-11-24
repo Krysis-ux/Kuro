@@ -7,10 +7,15 @@
 /dist/
 
 # Frontend
-web/node_modules/
-web/dist/
-web/.vite/
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
 *.tsbuildinfo
+
+# Swift
+.build/
+.swiftpm/
+.playwright-mcp/
 
 # Runtime data
 .kuro/
@@ -46,3 +51,4 @@ secrets.*
 
 # Personal scratch notes, not source.
 *.rtf
+

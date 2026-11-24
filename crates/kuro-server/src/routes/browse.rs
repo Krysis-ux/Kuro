@@ -1,22 +1,4 @@
 //! Choosing a folder without typing its path.
-//!
-//! Kuro runs in a browser, and a browser cannot open a native folder picker that
-//! returns a path — `<input webkitdirectory>` hands over the *files*, uploaded,
-//! with their real location stripped. That is precisely backwards for a workspace,
-//! where the path is the only thing wanted and copying the files would be absurd.
-//!
-//! So the picker is built rather than borrowed: this walks the daemon's own
-//! filesystem and returns directory names, and the interface renders them as a
-//! list you click through. It is the same trick a remote IDE uses, and it works
-//! because the daemon is on the machine whose folders are being chosen.
-//!
-//! ## What it will not show
-//!
-//! Only directories, never file contents — this is for picking a place, not for
-//! reading. Hidden directories are behind a flag, because `.config` is
-//! occasionally the answer and `.git` never is. And the deny list from
-//! [`files`] applies here too, so browsing cannot be used to confirm that
-//! somebody's `.ssh` folder exists.
 
 use std::path::{Path, PathBuf};
 
@@ -30,21 +12,16 @@ use serde_json::{json, Value};
 use crate::error::AppResult;
 use crate::state::SharedState;
 
-/// Entries returned for one directory.
-///
-/// A folder with more children than this is one nobody is scrolling through
-/// anyway; the path field is there for that case.
+/// Entries returned for one directory; beyond this, typing a path beats scrolling.
 const MAX_ENTRIES: usize = 500;
 
-/// How long the system folder dialog may go unanswered.
-///
-/// Long enough to find the folder you want, short enough that a dialog which
-/// opened behind the browser and was never noticed releases the request.
+/// How long the system folder dialog may go unanswered, so one that opened
+/// behind the browser does not hold the request forever.
 const DIALOG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[derive(Debug, Deserialize)]
 pub struct BrowseQuery {
-    /// Absent means "start somewhere sensible", which is the user's home.
+    /// Absent means the user's home.
     #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
@@ -55,8 +32,7 @@ pub struct BrowseQuery {
 struct Entry {
     name: String,
     path: String,
-    /// Whether anything is inside it, so the interface can dim a dead end
-    /// rather than navigating into an empty list.
+    /// Whether anything is inside, so the UI can dim a dead end.
     has_children: bool,
 }
 
@@ -67,18 +43,8 @@ struct Shortcut {
     path: String,
 }
 
-/// Open the operating system's own folder chooser.
-///
-/// The built-in list below works everywhere and is nobody's first choice. On a
-/// Mac the real dialog is one `osascript` call away, and it is the one people
-/// actually know how to use: their sidebar, their recent places, their iCloud
-/// folders, typing a path with `⌘⇧G`. The daemon is on the same machine as the
-/// folders, so it can just ask for it.
-///
-/// The catch is that the dialog opens wherever the daemon's process is in the
-/// window order, not in the browser — so this returns quickly with a clear
-/// failure when nothing was chosen, and the interface keeps the list picker as
-/// the way through if this is unavailable or gets dismissed.
+/// Open the operating system's own folder chooser (macOS `osascript`), which people already know
+/// how to use.
 pub async fn native_picker(State(_state): State<SharedState>) -> AppResult<Json<Value>> {
     if !cfg!(target_os = "macos") {
         return Ok(Json(json!({
@@ -87,20 +53,16 @@ pub async fn native_picker(State(_state): State<SharedState>) -> AppResult<Json<
         })));
     }
 
-    // `choose folder` returns an alias; POSIX path turns it into something a
-    // workspace root can be. Bringing the process to the front first is what
-    // stops the dialog opening silently behind the browser.
+    // `choose folder` returns an alias; POSIX path makes it usable as a workspace
+    // root. Activating System Events first keeps the dialog from opening behind the browser.
     let script = r#"
         tell application "System Events" to activate
         set chosen to choose folder with prompt "Choose a project folder"
         return POSIX path of chosen
     "#;
 
-    // A modal dialog waits forever, and a request that waits with it holds a
-    // connection open for as long as the window is ignored. Observed the first
-    // time this was called: the dialog opened behind the browser and the request
-    // never returned. So the wait is bounded, and running out is reported as an
-    // ordinary "nothing was chosen" rather than as a failure.
+    // A modal dialog waits forever and would hold the request open if ignored, so
+    // the wait is bounded and timing out is reported as "nothing chosen", not a failure.
     let started = tokio::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -124,7 +86,7 @@ pub async fn native_picker(State(_state): State<SharedState>) -> AppResult<Json<
 
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr);
-        // Cancelling is error -128 and is not a failure worth reporting as one.
+        // Cancelling is error -128, not a failure worth reporting.
         let cancelled = detail.contains("-128") || detail.trim().is_empty();
         return Ok(Json(json!({
             "available": true,
@@ -139,8 +101,7 @@ pub async fn native_picker(State(_state): State<SharedState>) -> AppResult<Json<
         return Ok(Json(json!({ "available": true, "cancelled": true, "path": Value::Null })));
     }
 
-    // `choose folder` yields a trailing slash, which is tidy in Finder and
-    // untidy in a stored root.
+    // `choose folder` yields a trailing slash; strip it for the stored root.
     let path = path.trim_end_matches('/').to_string();
 
     Ok(Json(json!({ "available": true, "cancelled": false, "path": path })))
@@ -158,8 +119,8 @@ pub async fn browse(
         .map(expand_home)
         .unwrap_or_else(home);
 
-    // Canonicalise so `..` in a typed path resolves before anything is listed,
-    // and so the path sent back is the one the workspace will actually store.
+    // Canonicalise so `..` in a typed path resolves before listing and the path sent
+    // back is the one a workspace will store.
     let directory = requested
         .canonicalize()
         .map_err(|error| KuroError::bad_request(format!("`{}` could not be opened: {error}", requested.display())))?;
@@ -189,9 +150,7 @@ pub async fn browse(
         if !show_hidden && name.starts_with('.') {
             continue;
         }
-        // The same refusal the file tools apply. Browsing is not reading, but a
-        // picker that lists somebody's credential folders is still telling a
-        // model's user something they did not ask this screen for.
+        // Same refusal as the file tools: a picker should not list credential folders.
         if files::is_denied(&path) {
             continue;
         }
@@ -203,8 +162,7 @@ pub async fn browse(
         });
     }
 
-    // Case-insensitive, so `Documents` and `bin` interleave the way a person
-    // reading the list expects rather than splitting into two alphabets.
+    // Case-insensitive, so `Documents` and `bin` interleave naturally.
     entries.sort_by_key(|entry| entry.name.to_lowercase());
     let total = entries.len();
     entries.truncate(MAX_ENTRIES);
@@ -222,10 +180,7 @@ pub async fn browse(
     })))
 }
 
-/// The places a project is likely to be.
-///
-/// Only ones that exist. A shortcut to a folder that is not there is a dead
-/// button, and a picker with three dead buttons reads as broken.
+/// Places a project is likely to be. Only existing ones: dead buttons make the picker look broken.
 fn shortcuts(state: &SharedState) -> Vec<Shortcut> {
     let home = home();
     let mut found = vec![Shortcut {
@@ -251,8 +206,7 @@ fn shortcuts(state: &SharedState) -> Vec<Shortcut> {
         }
     }
 
-    // Where Kuro keeps its own data, because "where do models go" is a question
-    // the storage setting exists to answer.
+    // Kuro's own data directory, for choosing where models go.
     if state.paths.root.is_dir() {
         found.push(Shortcut {
             label: "Kuro data".to_string(),
@@ -277,7 +231,7 @@ fn home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-/// Expand a leading `~`, so a typed path means what it looks like.
+/// Expand a leading `~`.
 fn expand_home(raw: &str) -> PathBuf {
     let Some(rest) = raw.strip_prefix('~') else {
         return PathBuf::from(raw);

@@ -1,3 +1,15 @@
+//! Remote model providers.
+//!
+//! The escape hatch for when the machine cannot run a model locally: an endpoint
+//! you hold the key for, whose models appear in the same picker as local ones.
+//!
+//! * **One wire format.** Everything is spoken to as the OpenAI API, so Anthropic
+//!   is reached through its compatibility endpoint; a provider that cannot do
+//!   that is not supported.
+//! * **The user's account, always.** Nothing is Kuro-hosted: the key and the bill
+//!   are theirs, and requests go straight to the provider.
+//! * **Never the quiet default.** A remote model is always visibly remote and
+//!   local stays first in the list.
 
 pub mod presets;
 
@@ -15,16 +27,22 @@ use crate::{KuroError, Result};
 
 pub use presets::{Preset, PRESETS};
 
+/// Prefix on a model id that marks it as belonging to a provider.
 pub const MODEL_PREFIX: &str = "cloud:";
 
+/// Credential reference for a provider. Namespaced away from MCP tokens.
 fn key_reference(connector_id: &str) -> String {
     format!("provider:{connector_id}")
 }
 
+/// What marks a model on a provider as costing nothing.
 const FREE_SUFFIX: &str = ":free";
 
+/// The reserved model name behind "free models".
 pub const FREE_POOL_MODEL: &str = "kuro:free-pool";
 
+/// The free models among a connector's list, in the order they will be tried.
+/// Sorted so the order is stable across restarts.
 pub fn free_models_of(models: &[String]) -> Vec<String> {
     let mut free: Vec<String> = models
         .iter()
@@ -35,21 +53,31 @@ pub fn free_models_of(models: &[String]) -> Vec<String> {
     free
 }
 
+/// Where a chat request should be sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatTarget {
+    /// A local engine process, addressed by model id.
     Local { model_id: String },
+    /// A provider endpoint.
     Remote {
         connector_id: String,
         label: String,
         base_url: String,
+        /// The complete `Authorization` value, or `None` for an endpoint that takes
+        /// none: sending `Bearer ` reads as a malformed key, not an absent one.
         authorization: Option<String>,
+        /// The name the provider knows the model by, without Kuro's prefix.
         model: String,
+        /// How this endpoint departs from the plain OpenAI shape.
         quirks: Quirks,
+        /// Which upstream actually answered, when `connector_id` names a pool rather than one
+        /// endpoint.
         upstream: Option<String>,
     },
 }
 
 impl ChatTarget {
+    /// Which provider's allowance this turn spends, if that is knowable.
     pub fn upstream(&self) -> Option<&str> {
         match self {
             Self::Local { .. } => None,
@@ -57,6 +85,7 @@ impl ChatTarget {
         }
     }
 
+    /// How this endpoint departs from the plain OpenAI shape.
     pub fn quirks(&self) -> Quirks {
         match self {
             Self::Local { .. } => Quirks::OPENAI,
@@ -66,6 +95,7 @@ impl ChatTarget {
 }
 
 impl ChatTarget {
+    /// The model id as Kuro records it, which is what goes in the database.
     pub fn recorded_id(&self) -> String {
         match self {
             Self::Local { model_id } => model_id.clone(),
@@ -75,6 +105,7 @@ impl ChatTarget {
         }
     }
 
+    /// The name to put in the request body.
     pub fn wire_model(&self) -> &str {
         match self {
             Self::Local { model_id } => model_id,
@@ -87,6 +118,7 @@ impl ChatTarget {
     }
 }
 
+/// Split `cloud:<id>/<model>` into its parts.
 pub fn parse_model_id(model_id: &str) -> Option<(String, String)> {
     let rest = model_id.strip_prefix(MODEL_PREFIX)?;
     let (connector_id, model) = rest.split_once('/')?;
@@ -101,23 +133,35 @@ pub fn is_remote_model(model_id: &str) -> bool {
     parse_model_id(model_id).is_some()
 }
 
+/// A provider's models, for the picker.
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteModel {
+    /// The prefixed id, usable anywhere a model id is.
     pub id: String,
+    /// The provider's own name for it.
     pub name: String,
     pub connector_id: String,
     pub connector_label: String,
     pub provider: String,
+    /// Whether this row is the free pool rather than one named model.
     pub pooled: bool,
+    /// How many models the pool covers. Zero for an ordinary row.
     pub pool_size: usize,
+    /// Whether this model costs nothing on the key that reaches it.
     pub free: bool,
+    /// What the model's name says it was trained for, as words the picker can
+    /// put on the row. Empty only for a pooled row, which is not one model.
     pub specialities: Vec<&'static str>,
+    /// Size in billions of parameters, when the name states one.
     pub params_b: Option<f32>,
+    /// Why this cannot be picked right now, when it cannot.
     pub unavailable: Option<String>,
+    /// Where to go to make it work, when there is somewhere to go.
     pub fix_url: Option<String>,
 }
 
 impl RemoteModel {
+    /// Describe one named model, reading its name for what it is.
     pub fn described(id: String, group: RemoteGroup<'_>, model: &str, free: bool) -> Self {
         let classified = crate::classify::classify(model);
         Self {
@@ -141,6 +185,7 @@ impl RemoteModel {
     }
 }
 
+/// Which heading a model is filed under in the picker.
 #[derive(Debug, Clone, Copy)]
 pub struct RemoteGroup<'a> {
     pub connector_id: &'a str,
@@ -148,6 +193,7 @@ pub struct RemoteGroup<'a> {
     pub provider: &'a str,
 }
 
+/// Which free model a connector is currently using, and which have refused.
 #[derive(Default)]
 struct PoolState {
     cursor: usize,
@@ -155,6 +201,7 @@ struct PoolState {
 }
 
 impl PoolState {
+    /// Whether this model is still inside its cooldown.
     fn is_troubled(&mut self, model: &str) -> bool {
         let Some((trouble, since)) = self.troubled.get(model).copied() else {
             return false;
@@ -171,6 +218,7 @@ pub struct ProviderRegistry {
     db: Db,
     secrets: SecretStore,
     client: reqwest::Client,
+    /// Free-pool state per connector.
     pools: Arc<Mutex<HashMap<String, PoolState>>>,
 }
 
@@ -184,6 +232,7 @@ impl ProviderRegistry {
         }
     }
 
+    /// Add a provider: store the key, record the endpoint, then probe it.
     pub async fn add(
         &self,
         provider: &str,
@@ -197,6 +246,8 @@ impl ProviderRegistry {
             .map(str::trim)
             .filter(|url| !url.is_empty())
             .map(str::to_string)
+            // A preset that asks for a URL carries an empty one, which must not
+            // be mistaken for a default.
             .or_else(|| {
                 preset
                     .map(|preset| preset.base_url)
@@ -222,6 +273,7 @@ impl ProviderRegistry {
             .or_else(|| preset.map(|preset| preset.name.to_string()))
             .ok_or_else(|| KuroError::bad_request("the provider needs a name"))?;
 
+        // Row first, so the credential reference has an id.
         let record = self.db.insert_cloud_connector(
             provider,
             &resolved_label,
@@ -243,6 +295,8 @@ impl ProviderRegistry {
             Ok(())
         })?;
 
+        // A failed probe is recorded, not returned: the provider is saved and the
+        // user can fix the key without re-entering everything.
         let _ = self.test(&record.id).await;
 
         self.db
@@ -250,6 +304,7 @@ impl ProviderRegistry {
             .ok_or_else(|| KuroError::other("the provider disappeared after being added"))
     }
 
+    /// Ask a provider what models it offers, and record the answer.
     pub async fn test(&self, connector_id: &str) -> Result<Vec<String>> {
         let connector = self.require(connector_id)?;
         let key = self.key_for(&connector)?;
@@ -266,6 +321,7 @@ impl ProviderRegistry {
         }
     }
 
+    /// Every model from every enabled, working provider.
     pub fn remote_models(&self) -> Result<Vec<RemoteModel>> {
         let mut out = Vec::new();
 
@@ -293,6 +349,8 @@ impl ProviderRegistry {
             }
 
             for model in &connector.models {
+                // Not every listed model is a chat model; a conversation sent to an embedding
+                // model fails with a 400 that reads like a broken key.
                 if !crate::classify::classify(model).kind.is_chat() {
                     continue;
                 }
@@ -312,6 +370,7 @@ impl ProviderRegistry {
         Ok(out)
     }
 
+    /// Resolve a prefixed model id into somewhere to send a request.
     pub fn resolve_target(&self, model_id: &str) -> Result<ChatTarget> {
         let Some((connector_id, model)) = parse_model_id(model_id) else {
             return Ok(ChatTarget::Local {
@@ -335,6 +394,8 @@ impl ProviderRegistry {
 
         Ok(ChatTarget::Remote {
             authorization: Some(format!("Bearer {}", self.key_for(&connector)?)),
+            // A connector the user added is one endpoint they named, so the
+            // allowance it spends is its own.
             upstream: Some(connector.provider.clone()),
             connector_id: connector.id,
             label: connector.label,
@@ -344,6 +405,7 @@ impl ProviderRegistry {
         })
     }
 
+    /// Which free model this connector should answer with right now.
     fn choose_free(&self, connector: &CloudConnectorRecord) -> Result<String> {
         let free = free_models_of(&connector.models);
 
@@ -358,6 +420,8 @@ impl ProviderRegistry {
         let mut pools = self.pools.lock().expect("provider pool lock");
         let state = pools.entry(connector.id.clone()).or_default();
 
+        // The list can shrink between refreshes, so the cursor is taken modulo
+        // the current length rather than trusted.
         let start = state.cursor % free.len();
 
         for offset in 0..free.len() {
@@ -371,6 +435,7 @@ impl ProviderRegistry {
         Ok(free[start].clone())
     }
 
+    /// Note that a model refused, so the pool moves on from it.
     pub fn note_trouble(&self, connector_id: &str, model: &str, status: u16) {
         let Some(trouble) = Trouble::from_status(status) else {
             return;
@@ -379,19 +444,24 @@ impl ProviderRegistry {
         let mut pools = self.pools.lock().expect("provider pool lock");
         let state = pools.entry(connector_id.to_string()).or_default();
         state.troubled.insert(model.to_string(), (trouble, Instant::now()));
+        // Move off it now so the next request need not rediscover the refusal.
         state.cursor = state.cursor.saturating_add(1);
 
         tracing::info!(connector_id, model, kind = trouble.as_str(), "free model set aside");
     }
 
+    /// Remove a provider and its key together.
     pub fn remove(&self, connector_id: &str) -> Result<bool> {
         let Some(connector) = self.db.get_cloud_connector(connector_id)? else {
             return Ok(false);
         };
+        // The key goes first: a leftover secret is worse than a leftover row,
+        // which the user can see and delete again.
         self.secrets.delete(&connector.keychain_ref)?;
         self.db.delete_cloud_connector(connector_id)
     }
 
+    /// Replace a provider's key in place, keeping its id and conversations.
     pub async fn replace_key(&self, connector_id: &str, api_key: &str) -> Result<()> {
         let connector = self.require(connector_id)?;
         self.secrets.put(&connector.keychain_ref, api_key)?;
@@ -422,6 +492,7 @@ impl ProviderRegistry {
     }
 }
 
+/// Ask an OpenAI-compatible endpoint for its model list.
 async fn list_models(
     client: &reqwest::Client,
     base_url: &str,
@@ -430,6 +501,8 @@ async fn list_models(
     let response = client
         .get(format!("{}/models", base_url.trim_end_matches('/')))
         .bearer_auth(api_key)
+        // Anthropic's compatibility endpoint requires its own version header even
+        // when the OpenAI shape is being used.
         .header("anthropic-version", "2023-06-01")
         .timeout(std::time::Duration::from_secs(20))
         .send()
@@ -635,6 +708,8 @@ mod tests {
         assert!(!models.iter().any(|model| model.name == "gpt-4o"));
     }
 
+    /// A connector whose catalogue looks like OpenRouter's: mostly paid, a few
+    /// free, scattered through it alphabetically.
     fn openrouter(db: &Db) -> CloudConnectorRecord {
         let connector = db
             .insert_cloud_connector("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "r1")
@@ -659,6 +734,7 @@ mod tests {
             "z/model:free".to_string(),
             "openai/gpt-4o".to_string(),
             "a/model:free".to_string(),
+            // Not free: the suffix has to end the id, not merely appear in it.
             "vendor/freestyle".to_string(),
             "vendor/model:free-tier".to_string(),
         ];
@@ -737,6 +813,8 @@ mod tests {
 
     #[test]
     fn every_free_model_refusing_still_produces_a_request_rather_than_an_error() {
+        // The alternative is telling somebody their free tier is unavailable on
+        // the strength of three cooldowns that may already have expired.
         let (registry, db) = registry();
         let connector = openrouter(&db);
         registry.secrets.put("r1", "sk-or-test").expect("put");

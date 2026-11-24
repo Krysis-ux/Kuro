@@ -1,9 +1,4 @@
 //! Turning "I want this model" into weights on disk.
-//!
-//! A pull is split into a plan and an execution. Planning is cheap and
-//! network-light, so callers (the CLI, the API, the Models page) can show the
-//! user exactly what is about to be downloaded — repository, file, size — and
-//! catch problems like a gated repository before any bytes move.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -98,10 +93,8 @@ pub async fn plan_pull(client: &reqwest::Client, reference: &str) -> Result<Pull
     })
 }
 
-/// Register the model and its download row without transferring anything yet.
-///
-/// Splitting this from [`run_pull`] lets the HTTP layer answer immediately with
-/// a download id the client can poll, while the bytes move in the background.
+/// Register the model and its download row without transferring anything, so
+/// the HTTP layer can return a download id to poll while [`run_pull`] works.
 pub fn prepare_pull(db: &Db, paths: &Paths, plan: &PullPlan) -> Result<PreparedPull> {
     if let Some(existing) = db.active_download_for_target(&plan.model_id)? {
         return Err(KuroError::bad_request(format!(
@@ -148,10 +141,8 @@ pub struct PreparedPull {
     pub destination: String,
 }
 
-/// Transfer the weights for an already-prepared pull.
-///
-/// A failure leaves an explanatory message on both the download and the model
-/// row rather than a silently missing file.
+/// Transfer the weights for a prepared pull. A failure leaves an explanatory
+/// message on both the download and the model row.
 pub async fn run_pull(
     client: &reqwest::Client,
     db: &Db,
@@ -227,8 +218,7 @@ pub fn remove_model(db: &Db, paths: &Paths, model_id: &str) -> Result<()> {
         let _ = std::fs::remove_file(path);
     }
 
-    // Also drop the per-model directory, which holds any leftover `.part` file
-    // from an interrupted download.
+    // Also drop the per-model directory, which may hold a leftover `.part` file.
     let model_dir = paths.model_file(model_id, "x");
     if let Some(parent) = model_dir.parent() {
         if parent.starts_with(paths.models_dir()) {
