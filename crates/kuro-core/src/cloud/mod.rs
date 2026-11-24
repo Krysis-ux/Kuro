@@ -586,14 +586,14 @@ mod tests {
     #[test]
     fn a_prefixed_model_id_splits_into_connector_and_model() {
         let (connector, model) =
-            parse_model_id("cloud:abc-123/anthropic/claude-opus-5").expect("split");
+            parse_model_id("cloud:abc-123/vendor/model-name").expect("split");
 
         assert_eq!(connector, "abc-123");
         assert_eq!(
-            model, "anthropic/claude-opus-5",
+            model, "vendor/model-name",
             "a provider's own name may itself contain slashes"
         );
-        assert!(is_remote_model("cloud:abc-123/anthropic/claude-opus-5"));
+        assert!(is_remote_model("cloud:abc-123/vendor/model-name"));
     }
 
     #[test]
@@ -611,19 +611,19 @@ mod tests {
             label: "OpenRouter".to_string(),
             base_url: "https://openrouter.ai/api/v1".to_string(),
             authorization: Some("Bearer sk-or".to_string()),
-            model: "anthropic/claude-opus-5".to_string(),
+            model: "vendor/model-name".to_string(),
             quirks: Quirks::OPENAI,
             upstream: Some("openrouter".to_string()),
         };
 
         let recorded = target.recorded_id();
 
-        assert_eq!(recorded, "cloud:abc/anthropic/claude-opus-5");
+        assert_eq!(recorded, "cloud:abc/vendor/model-name");
         assert_eq!(
             parse_model_id(&recorded).expect("split"),
-            ("abc".to_string(), "anthropic/claude-opus-5".to_string())
+            ("abc".to_string(), "vendor/model-name".to_string())
         );
-        assert_eq!(target.wire_model(), "anthropic/claude-opus-5", "the prefix must not be sent");
+        assert_eq!(target.wire_model(), "vendor/model-name", "the prefix must not be sent");
         assert!(target.is_remote());
     }
 
@@ -717,7 +717,7 @@ mod tests {
         db.set_cloud_ok(
             &connector.id,
             &[
-                "anthropic/claude-opus-5".to_string(),
+                "vendor/model-name".to_string(),
                 "deepseek/deepseek-r1:free".to_string(),
                 "meta-llama/llama-3.3-70b-instruct:free".to_string(),
                 "openai/gpt-4o".to_string(),

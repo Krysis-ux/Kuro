@@ -2,7 +2,7 @@
 //!
 //! OpenAI sends a flat run of deltas. Anthropic's stream is structured (a
 //! message opens, content blocks open and close inside it, the message closes)
-//! and clients like Claude Code hang if an expected event never comes.
+//! and clients hang if an expected event never comes.
 //!
 //! The shape being produced:
 //!
