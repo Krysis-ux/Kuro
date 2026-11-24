@@ -177,8 +177,8 @@ pub async fn fetch_skills(client: &reqwest::Client, repo: &Repo) -> Result<Vec<F
 
         match parse_skill_md(&text, &fallback) {
             Ok(parsed) => {
-                // Repositories mirror one skill under `.claude/`, `.cursor/`, etc. Dedupe by slug
-                // (not directory), since a lone copy under `.claude/skills/` must still import.
+                // Repositories mirror one skill under several agent folders. Dedupe by slug,
+                // since a lone copy in one of them must still import.
                 if seen.iter().any(|held| held == &parsed.slug) {
                     continue;
                 }
@@ -336,7 +336,7 @@ mod tests {
         let mut paths = [
             ".cursor/skills/x/SKILL.md".to_string(),
             "SKILL.md".to_string(),
-            ".claude/skills/x/SKILL.md".to_string(),
+            ".agents/skills/x/SKILL.md".to_string(),
         ];
         paths.sort_by_key(|path| (path.matches('/').count(), path.clone()));
 

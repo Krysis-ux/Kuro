@@ -1411,7 +1411,7 @@ mod tests {
             "openrouter",
             vec![
                 "ai21/jamba-large-1.7".to_string(),
-                "anthropic/claude-opus-5".to_string(),
+                "vendor/model-name".to_string(),
                 "openai/gpt-oss-20b:free".to_string(),
                 "zzz/last-alphabetically".to_string(),
             ],
@@ -1427,7 +1427,7 @@ mod tests {
     #[test]
     fn a_wallet_provider_with_nothing_free_left_is_skipped_rather_than_billed() {
         let pool = FreePool::new();
-        pool.set_live_models("openrouter", vec!["anthropic/claude-opus-5".to_string()]);
+        pool.set_live_models("openrouter", vec!["vendor/model-name".to_string()]);
 
         assert!(
             pool.choose(FreeFlavour::Auto, &keys(&["openrouter"])).is_none(),
@@ -1728,7 +1728,7 @@ mod tests {
 
         assert!(kilo.free_marker.covers("inclusionai/ling-3.0-flash:free"));
         assert!(kilo.free_marker.covers("kilo-auto/free"));
-        assert!(!kilo.free_marker.covers("anthropic/claude-opus-5"));
+        assert!(!kilo.free_marker.covers("vendor/model-name"));
     }
 
     #[test]

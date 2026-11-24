@@ -47,5 +47,3 @@ secrets.*
 # Personal scratch notes, not source.
 *.rtf
 
-# Local tool settings
-.claude/

@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn the_system_prompt_moves_into_the_message_list() {
         let request = json!({
-            "model": "claude-x",
+            "model": "test-model",
             "system": "You are terse.",
             "messages": [{ "role": "user", "content": "hi" }],
         });
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn a_system_prompt_split_into_blocks_is_joined() {
-        // How Claude Code sends a prompt it wants cached in parts.
+        // How a client sends a prompt it wants cached in parts.
         let request = json!({
             "system": [
                 { "type": "text", "text": "First part." },

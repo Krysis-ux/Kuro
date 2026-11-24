@@ -1,4 +1,4 @@
-//! `POST /v1/messages`, the Anthropic-compatible endpoint behind `kuro launch claude`.
+//! `POST /v1/messages`, the Anthropic-compatible endpoint behind `kuro launch`.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -22,7 +22,7 @@ use crate::state::SharedState;
 // what clients read to validate a model name.
 pub async fn messages(State(state): State<SharedState>, Json(body): Json<Value>) -> Response {
     // An unknown name is not an error: `resolve_target` falls back to Kuro's
-    // default, which lets `kuro launch claude` work without Kuro's model ids.
+    // default, which lets `kuro launch` work without Kuro's model ids.
     let requested = gateway::requested_model(&body);
 
     let target = match resolve_target(&state, requested).await {
