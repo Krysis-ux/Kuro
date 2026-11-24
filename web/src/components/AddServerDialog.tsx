@@ -4,24 +4,12 @@ import { api, type McpRegistryEntry, type McpTransport } from '../lib/api'
 import { CheckIcon, ExternalIcon, PlusIcon, TrashIcon } from './icons'
 
 interface AddServerDialogProps {
-  /** A recommended entry to start from, when the user came via the store. */
   prefill: McpRegistryEntry | null
   registry: McpRegistryEntry[]
   onClose: () => void
   onAdded: () => void
 }
 
-/**
- * Add an MCP server.
- *
- * Recommended servers sit at the top so that the common case is one click, and the
- * manual fields stay visible underneath rather than behind a tab — a dialog that
- * hides the URL field until you find the right mode is the thing this replaces.
- *
- * The dialog does not close on success until the connection has been attempted.
- * Reporting "added" for a server that cannot be reached is the failure mode worth
- * spending a spinner to avoid.
- */
 export function AddServerDialog({ prefill, registry, onClose, onAdded }: AddServerDialogProps) {
   const [slug, setSlug] = useState<string | null>(prefill?.slug ?? null)
   const [transport, setTransport] = useState<McpTransport>(prefill?.transport ?? 'http')
@@ -39,7 +27,6 @@ export function AddServerDialog({ prefill, registry, onClose, onAdded }: AddServ
     [registry, slug],
   )
 
-  // Escape closes, which is what every other dialog on the machine does.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
@@ -67,9 +54,6 @@ export function AddServerDialog({ prefill, registry, onClose, onAdded }: AddServ
   const add = useMutation({
     mutationFn: () =>
       api.mcp.add({
-        // A recommended entry is installed by slug so the server keeps its
-        // identity in the store, but the argument list is still sent because it
-        // is the part a user must fill in.
         ...(slug ? { slug } : { name: name.trim(), transport }),
         ...(slug ? {} : transport === 'http' ? { url: url.trim() } : { command: command.trim() }),
         args: splitArgs(args),
@@ -85,8 +69,6 @@ export function AddServerDialog({ prefill, registry, onClose, onAdded }: AddServ
         onAdded()
         return
       }
-      // Saved but unreachable. Keep the dialog open with the reason, because the
-      // fix is almost always in a field the user is still looking at.
       setFailure(result.connection.error ?? 'Connected, but the server returned no tools.')
     },
     onError: (error: Error) => setFailure(error.message),
@@ -368,13 +350,6 @@ export function AddServerDialog({ prefill, registry, onClose, onAdded }: AddServ
   )
 }
 
-/**
- * Split a command line into arguments.
- *
- * Quoted runs are kept together, because a filesystem path with a space in it is
- * the normal case on a Mac and splitting it would silently point the server at the
- * wrong folder.
- */
 function splitArgs(raw: string): string[] {
   const out: string[] = []
   let current = ''
