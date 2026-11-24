@@ -52,16 +52,6 @@ pub fn router(state: SharedState) -> Router {
 }
 
 /// CORS allow-list: this server's own origin and the Vite dev server, nothing else.
-///
-/// There is no authentication and the API includes `POST
-/// /api/workspaces/{id}/processes` (runs a command), so a permissive policy
-/// would let any web page the user visits list workspaces and execute commands.
-/// Other origins get no `Access-Control-Allow-Origin` header, so the browser
-/// blocks both the preflight and the read.
-///
-/// CORS only constrains browsers and is not authentication: other local programs
-/// are unaffected, and a page can still fire a "simple" cross-origin request
-/// whose reply it cannot read. The real fix is a key on every request.
 fn cors_layer(port: u16) -> CorsLayer {
     let origins: Vec<HeaderValue> = allowed_origins(port)
         .iter()
@@ -94,13 +84,6 @@ fn allowed_origins(port: u16) -> [String; 4] {
 }
 
 /// Refuse what a web page in the user's browser could send, before any handler runs.
-///
-/// CORS stops a page reading replies, not sending requests: a body-less `POST
-/// /api/shutdown` needs no preflight. So a request carrying another site's
-/// `Origin` is refused outright. A `Host` other than loopback is refused too: that
-/// is DNS rebinding, a page whose own name now resolves to 127.0.0.1, which the
-/// browser treats as same-origin. The app, the CLI and API clients send no
-/// `Origin` and a loopback `Host`, so they are unaffected.
 async fn same_machine_only(State(port): State<u16>, request: Request, next: Next) -> Response {
     // Scoped so no borrow of the request is held across the await below.
     let local = {

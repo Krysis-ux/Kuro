@@ -281,9 +281,8 @@ const MODES: { value: WorkspaceMode; label: string; note: string }[] = [
 ]
 
 /**
- * Context is capped well below what some models advertise: a context larger than
- * memory allows does not fail at the slider, it fails minutes later when the
- * engine is killed. The exact field still accepts anything.
+ * Context is capped well below what some models advertise: a context larger than memory allows does
+ * not fail at the slider, it fails minutes later when the engine is killed.
  */
 const MAX_CONTEXT = 131072
 const MAX_GPU_LAYERS = 999
@@ -720,8 +719,8 @@ function ServerPane() {
 }
 
 /**
- * Restart and stop. Stop asks first: it closes the API every other tool on the
- * machine may be pointed at, and the only way back is a terminal.
+ * Restart and stop. Stop asks first: it closes the API every other tool on the machine may be
+ * pointed at, and the only way back is a terminal. /
  */
 function ServerControls() {
   const [confirming, setConfirming] = useState(false)

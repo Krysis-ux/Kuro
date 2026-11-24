@@ -1,6 +1,4 @@
-//! Launching and stopping a single engine process. The engine runs out of
-//! process so a crash (bad GGUF, unsupported architecture, OOM kill) takes down
-//! only that engine, not Kuro.
+//! Launching and stopping a single engine process.
 
 use std::path::PathBuf;
 use std::process::Stdio;

@@ -30,24 +30,10 @@ function withoutToolCalls(text: string): string {
     .join('```')
 }
 
-/**
- * How a reply's markdown is rendered.
- *
- * Defined once, at module scope, because react-markdown compares this object by
- * identity — building it inside the component would rebuild every code block on
- * every streamed token, which both flickers and loses the "Copied" state of a
- * button somebody has just pressed.
- */
+/** How a reply's markdown is rendered. */
 const MARKDOWN_COMPONENTS = { pre: MarkdownPre, a: MarkdownLink } as const
 
-/**
- * A link in a reply.
- *
- * Given its own colour and always opened in a new tab. Both are the same point:
- * a link is the one part of an answer that can be *checked*, and it should
- * neither look like the prose around it nor cost you the conversation to
- * follow.
- */
+/** A link in a reply. Given its own colour and always opened in a new tab. */
 function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
   return (
     <a className="rich-link" href={href} target="_blank" rel="noopener noreferrer">
@@ -70,13 +56,7 @@ interface MessageListProps {
   onFork: (messageId: string) => void
   /** Replace a user message and answer again from there. */
   onEdit: (messageId: string, content: string) => void
-  /**
-   * Open a file the turn touched.
-   *
-   * Absent on surfaces that have nowhere to show one — a chat can read a
-   * project but has no file panel — and the paths render as plain text there
-   * rather than as buttons that would do nothing.
-   */
+  /** Open a file the turn touched. */
   onOpenPath?: (path: string) => void
 }
 
@@ -253,14 +233,7 @@ function MessageRow({ message, actionable, onFork, onEdit, onOpenPath }: Message
   )
 }
 
-/**
- * A user message being rewritten.
- *
- * Sends on Enter and cancels on Escape, matching the composer, since this is
- * the same act of writing a message. Submitting is what truncates the
- * conversation, so an accidental Enter is worth guarding: an unchanged or empty
- * message just closes the editor rather than discarding the replies below it.
- */
+/** A user message being rewritten. */
 function MessageEditor({
   initial,
   onSubmit,
@@ -370,14 +343,7 @@ function StreamingRow({
   )
 }
 
-/**
- * The heartbeat under a turn in progress.
- *
- * Counts up from the last event rather than from the start of the turn, so it
- * answers the question people actually have — how long since anything happened
- * — and stays silent for the first few seconds, when nothing is wrong yet and a
- * timer would only be noise.
- */
+/** The heartbeat under a turn in progress. */
 function Working({ label, since }: { label: string; since: number }) {
   const [quiet, setQuiet] = useState(0)
 
@@ -423,16 +389,7 @@ interface ToolAction {
   path?: string
 }
 
-/**
- * Read a tool call as a sentence.
- *
- * The transcript used to print the wire name and then whichever argument
- * happened to be a string first — `edit_file` followed by a hundred characters
- * of the code being replaced. That is the raw call, not what happened, and it
- * is exactly backwards from what somebody watching wants: *which file*, and
- * *what did you do to it*. The arguments are known per tool, so there is no
- * reason to guess at them.
- */
+/** Read a tool call as a sentence. */
 function describeTool(name: string, args: Record<string, unknown> = {}): ToolAction {
   const text = (key: string): string | undefined => {
     const value = args[key]
@@ -505,18 +462,7 @@ const ACTION_ICON: Record<ToolAction['kind'], ReactNode> = {
   other: <ToolIcon size={11} />,
 }
 
-/**
- * What the model did before answering.
- *
- * Collapsed to a single line by default and expandable to show the query sent and
- * what came back. Hosted assistants all do some version of this, and the reason is
- * not decoration: when a model answers using a tool, the answer is only as good as
- * the tool result, and a user who cannot see that result has no way to tell a good
- * answer from a confident one.
- *
- * Open by default while streaming — that is exactly when a person is wondering
- * what the spinner is doing — and closed once the reply has arrived.
- */
+/** What the model did before answering. */
 function ToolActivity({
   steps,
   defaultOpen = false,
@@ -532,10 +478,7 @@ function ToolActivity({
   const failed = steps.filter((step) => step.state === 'failed').length
   const current = steps[steps.length - 1]
 
-  // While it is working, the summary says what it is working *on*. "Using a
-  // tool…" is true of every turn and therefore tells you nothing; "Editing
-  // src/lib/turns.ts" is the answer to the question actually being asked, which
-  // is whether this is going anywhere.
+  // While it is working, the summary says what it is working *on*.
   const now = current ? describeTool(current.name, current.args) : null
   const summary =
     running && now
@@ -567,14 +510,7 @@ function ToolActivity({
   )
 }
 
-/**
- * One step, as a line rather than as a dump.
- *
- * The result is folded away unless the step failed. A successful `read_file`
- * returning four hundred lines of the file it read is noise — the interesting
- * thing about it is that it happened, and which file — whereas a failure is
- * only useful *with* its message, which is why that one opens itself.
- */
+/** One step, as a line rather than as a dump. */
 function ToolStepRow({
   step,
   onOpenPath,
@@ -604,9 +540,8 @@ function ToolStepRow({
 
         {action.target &&
           (action.path && onOpenPath ? (
-            // Underlined and clickable, because a file the model touched is the
-            // thing you most want to look at next and the transcript is where
-            // you are already looking.
+            // Underlined and clickable, because a file the model touched is the thing you most want
+            // to look at next and the transcript is where you are already looking.
             <button
               className="tool-step-path mono"
               onClick={() => onOpenPath(action.path as string)}
@@ -642,12 +577,7 @@ function ToolStepRow({
   )
 }
 
-/**
- * Pages the turn drew on.
- *
- * Listed by the interface rather than left to the model, because a small model
- * asked to cite its sources will frequently invent a plausible URL instead.
- */
+/** Pages the turn drew on. */
 function Sources({ sources }: { sources: { title: string; url: string }[] }) {
   return (
     <div className="sources">

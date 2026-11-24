@@ -1,10 +1,4 @@
 //! Skills the user added: uploaded, or pulled out of a repository.
-//!
-//! Built-ins are a `const` array with `&'static str` fields, and many call sites
-//! take `&'static Skill`. Rather than make `Skill` owned, a user skill is leaked
-//! into `'static` when loaded. The leak is bounded (a few kilobytes per skill,
-//! reloaded only when the user adds or removes one, in a desktop daemon) but
-//! would be a bug if done per request.
 
 use std::sync::RwLock;
 
@@ -53,12 +47,7 @@ pub fn slugify(raw: &str) -> String {
     out
 }
 
-/// Read a `SKILL.md`: YAML front matter (`name`, `description`) then markdown
-/// instructions. Parsed by hand since only `key: value` lines are used; a YAML
-/// parser would accept constructs this cannot represent.
-///
-/// Without front matter, the first heading becomes the name and the first
-/// paragraph the description.
+/// Read a `SKILL.md`: YAML front matter (`name`, `description`) then markdown instructions.
 pub fn parse_skill_md(content: &str, fallback_name: &str) -> Result<ParsedSkill> {
     let (front, body) = split_front_matter(content);
 
@@ -172,9 +161,7 @@ pub fn find(slug: &str) -> Option<&'static Skill> {
         .find(|skill| skill.slug == slug)
 }
 
-/// Load the user's skills from storage, replacing the whole list. Called at
-/// startup and after anything that changes the table; the only path by which a
-/// user skill becomes visible.
+/// Load the user's skills from storage, replacing the whole list.
 pub fn reload(db: &Db) -> Result<usize> {
     let records = db.list_user_skills()?;
     let loaded: Vec<&'static Skill> = records.iter().map(leak).collect();

@@ -1,9 +1,4 @@
 //! OpenAI-compatible endpoints.
-//!
-//! A thin proxy in front of the engine, not a reimplementation: tool calls,
-//! JSON schemas, vision content and unknown sampling parameters pass through
-//! untouched. Kuro only resolves the model name and makes sure an engine is
-//! running. OpenAI SDK code works by pointing `base_url` at Kuro.
 
 use axum::body::Body;
 use axum::extract::State;

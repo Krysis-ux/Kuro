@@ -34,8 +34,6 @@ pub fn preamble(memories: &[MemoryRecord]) -> Option<String> {
 }
 
 /// The memory preamble, including anything the user wrote about themselves.
-/// Kept as separate sections: what the user typed is a standing instruction and
-/// should outweigh a possibly stale note the model saved itself.
 pub fn preamble_with(about_you: Option<&str>, memories: &[MemoryRecord]) -> Option<String> {
     let about_you = about_you.map(str::trim).filter(|text| !text.is_empty());
     if about_you.is_none() && memories.is_empty() {

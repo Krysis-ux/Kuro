@@ -1,13 +1,4 @@
 //! Running a specialist in its own context.
-//!
-//! The delegating turn calls `delegate`; this runs a whole tool loop elsewhere
-//! and returns only the specialist's final message, not the reading behind it
-//! (see [`kuro_core::agents`]).
-//!
-//! A subagent gets the parent turn's [`Workspace`], so the mode still decides
-//! which tools exist. An agent that should not write (a reviewer, an explorer)
-//! is also offered only read tools, so "do not edit" is enforced by the tool
-//! set, not by a prompt.
 
 use kuro_core::agents::Agent;
 use kuro_core::cloud::ChatTarget;
@@ -19,9 +10,7 @@ use serde_json::{json, Value};
 use crate::routes::tools_runtime::{self as runtime, PartialToolCall};
 use crate::state::SharedState;
 
-/// Rounds one subagent may spend. Lower than a top-level turn's budget on
-/// purpose: a specialist that has not answered by now was given a task too big
-/// to delegate.
+/// Rounds one subagent may spend.
 const MAX_ROUNDS: usize = 12;
 
 /// Output kept from the specialist's reply.

@@ -33,9 +33,8 @@ pub const MAX_TIMEOUT: Duration = Duration::from_secs(900);
 /// part that matters (errors, summary) comes last.
 pub const MAX_OUTPUT_CHARS: usize = 20_000;
 
-/// Programs a workspace in Agent mode may run: build and test tooling only, no
-/// system package manager, nothing that talks to a cloud account, nothing whose
-/// ordinary use is destructive.
+/// Programs a workspace in Agent mode may run: build and test tooling only, no system package
+/// manager, nothing that talks to a cloud account, nothing whose ordinary use is destructive.
 pub const ALLOWED_PROGRAMS: &[&str] = &[
     // Node and the web
     "node", "npm", "npx", "pnpm", "pnpx", "yarn", "bun", "bunx", "deno", "tsc", "tsx", "vite",
@@ -166,9 +165,8 @@ impl std::fmt::Display for Refusal {
     }
 }
 
-/// The shell commands run through: `cmd /C` on Windows (PowerShell quoting breaks
-/// pasted commands), otherwise `/bin/sh -c` rather than the login shell, so
-/// nothing depends on a user's `.zshrc`.
+/// The shell commands run through: `cmd /C` on Windows (PowerShell quoting breaks pasted commands),
+/// otherwise `/bin/sh -c` rather than the login shell, so nothing depends on a user's `.zshrc`.
 pub fn shell() -> (&'static str, &'static str) {
     if cfg!(windows) {
         ("cmd", "/C")
@@ -186,9 +184,7 @@ pub fn shell_description() -> &'static str {
     }
 }
 
-/// Which OS the model's commands run on, and its common pitfalls. Models default
-/// to GNU/Linux habits, and some failures are silent (`sed -i` on macOS creates a
-/// backup file named after the expression).
+/// Which OS the model's commands run on, and its common pitfalls.
 pub fn platform_note() -> &'static str {
     if cfg!(target_os = "windows") {
         "Windows: `dir` not `ls`, `type` not `cat`, `findstr` not `grep`, backslashes in \
@@ -391,9 +387,9 @@ fn pipes_into_a_shell(command: &str) -> bool {
     piped || (substituted && shell_runs_it)
 }
 
-/// Split a command line into the pieces that each start with a program: at `;`,
-/// newlines, `|`, `||`, `&&` and a background `&`, but not inside quotes (`git
-/// commit -m "a & b"`) or in a redirection (`2>&1`, `&>log`).
+/// Split a command line into the pieces that each start with a program: at `;`, newlines, `|`,
+/// `||`, `&&` and a background `&`, but not inside quotes (`git commit -m "a & b"`) or in a
+/// redirection (`2>&1`, `&>log`).
 fn segments(command: &str) -> Vec<&str> {
     let bytes = command.as_bytes();
     let mut pieces = Vec::new();
@@ -440,10 +436,8 @@ fn program_name(word: &str) -> &str {
         .unwrap_or(without_dir)
 }
 
-/// Why a command is a server or watcher (which never exits) rather than a task,
-/// so `run_command` can point the model at `start_server` instead of waiting out
-/// the timeout. Matched conservatively: a false positive refuses a command that
-/// would have worked.
+/// Why a command is a server or watcher (which never exits) rather than a task, so `run_command`
+/// can point the model at `start_server` instead of waiting out the timeout.
 pub fn looks_like_a_server(command: &str) -> Option<&'static str> {
     let lowered = command.to_lowercase();
 
@@ -489,8 +483,6 @@ pub fn looks_like_a_server(command: &str) -> Option<&'static str> {
 }
 
 /// Put a child in its own process group so its whole tree can be killed.
-/// Otherwise killing the shell leaves forked children (`sh -c "cd x && server"`)
-/// running as orphans.
 pub fn own_group(command: &mut tokio::process::Command) {
     #[cfg(unix)]
     {

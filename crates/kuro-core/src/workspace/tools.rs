@@ -1,12 +1,5 @@
-//! The tools a coding workspace offers: file tools (tree, read, search, find,
-//! edit, write) and process tools (run a command, start/check/stop a server).
-//!
-//! The set is kept small, and each mode is offered only the tools it permits
-//! (see [`tools_for_mode`]), since small local models pick badly from long lists.
-//!
-//! File tools are scoped to the workspace root, and every change records the
-//! previous contents so it can be undone. Commands are not contained the same
-//! way; see [`super::exec`].
+//! The tools a coding workspace offers: file tools (tree, read, search, find, edit, write) and
+//! process tools (run a command, start/check/stop a server).
 
 use std::time::Duration;
 
@@ -644,9 +637,7 @@ fn run_search(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome 
     }
 }
 
-/// Replace an exact snippet. `find` must occur exactly once: two matches are
-/// ambiguous (editing the wrong call site), and zero usually means the model is
-/// editing from memory, so each error tells it how to recover.
+/// Replace an exact snippet.
 fn run_edit(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
     let Some(path) = string_argument(arguments, "path") else {
         return ToolOutcome::failed("`path` is required and must be a string");
@@ -720,9 +711,7 @@ fn run_write(arguments: &Value, context: &WorkspaceContext<'_>) -> ToolOutcome {
         Err(error) => return ToolOutcome::failed(error),
     };
 
-    // Read first so an overwrite can be undone; `None` marks a creation. A file that
-    // exists but cannot be kept (too large, not text) is left alone: recorded as a
-    // creation, undoing the write would delete it.
+    // Read first so an overwrite can be undone; `None` marks a creation.
     let before = if resolved.exists() {
         match files::read_snapshot(&resolved) {
             Some(text) => Some(text),

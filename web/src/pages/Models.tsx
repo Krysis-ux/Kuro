@@ -30,12 +30,7 @@ export function modelPath(repo: string): string {
   return `/models/${repo.split('/').map(encodeURIComponent).join('/')}`
 }
 
-/**
- * Start a download and refresh everything that shows what is installed.
- *
- * Shared with the detail page, which downloads the same way and needs the
- * same lists to notice.
- */
+/** Start a download and refresh everything that shows what is installed. */
 export function usePull(onDone?: () => void) {
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -374,13 +369,7 @@ function RecommendedCard({
   )
 }
 
-/**
- * Search Hugging Face from inside Kuro.
- *
- * Filtered to GGUF, so nothing in the results is a model that cannot run here —
- * which is the main thing the Hub's own search will not do for you. Opening a
- * result shows every quantization with its real size and fit.
- */
+/** Search Hugging Face from inside Kuro. */
 function HubSearch({
   onPull,
   pulling,

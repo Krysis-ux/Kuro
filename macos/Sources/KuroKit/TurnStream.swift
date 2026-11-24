@@ -34,9 +34,6 @@ public struct TurnRequest: Sendable {
 }
 
 /// Splits a server-sent event stream into `(event, data)` pairs.
-///
-/// Bytes are buffered until a blank line ends an event, so multi-byte characters
-/// split across chunks stay intact.
 public struct SSEParser {
     private var buffer: [UInt8] = []
 

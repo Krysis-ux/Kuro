@@ -1,10 +1,6 @@
 import Foundation
 
 // Types returned by the Kuro daemon's `/api` routes.
-//
-// Decoded with `.convertFromSnakeCase`, so `display_name` arrives as
-// `displayName` and keys that are already camelCase pass through unchanged.
-// Dictionary keys are not converted, which keeps tool arguments verbatim.
 
 // MARK: - Models
 

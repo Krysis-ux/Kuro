@@ -1,13 +1,5 @@
-//! Letting a chat read the code without touching it: list the user's
-//! workspaces, read a file from one, search one.
-//!
-//! The read-only ceiling is structural: these tools build their [`Workspace`] at
-//! [`WorkspaceMode::Plan`] whatever the workspace's stored mode is, so the
-//! permission object has no write tier, and there is no code path from here to a
-//! write.
-//!
-//! [`Workspace`]: crate::workspace::Workspace
-//! [`WorkspaceMode::Plan`]: crate::workspace::WorkspaceMode::Plan
+//! Letting a chat read the code without touching it: list the user's workspaces, read a file from
+//! one, search one.
 
 use std::path::PathBuf;
 

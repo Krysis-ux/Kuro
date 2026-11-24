@@ -52,9 +52,9 @@ const LATE_INDEXES: &str = "
         ON messages (provider_slug, created_at)
         WHERE provider_slug IS NOT NULL;
 ";
-// Bump whenever schema.sql changes: the file is only replayed when this number
-// moves, so a new table would otherwise exist only on fresh installs (and tests,
-// which open an empty database, would not notice).
+// Bump whenever schema.sql changes: the file is only replayed when this number moves, so a new
+// table would otherwise exist only on fresh installs (and tests, which open an empty database,
+// would not notice).
 const SCHEMA_VERSION: i32 = 9;
 
 #[derive(Clone)]
@@ -96,10 +96,7 @@ impl Db {
     fn migrate(&self) -> Result<()> {
         self.with(|conn| {
             let current: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-            // Equal means nothing to do. Higher is not "up to date": another build of
-            // Kuro sharing this data folder may have stamped a bigger number without
-            // creating this build's tables, so replay on any difference. Every phase
-            // below is idempotent, so a replay is cheap and safe.
+            // Equal means nothing to do.
             if current == SCHEMA_VERSION {
                 return Ok(());
             }

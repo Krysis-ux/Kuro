@@ -1,6 +1,5 @@
-//! `kuro free` — the free-tier pool from a terminal: which providers can serve a
-//! request now, and what they have cost. Most useful on a machine set up over
-//! SSH, where the browser is somewhere else.
+//! `kuro free` — the free-tier pool from a terminal: which providers can serve a request now, and
+//! what they have cost.
 
 use anyhow::Result;
 use serde_json::Value;

@@ -53,9 +53,6 @@ pub struct ModelUsage {
 
 impl Db {
     /// Tokens recorded against each model in `[from, to)`, biggest first.
-    ///
-    /// Forked conversations are left out: a fork copies its parent's messages and
-    /// their counts, so including them would count the same turn twice.
     pub fn usage_by_model(&self, from: &str, to: &str) -> Result<Vec<ModelUsage>> {
         self.with(|conn| {
             let mut statement = conn.prepare(
@@ -92,10 +89,6 @@ impl Db {
     }
 
     /// Tokens recorded against each provider in `[from, to)`.
-    ///
-    /// The bounds are RFC 3339 strings in the same UTC shape as `created_at` (a
-    /// range scan over `idx_messages_usage`), and the caller computes them from the
-    /// *user's* local day, not the UTC day.
     pub fn usage_by_provider(&self, from: &str, to: &str) -> Result<Vec<ProviderUsage>> {
         self.with(|conn| {
             let mut statement = conn.prepare(
@@ -340,9 +333,9 @@ mod tests {
 
     #[test]
     fn a_window_bound_must_be_utc_to_compare_correctly() {
-        // `created_at` is UTC and compared as a string, so a bound printed with a
-        // local offset compares by its digits, not the instant: four hours behind UTC,
-        // an evening turn is tomorrow's date and fell outside a "today" bound.
+        // `created_at` is UTC and compared as a string, so a bound printed with a local offset
+        // compares by its digits, not the instant: four hours behind UTC, an evening turn is
+        // tomorrow's date and fell outside a "today" bound.
         let db = Db::open_in_memory().expect("open");
         let chat = conversation(&db);
         turn(&db, &chat, "groq", 100, 20);

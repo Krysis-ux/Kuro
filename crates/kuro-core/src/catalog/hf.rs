@@ -1,7 +1,4 @@
-//! Resolving what to download from a Hugging Face repository. Kuro never
-//! hardcodes `.gguf` filenames: the user or curated list names a repository and
-//! preferred quantization, and the file is looked up at pull time, so the
-//! catalog survives re-uploads and renames.
+//! Resolving what to download from a Hugging Face repository.
 
 use serde::Deserialize;
 

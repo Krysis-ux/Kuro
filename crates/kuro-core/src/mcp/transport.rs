@@ -1,10 +1,4 @@
 //! Getting JSON-RPC to an MCP server over stdio or HTTP.
-//!
-//! Both transports are stateless per call: open, handshake, do the work, close.
-//! Pooling would save a few hundred milliseconds but leave stdio children running
-//! for the life of the app and hide configuration changes until restart. The
-//! manager caches the tool list, so only a real `tools/call` pays for a
-//! connection.
 
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -89,9 +83,7 @@ pub async fn call_tool(
 
 /* ---------- stdio ---------- */
 
-/// Handshake then call as one step, so the caller always shuts the child down,
-/// including on error. A leaked server process would keep whatever access it was
-/// given.
+/// Handshake then call as one step, so the caller always shuts the child down, including on error.
 async fn stdio_call(
     session: &mut StdioSession,
     params: Value,

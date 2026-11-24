@@ -1,13 +1,6 @@
 import Foundation
 
 /// Which maker a model or provider belongs to, for the logo beside its name.
-///
-/// Read off the name, because that is all a GGUF repository reliably says about
-/// where its weights came from: `unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF` is a
-/// DeepSeek model that unsloth quantized.
-///
-/// Mirrors `web/src/lib/brands.ts` and draws on the same SVGs in
-/// `web/src/assets/logos`. Keep the two tables in step.
 public struct Brand: Hashable, Sendable {
     public let label: String
     /// The logo's file name, without `.svg`.

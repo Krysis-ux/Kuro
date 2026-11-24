@@ -78,9 +78,7 @@ impl FileAccess {
     }
 }
 
-/// The tier plus the folders it applies to. Built by
-/// [`crate::workspace::Workspace::permissions`]; deliberately never loaded from
-/// settings, so no stored grant can outlive what asked for it.
+/// The tier plus the folders it applies to.
 #[derive(Debug, Clone, Default)]
 pub struct FilePermissions {
     pub access: FileAccess,
@@ -107,9 +105,6 @@ impl FilePermissions {
     }
 
     /// Resolve a path the model supplied into one it is allowed to use.
-    ///
-    /// `for_write` selects which tier is required and whether a path that does
-    /// not exist yet is acceptable.
     pub fn resolve_path(&self, raw: &str, for_write: bool) -> Result<PathBuf> {
         if for_write {
             if !self.access.allows_write() {
@@ -182,10 +177,7 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Canonicalise a path, collapsing `..` and following symlinks. For a write the
-/// file may not exist, so the deepest existing ancestor is canonicalised and the
-/// rest appended, after rejecting `..` in it (`newdir/../../..` would rebuild the
-/// escape).
+/// Canonicalise a path, collapsing `..` and following symlinks.
 fn canonicalise_for_access(path: &Path, for_write: bool) -> Result<PathBuf> {
     if let Ok(resolved) = path.canonicalize() {
         return Ok(resolved);

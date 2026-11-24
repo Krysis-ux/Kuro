@@ -2,9 +2,6 @@ import SwiftUI
 import KuroKit
 
 /// Interface choices that persist between launches.
-///
-/// Chat and Code keep their own model and effort, so tuning one never
-/// reconfigures the other.
 @MainActor @Observable
 final class Preferences {
     enum Theme: String, CaseIterable {

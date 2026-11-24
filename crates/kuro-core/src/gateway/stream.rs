@@ -49,9 +49,6 @@ enum Open {
 }
 
 /// Turns a run of OpenAI chunks into a well-formed Anthropic event stream.
-///
-/// Stateful: whether a delta opens, continues or closes a block depends on what
-/// came before it.
 #[derive(Debug)]
 pub struct StreamTranslator {
     model: String,

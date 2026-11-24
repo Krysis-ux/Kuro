@@ -1,8 +1,4 @@
 //! Serves the built web interface from `web/dist`, on the same origin as the API.
-//!
-//! In development the Vite dev server runs on its own port and talks to this
-//! one over CORS. The CLI and the macOS app use the same HTTP API and need
-//! none of these assets.
 
 use std::path::PathBuf;
 

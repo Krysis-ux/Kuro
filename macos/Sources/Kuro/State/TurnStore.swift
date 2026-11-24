@@ -2,9 +2,6 @@ import Foundation
 import KuroKit
 
 /// One conversation's turn as the transcript shows it.
-///
-/// A turn belongs to the server, not to a view: leaving the page keeps it
-/// running and coming back shows it where it got to.
 @MainActor @Observable
 final class Turn {
     struct ToolStep: Identifiable {

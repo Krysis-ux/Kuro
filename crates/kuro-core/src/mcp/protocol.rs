@@ -1,7 +1,6 @@
-//! The wire format of the Model Context Protocol: JSON-RPC 2.0 with a fixed
-//! opening exchange (`initialize`, the server's reply, an `initialized`
-//! notification), after which `tools/list` and `tools/call` are allowed. The
-//! handshake lives here so transports don't each open-code it.
+//! The wire format of the Model Context Protocol: JSON-RPC 2.0 with a fixed opening exchange
+//! (`initialize`, the server's reply, an `initialized` notification), after which `tools/list` and
+//! `tools/call` are allowed.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -78,9 +77,9 @@ pub struct RemoteTool {
 }
 
 impl RemoteTool {
-    /// A schema an engine will accept: engines reject a non-object `parameters`,
-    /// and servers sometimes omit `inputSchema`, so an empty object schema is
-    /// substituted (and a missing `type` added).
+    /// A schema an engine will accept: engines reject a non-object `parameters`, and servers
+    /// sometimes omit `inputSchema`, so an empty object schema is substituted (and a missing `type`
+    /// added).
     pub fn schema(&self) -> Value {
         match &self.input_schema {
             Some(Value::Object(map)) if map.contains_key("type") => Value::Object(map.clone()),

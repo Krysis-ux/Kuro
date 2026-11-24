@@ -1,6 +1,4 @@
-//! Turning "I want this model" into weights on disk. A pull is a plan plus an
-//! execution; planning is cheap, so callers can show the repository, file and
-//! size, and catch problems like a gated repository, before any bytes move.
+//! Turning "I want this model" into weights on disk.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;

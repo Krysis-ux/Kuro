@@ -1,8 +1,4 @@
 //! Storage for coding workspaces and the changes made inside them.
-//!
-//! A workspace is a folder plus a mode, and the only place a model can read or
-//! change a file (unlike a project, which touches nothing on disk). Every change
-//! is recorded with the file's previous contents so it can be undone.
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::Serialize;
@@ -11,9 +7,7 @@ use super::{now, Db};
 use crate::workspace::WorkspaceMode;
 use crate::{KuroError, Result};
 
-/// Snapshots larger than this are recorded without contents. The log exists to
-/// undo source edits; keeping both sides of huge rewrites would bloat the
-/// database. Such a change is still listed but cannot be undone here.
+/// Snapshots larger than this are recorded without contents.
 const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -186,9 +180,7 @@ impl Db {
         })
     }
 
-    /// Update the parts of a workspace the interface can change. The root is not
-    /// among them: repointing it would make recorded changes describe paths in a
-    /// folder they were never made in.
+    /// Update the parts of a workspace the interface can change.
     pub fn update_workspace(
         &self,
         id: &str,

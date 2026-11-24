@@ -5,10 +5,6 @@ import SwiftUI
 enum ComposerKey { case submit, up, down, tab, escape }
 
 /// A growing, plain-text `NSTextView`.
-///
-/// SwiftUI's text fields do not expose the caret on macOS 14, and the `/`
-/// palette needs it to find a command typed mid-sentence. Return sends,
-/// Shift-Return and Option-Return insert a line break.
 struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var caret: Int

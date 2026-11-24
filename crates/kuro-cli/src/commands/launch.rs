@@ -1,13 +1,4 @@
 //! `kuro launch` — run another coding tool against a Kuro model.
-//!
-//! Kuro stands in as the model (local weights, a free provider's allowance or a
-//! key you hold) for a tool you already have, such as Claude Code, which never
-//! knows the difference.
-//!
-//! Claude Code reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`; this sets
-//! both, pointing the first at the daemon's Anthropic-compatible endpoint, and
-//! execs the real binary. Nothing is installed or patched and no configuration
-//! file is edited, so closing the terminal undoes everything.
 
 use std::process::Command;
 

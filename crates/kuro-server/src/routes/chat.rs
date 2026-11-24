@@ -1,14 +1,4 @@
 //! The native chat endpoint.
-//!
-//! Unlike the OpenAI-compatible proxy, this route owns the conversation: it
-//! persists both turns, auto-titles new chats, records the usage and timing the
-//! request inspector shows, and runs the tool loop.
-//!
-//! Tools reach a model two ways: the OpenAI `tools` array (the model asks, Kuro
-//! runs, the result goes back), and, because small models tend to describe
-//! searching rather than search, an up-front search when the user turns the web
-//! switch on, with the results put in front of the model. The switch is the
-//! user's because that is when a query leaves the machine.
 
 use std::convert::Infallible;
 use std::time::Instant;
@@ -52,18 +42,12 @@ pub struct SendMessageRequest {
     /// Search before answering, regardless of whether the model would have asked.
     #[serde(default)]
     pub web_search: Option<bool>,
-    /// Skills the user named for this message by slug (what `/rust` in the composer
-    /// does). Unlike the enabled set in settings, which says what Kuro may use,
-    /// these are used this turn, and the orchestrator may not trim them to fit a budget.
+    /// Skills the user named for this message by slug (what `/rust` in the composer does).
     #[serde(default)]
     pub skills: Option<Vec<String>>,
 }
 
 /// Send a message and stream the reply.
-///
-/// Everything that can fail predictably (unknown conversation, unusable model,
-/// an engine that will not start) happens before the stream opens, so it
-/// surfaces as an ordinary HTTP error rather than an error event.
 pub async fn send_message(
     State(state): State<SharedState>,
     Path(conversation_id): Path<String>,
@@ -78,12 +62,8 @@ pub async fn send_message(
 /// A turn's streamed events.
 pub type TurnEvents = mpsc::Receiver<Result<Event, Infallible>>;
 
-/// Persist the user's message and start the reply: everything `send_message`
-/// does short of answering over HTTP. Returns the events and the task producing
-/// them, which ends with the turn's outcome. Automations run turns this way,
-/// with no one watching (`routes::automations`).
-///
-/// Generation stops when `events` is dropped, so a caller must read it to the end.
+/// Persist the user's message and start the reply: everything `send_message` does short of
+/// answering over HTTP.
 pub async fn start_turn(
     state: &SharedState,
     conversation_id: &str,
@@ -190,12 +170,6 @@ pub async fn start_turn(
 }
 
 /// Rewrite a message and answer again from that point.
-///
-/// The edited message and everything after it are deleted first, since replies
-/// to a question no longer on screen would read as though the model answered
-/// something it never saw. Everything that can refuse the turn (an empty message,
-/// an unknown model, a provider with no key) is checked before anything is
-/// deleted, so a refused edit leaves the conversation as it was.
 pub async fn edit_message(
     State(state): State<SharedState>,
     Path((conversation_id, message_id)): Path<(String, String)>,
@@ -257,12 +231,8 @@ struct TurnWorkspace {
     root_display: String,
 }
 
-/// How hard to think this turn: the request's choice, else the starting effort
-/// configured in Settings for this surface.
-///
-/// The surface is decided by whether the conversation belongs to a workspace,
-/// exactly as the orchestrator decides it later, so effort and tool budget never
-/// come from two different answers.
+/// How hard to think this turn: the request's choice, else the starting effort configured in
+/// Settings for this surface.
 fn resolve_effort(
     state: &SharedState,
     requested: Option<&str>,
@@ -280,9 +250,7 @@ fn resolve_effort(
     Ok(settings::default_effort(&state.db, surface).unwrap_or_default())
 }
 
-/// Look up the workspace a conversation belongs to. A conversation with no
-/// workspace, or a deleted one, gets `None` and so no file tools: the
-/// alternative would be file access with nothing to scope it to.
+/// Look up the workspace a conversation belongs to.
 fn resolve_workspace(state: &SharedState, conversation: &kuro_core::db::Conversation) -> Option<TurnWorkspace> {
     let workspace_id = conversation.workspace_id.as_deref()?;
     let record = state.db.get_workspace(workspace_id).ok().flatten()?;
@@ -327,9 +295,7 @@ async fn run_turn(
     let mut tool_trail: Vec<Value> = Vec::new();
     let mut used_web_search = false;
 
-    // The deterministic search, for models that would not have asked. The switch is
-    // permission to search, not an instruction to search every message ("hi" should
-    // not return dictionary definitions).
+    // The deterministic search, for models that would not have asked.
     let mut search_ran = false;
     if turn.search_first {
         match intent::decide(turn.query) {
@@ -364,9 +330,7 @@ async fn run_turn(
     let tool_names: Vec<String> = tool_set.names().into_iter().map(str::to_string).collect();
     let mcp_servers = tool_set.mcp_server_names();
 
-    // What the effort dial buys this turn: a tool budget and the expertise this
-    // project justifies. The user's own selection comes first in the brief, so
-    // additions read as supplementary.
+    // What the effort dial buys this turn: a tool budget and the expertise this project justifies.
     let chosen_skills = skills::enabled(&state.db).unwrap_or_default();
     let surface = match &turn.workspace {
         Some(_) => orchestrate::Surface::Code,
@@ -391,9 +355,9 @@ async fn run_turn(
     );
     tracing::debug!(plan = %orchestration.summary, "effort resolved");
 
-    // The plan's list, not the user's selection plus additions: the plan ranks the
-    // enabled set against the message and sends what fits, so a switch means "Kuro
-    // may use this", not "put this in every message".
+    // The plan's list, not the user's selection plus additions: the plan ranks the enabled set
+    // against the message and sends what fits, so a switch means "Kuro may use this", not "put this
+    // in every message".
     let active_skills = orchestration.skills.clone();
 
     // Describe the workspace to the model exactly as it is enforced, so the brief
@@ -538,10 +502,7 @@ async fn run_turn(
     .await
 }
 
-/// How many top results are opened and read in full. Snippets are rarely the
-/// sentence that answers the query, so five of them yield a summary of a results
-/// page while the text of the top pages yields an answer. Three is the most that
-/// fits alongside the history.
+/// How many top results are opened and read in full.
 const PAGES_TO_READ: usize = 3;
 /// Characters kept from each page that is read.
 const CHARS_PER_PAGE: usize = 4_000;
@@ -608,9 +569,7 @@ async fn upfront_search(
     Ok((context, results.iter().map(WebSource::from).collect()))
 }
 
-/// Open the top few results and extract their text. Concurrent, since
-/// sequential loads are most of the wait before the first token. A page that
-/// refuses, times out or is a PDF is dropped silently; the snippets remain.
+/// Open the top few results and extract their text.
 async fn read_top_pages(
     results: &[web_search::SearchResult],
 ) -> Vec<fetch::FetchedPage> {
@@ -769,8 +728,6 @@ async fn stream_once(
             )),
             ChatTarget::Remote { label, connector_id, model, .. } => {
                 // A free provider that refuses is set aside so the next message goes elsewhere.
-                // Not retried now: the stream is already open on the client, and swapping
-                // providers mid-turn would give a reply half from each.
                 note_free_trouble(state, turn.target.upstream(), model, status.as_u16());
                 // Likewise one free model on a provider that has run out of allowance, so later
                 // messages skip a model that already said no.
@@ -867,17 +824,13 @@ fn note_free_trouble(
     let Some(trouble) = kuro_core::free::Trouble::from_status(status) else {
         return;
     };
-    // The provider the request actually went to, carried on the target. Re-deriving
-    // it from the pool could name a different provider if a concurrent turn moved
-    // the pool's state, setting aside an innocent one.
+    // The provider the request actually went to, carried on the target.
     let Some(slug) = upstream.filter(|slug| kuro_core::free::find(slug).is_some()) else {
         return;
     };
 
-    // A 404 is about the model, not the provider: NVIDIA NIM provisions several
-    // models per key and answers 404 for one the key lacks. Set the model aside and
-    // leave the provider alone, so this message fails over to another model on the
-    // same working key.
+    // A 404 is about the model, not the provider: NVIDIA NIM provisions several models per key and
+    // answers 404 for one the key lacks.
     if trouble.stale_catalogue() {
         state.free.note_model_trouble(slug, model, trouble);
     } else {
@@ -1027,11 +980,6 @@ async fn send_event(
 }
 
 /// Generation speed over the time actually spent producing output.
-///
-/// `generation_ms` runs from the first streamed token to the last, summed across
-/// rounds, so prompt processing and tool waits (which produce no tokens) are
-/// excluded. A zero span means every token arrived at once (a very short reply
-/// or a mocked stream); one sample gives no honest rate, so none is reported.
 fn tokens_per_second(completion_tokens: Option<i64>, generation_ms: i64) -> Option<f64> {
     let tokens = completion_tokens? as f64;
     if tokens <= 0.0 || generation_ms <= 0 {

@@ -1,9 +1,4 @@
-//! How an endpoint departs from the plain OpenAI shape. Per-provider differences
-//! live here as data instead of a `match` in the streaming code.
-//!
-//! This is separate from [`crate::free`] because a quirk belongs to an endpoint,
-//! not a free tier, and [`crate::cloud`] should not depend on the free pool.
-//! [`Quirks::OPENAI`] is the default for endpoints that need nothing special.
+//! How an endpoint departs from the plain OpenAI shape.
 
 use std::time::Duration;
 
@@ -30,9 +25,7 @@ impl Auth {
         !matches!(self, Self::Bearer)
     }
 
-    /// The `Authorization` value to send, or `None` for no header. `Bearer` with
-    /// no key yields `None` rather than an empty bearer, which would only show up
-    /// as a confusing 401.
+    /// The `Authorization` value to send, or `None` for no header.
     pub fn authorization(self, stored: Option<&str>) -> Option<String> {
         let stored = stored.map(str::trim).filter(|key| !key.is_empty());
         match (self, stored) {
@@ -86,11 +79,8 @@ impl Default for Quirks {
 /// JSON Schema keywords that some providers reject outright.
 const REJECTED_KEYWORDS: &[&str] = &["additionalProperties", "$schema"];
 
-/// Remove the keywords a provider rejects (Cohere rejects `additionalProperties`
-/// and `$schema`, which every built-in tool emits) at every depth.
-///
-/// Only the schema's structural keywords are followed, so a tool *property* that
-/// happens to be named `$schema` is kept.
+/// Remove the keywords a provider rejects (Cohere rejects `additionalProperties` and `$schema`,
+/// which every built-in tool emits) at every depth.
 pub fn strip_schema_keywords(value: &mut Value) {
     match value {
         Value::Array(items) => {

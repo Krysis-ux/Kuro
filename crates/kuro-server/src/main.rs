@@ -1,9 +1,4 @@
 //! The Kuro LLM daemon.
-//!
-//! One process serves the JSON API, the OpenAI- and Anthropic-compatible APIs
-//! and the web UI, for the browser, the CLI, the macOS app (`macos/`) and
-//! third-party clients. Inference runs in separate `kuro-engine` child
-//! processes that this daemon starts, supervises and stops.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -150,10 +145,6 @@ pub const RESTART_MARKER: &str = "KURO_RESTARTING";
 const RESTART_BIND_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Take the listening socket.
-///
-/// A normal start fails at once if the port is taken (almost always another
-/// Kuro). A restart retries instead, because the outgoing process still holds
-/// the port briefly and failing would leave no server.
 async fn bind(address: SocketAddr, port: u16) -> anyhow::Result<TcpListener> {
     let restarting = std::env::var_os(RESTART_MARKER).is_some();
 

@@ -29,11 +29,8 @@ pub async fn list_ids(client: &KuroClient) -> Result<()> {
     Ok(())
 }
 
-/// Turn what somebody typed into a model id: the number from the last `kuro
-/// list`, the whole id, or an unambiguous prefix.
-///
-/// An ambiguous prefix is refused with the candidates listed rather than
-/// resolved to the first match, since a wrong guess here deletes a file.
+/// Turn what somebody typed into a model id: the number from the last `kuro list`, the whole id, or
+/// an unambiguous prefix.
 pub async fn resolve_installed(client: &KuroClient, input: &str) -> Result<String> {
     let ids = installed_ids(client).await?;
 
@@ -228,9 +225,8 @@ pub async fn stop(client: &KuroClient, model_id: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Everything known about one model: the details `list` has no room for
-/// (weights location, context window, capabilities, fit). The fit is the one the
-/// Models page computes, so both places agree.
+/// Everything known about one model: the details `list` has no room for (weights location, context
+/// window, capabilities, fit).
 pub async fn show(client: &KuroClient, requested: Option<String>) -> Result<()> {
     client.ensure_running().await?;
 
@@ -332,11 +328,6 @@ pub async fn resolve_model(client: &KuroClient, requested: Option<String>) -> Re
 }
 
 /// A shell script that completes model names.
-///
-/// Written out rather than generated because the values must be the models on
-/// this machine right now: the script asks `kuro list --ids`, so it is correct
-/// the moment something is pulled or removed. Tab cycling is the shell's (zsh's
-/// `menu complete`; bash lists on the second press).
 pub fn completions(shell: &str) -> Result<()> {
     let script = match shell {
         "zsh" => ZSH_COMPLETIONS,

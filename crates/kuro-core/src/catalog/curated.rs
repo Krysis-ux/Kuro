@@ -1,11 +1,6 @@
-//! Kuro's built-in "recommended models" list. Static data, so recommendations
-//! refresh without a migration. Only the repository and preferred quantization
-//! are pinned; the `.gguf` filename is resolved against the Hugging Face API at
-//! pull time, so entries survive a repository renaming its files.
+//! Kuro's built-in "recommended models" list.
 
-/// What a model is worth choosing *for*. Fit estimates answer "what will run on
-/// my machine", not "which should I use"; a 7B coder and a 7B general model fit
-/// the same but are not interchangeable.
+/// What a model is worth choosing *for*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Purpose {
@@ -332,9 +327,7 @@ pub const CURATED_MODELS: &[CuratedModel] = &[
     },
 ];
 
-/// Models worth choosing for one purpose, smallest first. A model appears under
-/// every purpose it lists (Qwen3 8B is a real answer to both "code with" and
-/// "install one thing").
+/// Models worth choosing for one purpose, smallest first.
 pub fn for_purpose(purpose: Purpose) -> Vec<&'static CuratedModel> {
     CURATED_MODELS
         .iter()

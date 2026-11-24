@@ -103,9 +103,6 @@ impl WorkspaceMode {
     }
 
     /// Whether a command must be on the allowlist before it runs.
-    ///
-    /// The only thing Bypass changes: working directory, path containment and the
-    /// always-refused commands stay the same.
     pub fn restricts_commands(self) -> bool {
         self != Self::Bypass
     }

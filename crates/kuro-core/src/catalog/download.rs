@@ -1,7 +1,4 @@
-//! Resumable file download with integrity checking. Weights are multi-gigabyte,
-//! so an interrupted transfer must continue, not restart. Bytes go to a `.part`
-//! file that is renamed into place only once complete and, when the source
-//! publishes a checksum, verified.
+//! Resumable file download with integrity checking.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,9 +23,6 @@ pub struct DownloadOutcome {
 }
 
 /// Download `url` to `dest`, resuming a previous attempt when possible.
-///
-/// `on_progress` receives `(downloaded_bytes, total_bytes)`. Setting `cancel`
-/// stops the transfer and leaves the `.part` file in place for a later resume.
 pub async fn download_to_file(
     client: &reqwest::Client,
     url: &str,

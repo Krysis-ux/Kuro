@@ -110,20 +110,7 @@ export function Composer({
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<{ name: string; content: string }[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
-  /*
-   * There is no separate list of attached skills any more.
-   *
-   * There was, and it was the wrong model: picking `/rust` deleted the word and
-   * put a chip above the box, so the message that reached the model said
-   * nothing about Rust and the skill arrived as an unexplained block of
-   * instructions with no anchor in the question. "Use /brainstorming on the
-   * second half" lost the half it was about.
-   *
-   * The text is the record. A `/name` written anywhere in the message attaches
-   * that skill and stays where it was written, so the model reads the request
-   * and the reason for the guidance in the same sentence — and typing one by
-   * hand works as well as picking one, which it did not before.
-   */
+  /* There is no separate list of attached skills any more. */
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
