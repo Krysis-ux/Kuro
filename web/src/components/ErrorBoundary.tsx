@@ -1,22 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { RefreshIcon } from './icons'
 
-/**
- * A page that throws should not take the window with it.
- *
- * Without this, one bad field read anywhere in a route unmounts everything and
- * leaves a black rectangle — no message, no way back, and nothing to tell you
- * which page was at fault. That is exactly what happened when a newer interface
- * ran against an older server: the response was missing a field, a `.length` on
- * it threw, and the whole application went blank.
- *
- * The reload button matters as much as the message. A crashed page is usually a
- * stale build on one side or the other, and reloading is the fix often enough to
- * be worth offering before anything else.
- */
 interface Props {
   children: ReactNode
-  /** Named so the message can say which page failed. */
   label?: string
 }
 
@@ -32,8 +18,6 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // Kept for the browser console, which is where somebody debugging this will
-    // look first. The interface shows the message; the console shows the stack.
     console.error('A page failed to render', error, info.componentStack)
   }
 
